@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from rolescan.models import (
     Confidence,
     CVVariant,
@@ -173,3 +175,76 @@ async def test_posting_cache_survives_reopening_the_file(tmp_path: Path) -> None
         )
     async with Store(path) as store:
         assert await store.get_posting("https://x/job/1") is not None
+
+
+# --- application state -------------------------------------------------
+
+
+async def test_mark_and_read_application_state(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/1", "applied", company="Glencore", title="Analytics")
+        assert await store.application_state("https://x/1") == "applied"
+        assert await store.application_state("https://x/2") is None
+
+
+async def test_mark_is_idempotent_and_updates_state(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/1", "shortlist", company="C", title="T")
+        await store.mark("https://x/1", "applied", company="C", title="T")
+        assert await store.application_state("https://x/1") == "applied"
+        assert len(await store.shortlist()) == 0
+
+
+async def test_shortlist_returns_only_shortlisted(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/1", "shortlist", company="A", title="One")
+        await store.mark("https://x/2", "applied", company="B", title="Two")
+        rows = await store.shortlist()
+        assert rows == [("https://x/1", "A", "One")]
+
+
+async def test_dismissed_urls(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/9", "dismissed", company="C", title="T")
+        assert await store.dismissed_urls() == {"https://x/9"}
+
+
+async def test_invalid_state_is_rejected(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        with pytest.raises(ValueError):
+            await store.mark("https://x/1", "maybe")
+
+
+async def test_mark_does_not_wipe_company_or_title_with_blanks(
+    tmp_path: Path,
+) -> None:
+    """A later mark() with default empty company/title must not clobber
+    values an earlier call already stored."""
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/1", "shortlist", company="C", title="T")
+        await store.mark("https://x/1", "applied")
+        rows = list(
+            await store.db.execute_fetchall(
+                "SELECT company, title FROM applications WHERE url = ?",
+                ("https://x/1",),
+            )
+        )
+        assert rows[0] == ("C", "T")
+
+
+async def test_applications_table_migrates_onto_an_existing_store(
+    tmp_path: Path,
+) -> None:
+    """The applications table must appear via CREATE TABLE IF NOT EXISTS on
+    a store created before this feature existed, without losing prior data."""
+    path = tmp_path / "s.db"
+    job = _job("https://x/job/1")
+    scored = ScoredJob(job=job)
+    async with Store(path) as store:
+        await store.record_all([scored])
+
+    async with Store(path) as store:
+        assert await store.count() == 1
+        assert not await store.is_new(job), "old data must survive the migration"
+        await store.mark("https://x/2", "shortlist", company="A", title="One")
+        assert await store.shortlist() == [("https://x/2", "A", "One")]
