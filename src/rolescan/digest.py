@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 import smtplib
 from datetime import UTC, datetime
@@ -12,7 +13,7 @@ from rolescan.config import EmailConfig
 from rolescan.models import ScoredJob, Verdict
 from rolescan.pipeline import ScanResult
 
-__all__ = ["render_markdown", "send_email", "write_digest"]
+__all__ = ["render_html", "render_markdown", "send_email", "write_digest"]
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +73,40 @@ def _role(item: ScoredJob) -> list[str]:
     return lines
 
 
-def render_markdown(result: ScanResult, *, title: str = "Job scan") -> str:
+def _shortlist_section(shortlist: list[tuple[str, str, str]]) -> list[str]:
+    lines = [
+        "",
+        "## Shortlist",
+        "",
+        "Still open, not yet applied to or dismissed.",
+        "",
+    ]
+    for url, company, role in shortlist:
+        company = company.strip()
+        role = role.strip()
+        if company and role:
+            headline = f"**{company}** — {role}"
+        elif company or role:
+            headline = f"**{company or role}**"
+        else:
+            # A `mark shortlist` on a url that was never scanned leaves
+            # company/title blank. Never emit a bullet with nothing a human
+            # can act on: fall back to the one thing we do have.
+            headline = url
+        lines.append(f"- {headline}")
+        lines.append(f"  {url}")
+        lines.append(
+            f"  `rolescan mark {url} applied` · `rolescan mark {url} dismissed`"
+        )
+    return lines
+
+
+def render_markdown(
+    result: ScanResult,
+    *,
+    title: str = "Job scan",
+    shortlist: list[tuple[str, str, str]] | None = None,
+) -> str:
     stamp = datetime.now(UTC).strftime("%A %d %B %Y")
     out: list[str] = [f"# {title}, {stamp}", ""]
 
@@ -87,6 +121,8 @@ def render_markdown(result: ScanResult, *, title: str = "Job scan") -> str:
             "",
         ]
         out += _failures(result)
+        if shortlist:
+            out += _shortlist_section(shortlist)
         return "\n".join(out)
 
     live = [s for s in result.reportable if not s.is_blocked]
@@ -116,11 +152,23 @@ def render_markdown(result: ScanResult, *, title: str = "Job scan") -> str:
             out += _role(item)
 
     out += _failures(result)
+    if shortlist:
+        out += _shortlist_section(shortlist)
     return "\n".join(out)
 
 
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def _every_source_failed(result: ScanResult) -> bool:
+    """True only when sources actually ran and none of them succeeded.
+
+    Distinct from an empty market: zero reportable roles because nothing
+    matched looks identical, in the digest, to zero because the scan never
+    fetched anything. This is what tells the two apart.
+    """
+    return bool(result.reports) and not any(r.ok for r in result.reports)
 
 
 def _stats(result: ScanResult) -> str:
@@ -133,7 +181,13 @@ def _stats(result: ScanResult) -> str:
     ]
     if result.llm_calls or result.llm_cached:
         bits.append(f"{result.llm_calls} scored, {result.llm_cached} from cache")
-    return ". ".join(bits) + "."
+    text = ". ".join(bits) + "."
+    if _every_source_failed(result):
+        text += (
+            " Every source failed this run. This is a scan failure, not an "
+            "empty market."
+        )
+    return text
 
 
 def _failures(result: ScanResult) -> list[str]:
@@ -168,6 +222,25 @@ def _failures(result: ScanResult) -> list[str]:
     return lines
 
 
+def render_html(text: str) -> str:
+    """Wrap the markdown body in a minimal document that reads on a phone.
+
+    Deliberately not a markdown-to-HTML converter: the digest is read at
+    06:30 on a small screen, and a <pre> block with a sane font beats a
+    dependency. `text` may contain job titles and company names scraped from
+    third-party pages, so it is escaped before going anywhere near HTML.
+    """
+    escaped = html.escape(text)
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "</head><body style='margin:0;padding:16px;background:#fff;color:#111;"
+        "font:15px/1.5 -apple-system,BlinkMacSystemFont,sans-serif'>"
+        f"<pre style='white-space:pre-wrap;font:inherit;margin:0'>{escaped}</pre>"
+        "</body></html>"
+    )
+
+
 def write_digest(text: str, directory: Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y-%m-%d")
@@ -177,7 +250,13 @@ def write_digest(text: str, directory: Path) -> Path:
     return path
 
 
-def send_email(text: str, cfg: EmailConfig, *, subject: str | None = None) -> bool:
+def send_email(
+    text: str,
+    cfg: EmailConfig,
+    *,
+    subject: str | None = None,
+    html: str | None = None,
+) -> bool:
     if not cfg.enabled:
         return False
     msg = EmailMessage()
@@ -185,6 +264,8 @@ def send_email(text: str, cfg: EmailConfig, *, subject: str | None = None) -> bo
     msg["From"] = cfg.username
     msg["To"] = cfg.to
     msg.set_content(text)
+    if html is not None:
+        msg.add_alternative(html, subtype="html")
     with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=30) as s:
         s.starttls()
         s.login(cfg.username, cfg.password)

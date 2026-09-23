@@ -14,10 +14,10 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from rolescan.config import Config, SourceEntry
-from rolescan.digest import render_markdown, send_email, write_digest
+from rolescan.digest import render_html, render_markdown, send_email, write_digest
 from rolescan.http import Fetcher
 from rolescan.models import Verdict
-from rolescan.pipeline import run_scan
+from rolescan.pipeline import ScanResult, run_scan
 from rolescan.scoring import CVLibrary
 from rolescan.slugs import SlugIndex
 from rolescan.sources import available, get_source
@@ -90,8 +90,14 @@ def scan(
     if no_llm:
         cfg.llm.enabled = False
 
-    result = asyncio.run(run_scan(cfg, dry_run=dry))
-    text = render_markdown(result)
+    async def _go() -> tuple[ScanResult, list[tuple[str, str, str]]]:
+        result = await run_scan(cfg, dry_run=dry)
+        async with Store(cfg.resolve(cfg.output.db_path)) as store:
+            shortlist_rows = await store.shortlist()
+        return result, shortlist_rows
+
+    result, shortlist_rows = asyncio.run(_go())
+    text = render_markdown(result, shortlist=shortlist_rows)
 
     path = write_digest(text, cfg.resolve(cfg.output.dir))
     console.print(Markdown(text))
@@ -114,7 +120,7 @@ def scan(
 
     if email and cfg.output.email.enabled:
         try:
-            if send_email(text, cfg.output.email):
+            if send_email(text, cfg.output.email, html=render_html(text)):
                 console.print("[green]emailed[/]")
         except Exception as e:
             console.print(f"[red]email failed:[/] {e}")
