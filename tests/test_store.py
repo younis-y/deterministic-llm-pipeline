@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import rolescan.store as store_module
 from rolescan.models import (
     Confidence,
     CVVariant,
@@ -232,11 +233,13 @@ async def test_mark_does_not_wipe_company_or_title_with_blanks(
         assert rows[0] == ("C", "T")
 
 
-async def test_applications_table_migrates_onto_an_existing_store(
+async def test_applications_table_is_created_on_a_fresh_store(
     tmp_path: Path,
 ) -> None:
-    """The applications table must appear via CREATE TABLE IF NOT EXISTS on
-    a store created before this feature existed, without losing prior data."""
+    """A brand-new store (current code, all migrations applied together)
+    ends up with a working applications table. This does NOT exercise the
+    upgrade path of an old, already-populated store — see
+    test_applications_table_migrates_onto_a_pre_existing_store for that."""
     path = tmp_path / "s.db"
     job = _job("https://x/job/1")
     scored = ScoredJob(job=job)
@@ -245,6 +248,51 @@ async def test_applications_table_migrates_onto_an_existing_store(
 
     async with Store(path) as store:
         assert await store.count() == 1
-        assert not await store.is_new(job), "old data must survive the migration"
+        assert not await store.is_new(job)
+        await store.mark("https://x/2", "shortlist", company="A", title="One")
+        assert await store.shortlist() == [("https://x/2", "A", "One")]
+
+
+async def test_applications_table_migrates_onto_a_pre_existing_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, energy_job: Job
+) -> None:
+    """The real scenario: a store created before the `applications` table
+    existed, sitting at PRAGMA user_version=2, meeting the new migration
+    for the first time on open. Data written under the old schema (the
+    `seen` row that drives deduplication) must survive the upgrade."""
+    path = tmp_path / "s.db"
+
+    with monkeypatch.context() as m:
+        # Pin the module to only the first two migrations, so this open
+        # genuinely stops at user_version=2 — the pre-applications state a
+        # real user's rolescan.sqlite3 would be in.
+        m.setattr(store_module, "_MIGRATIONS", store_module._MIGRATIONS[:2])
+        async with Store(path) as store:
+            await store.record_all([ScoredJob(job=energy_job)])
+            cur = await store.db.execute("PRAGMA user_version")
+            row = await cur.fetchone()
+            assert row is not None
+            assert int(row[0]) == 2, "fixture must start below the new migration"
+
+    # Reopen with the real, unpatched Store: this is the actual upgrade path.
+    async with Store(path) as store:
+        cur = await store.db.execute("PRAGMA user_version")
+        row = await cur.fetchone()
+        assert row is not None
+        assert int(row[0]) == 3, "the new migration must have run"
+
+        tables = list(
+            await store.db.execute_fetchall(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='applications'"
+            )
+        )
+        assert tables, "applications table must exist after the upgrade"
+
+        assert await store.count() == 1
+        assert not await store.is_new(
+            energy_job
+        ), "seen data written under the old schema must survive the upgrade"
+
         await store.mark("https://x/2", "shortlist", company="A", title="One")
         assert await store.shortlist() == [("https://x/2", "A", "One")]
