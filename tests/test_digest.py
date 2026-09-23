@@ -64,6 +64,44 @@ def test_digest_does_not_claim_failure_for_a_genuinely_empty_market() -> None:
     assert "every source failed" not in text.casefold()
 
 
+def test_digest_does_not_call_a_skipped_source_a_failure() -> None:
+    """Skipped (not configured, e.g. Adzuna with no API key) is not the same
+    as errored. Calling it a failure sends the reader to debug a working
+    scraper at 06:30 instead of ignoring an expected config gap."""
+    result = ScanResult(
+        reports=[
+            SourceReport(
+                kind="adzuna", slug="x", label="Adzuna", skipped=True, error="no API key"
+            ),
+            SourceReport(
+                kind="linkedin",
+                slug="y",
+                label="LinkedIn",
+                skipped=True,
+                error="unsupported region",
+            ),
+        ]
+    )
+    text = render_markdown(result)
+    assert "failed" not in text.casefold()
+    assert "no configured source was able to run" in text.casefold()
+
+
+def test_digest_reports_a_mix_of_errors_and_skips_truthfully() -> None:
+    result = ScanResult(
+        reports=[
+            SourceReport(kind="adzuna", slug="x", label="Adzuna", skipped=True, error="no API key"),
+            SourceReport(kind="linkedin", slug="y", label="LinkedIn", error="challenge page"),
+        ]
+    )
+    text = render_markdown(result)
+    lowered = text.casefold()
+    assert "1 source(s) errored" in lowered
+    assert "1 declined to run" in lowered
+    # Must not claim every source failed when one only declined to run.
+    assert "every source failed" not in lowered
+
+
 def test_shortlist_row_with_blank_company_and_title_falls_back_to_url() -> None:
     """The Task 6 defect: `mark shortlist` on an unscanned url leaves company
     and title blank. The digest must never render an empty bullet for it —

@@ -161,14 +161,38 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
-def _every_source_failed(result: ScanResult) -> bool:
-    """True only when sources actually ran and none of them succeeded.
+def _run_outcome_note(result: ScanResult) -> str:
+    """A short, accurate note when no source ran cleanly, or "".
 
-    Distinct from an empty market: zero reportable roles because nothing
-    matched looks identical, in the digest, to zero because the scan never
-    fetched anything. This is what tells the two apart.
+    Zero reportable roles because nothing matched looks identical, in the
+    digest, to zero because nothing ran. This is what tells the reader
+    which one they are looking at — without conflating "a source errored"
+    (a scan failure) with "a source declined to run because it is not
+    configured" (a config gap, not a failure, and the normal state for
+    e.g. Adzuna with no API key). Getting this wrong sends someone to debug
+    a working scraper at 06:30.
     """
-    return bool(result.reports) and not any(r.ok for r in result.reports)
+    reports = result.reports
+    if not reports or any(r.ok for r in reports):
+        return ""
+    errored = [r for r in reports if r.error and not r.skipped]
+    skipped = [r for r in reports if r.skipped]
+    if errored and not skipped:
+        return (
+            " Every source failed this run. This is a scan failure, not an "
+            "empty market."
+        )
+    if skipped and not errored:
+        return (
+            " No configured source was able to run this time — nothing "
+            "errored, they simply declined to run. Check credentials or "
+            "config for the skipped source(s)."
+        )
+    # A mix: true of both halves without calling the whole run "failed".
+    return (
+        f" Nothing ran cleanly this run: {len(errored)} source(s) errored, "
+        f"{len(skipped)} declined to run (not configured). See below."
+    )
 
 
 def _stats(result: ScanResult) -> str:
@@ -181,13 +205,7 @@ def _stats(result: ScanResult) -> str:
     ]
     if result.llm_calls or result.llm_cached:
         bits.append(f"{result.llm_calls} scored, {result.llm_cached} from cache")
-    text = ". ".join(bits) + "."
-    if _every_source_failed(result):
-        text += (
-            " Every source failed this run. This is a scan failure, not an "
-            "empty market."
-        )
-    return text
+    return ". ".join(bits) + "." + _run_outcome_note(result)
 
 
 def _failures(result: ScanResult) -> list[str]:
