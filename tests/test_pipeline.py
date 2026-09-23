@@ -181,7 +181,7 @@ def test_digest_renders_llm_detail(energy_job: Job) -> None:
     )
     out = render_markdown(result)
     assert "EDF Trading" in out
-    assert "CV_Energy" in out
+    assert "CV_EnergySystems-Modelling" in out
     assert "battery dispatch" in out
     assert "82/100" in out
     assert "[Apply](https://example.com/1)" in out

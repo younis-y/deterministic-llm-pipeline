@@ -50,12 +50,12 @@ class Confidence(StrEnum):
 class CVVariant(StrEnum):
     """The tailored CV variants that exist in the user's project."""
 
-    ENERGY = "CV_Energy"
-    QUANT = "CV_Quant"
-    DATA_ENG = "CV_DataEng"
-    ML_AI = "CV_MLAI"
-    ELECTRICAL = "CV_Electrical"
-    CONSULTING = "CV_Consulting"
+    AI_LLM = "CV_AI-LLM-Engineering"
+    QUANT = "CV_Quant-Trading"
+    DATA_SCIENCE = "CV_DataScience-Gulf"
+    ENERGY = "CV_EnergySystems-Modelling"
+    RESEARCH = "CV_Research-DeepLearning"
+    CONSULTING = "CV_Consulting-Analytics"
 
 
 class Job(BaseModel):

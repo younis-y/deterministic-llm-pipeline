@@ -119,3 +119,14 @@ def test_verdict_falls_back_to_keywords(energy_job: Job) -> None:
         job=energy_job, keyword_score=5, keyword_penalties=["uae national"]
     )
     assert penalised.verdict is Verdict.BLOCKED
+
+
+def test_cv_variants_match_the_files_that_exist() -> None:
+    assert {v.value for v in CVVariant} == {
+        "CV_AI-LLM-Engineering",
+        "CV_Quant-Trading",
+        "CV_DataScience-Gulf",
+        "CV_EnergySystems-Modelling",
+        "CV_Research-DeepLearning",
+        "CV_Consulting-Analytics",
+    }

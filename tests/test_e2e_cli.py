@@ -64,7 +64,7 @@ def _project(tmp_path: Path) -> Path:
     cfg.write_text(CONFIG)
     cvs = tmp_path / "cvs"
     cvs.mkdir()
-    (cvs / "CV_Energy.tex").write_text(
+    (cvs / "CV_EnergySystems-Modelling.tex").write_text(
         r"\begin{document}\section{Skills} Python, forecasting.\end{document}"
     )
     return cfg
@@ -135,7 +135,7 @@ def test_cvs_command_reads_variants(tmp_path: Path) -> None:
     cfg = _project(tmp_path)
     result = runner.invoke(app, ["cvs", "-c", str(cfg)])
     assert result.exit_code == 0
-    assert "CV_Energy" in plain(result.output)
+    assert "CV_EnergySystems-Modelling" in plain(result.output)
 
 
 def test_stats_reports_zero_on_a_fresh_store(tmp_path: Path) -> None:

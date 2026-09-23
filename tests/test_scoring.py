@@ -114,14 +114,14 @@ def test_strip_latex_keeps_words_drops_markup() -> None:
 
 
 def test_cv_library_loads_variants(tmp_path: Path) -> None:
-    (tmp_path / "CV_Energy.tex").write_text(TEX)
-    (tmp_path / "CV_Quant.md").write_text("# Quant CV\nVECM, futures.")
+    (tmp_path / "CV_EnergySystems-Modelling.tex").write_text(TEX)
+    (tmp_path / "CV_Quant-Trading.md").write_text("# Quant CV\nVECM, futures.")
     library = CVLibrary.load(tmp_path)
     assert len(library) == 2
     assert CVVariant.ENERGY in library.variants
     assert "VECM" in library.variants[CVVariant.QUANT]
     block = library.prompt_block()
-    assert '<cv name="CV_Energy">' in block
+    assert '<cv name="CV_EnergySystems-Modelling">' in block
 
 
 def test_missing_cv_dir_degrades_gracefully(tmp_path: Path) -> None:
@@ -139,18 +139,18 @@ def test_cv_library_handles_none() -> None:
 
 
 def test_cv_variant_matches_a_punctuated_filename(tmp_path: Path) -> None:
-    """The enum says CV_MLAI; the real file on disk is CV_ML-AI.tex. Exact
-    matching dropped that variant silently, loading five of six."""
+    """The enum value may differ in punctuation from the filename; folding
+    normalizes both. cv_ai_llm_engineering.tex matches CV_AI-LLM-Engineering."""
     d = tmp_path / "cvs"
     d.mkdir()
-    (d / "CV_ML-AI.tex").write_text(
+    (d / "cv_ai_llm_engineering.tex").write_text(
         "\\begin{document}Machine learning and AI CV\\end{document}", encoding="utf-8"
     )
-    (d / "CV_Energy.tex").write_text(
+    (d / "CV_Energy_Systems_Modelling.tex").write_text(
         "\\begin{document}Energy markets CV\\end{document}", encoding="utf-8"
     )
     library = CVLibrary.load(d)
-    assert CVVariant.ML_AI in library.variants, "CV_ML-AI.tex must map to CV_MLAI"
+    assert CVVariant.AI_LLM in library.variants, "cv_ai_llm_engineering.tex must map to CV_AI-LLM-Engineering"
     assert CVVariant.ENERGY in library.variants
     assert len(library) == 2
 
@@ -158,7 +158,7 @@ def test_cv_variant_matches_a_punctuated_filename(tmp_path: Path) -> None:
 def test_cv_loading_is_case_and_separator_insensitive(tmp_path: Path) -> None:
     d = tmp_path / "cvs"
     d.mkdir()
-    (d / "cv_data_eng.tex").write_text(
+    (d / "cv_data_science_gulf.tex").write_text(
         "\\begin{document}Data\\end{document}", encoding="utf-8"
     )
-    assert CVVariant.DATA_ENG in CVLibrary.load(d).variants
+    assert CVVariant.DATA_SCIENCE in CVLibrary.load(d).variants

@@ -24,10 +24,9 @@ _KEY = re.compile(r"[^a-z0-9]+")
 def _fold(name: str) -> str:
     """Compare CV filenames loosely.
 
-    The enum spells the ML variant CV_MLAI; the file on disk is CV_ML-AI.tex.
-    Matching exactly dropped it without a word, so five of six variants loaded
-    and the LLM silently lost one option. Hyphens, underscores and case are not
-    worth a bug.
+    The enum may differ in punctuation from actual filenames: CV_AI-LLM-Engineering
+    in the enum matches cv_ai_llm_engineering.tex on disk. Hyphens, underscores
+    and case are not worth a bug.
     """
     return _KEY.sub("", name.casefold())
 
