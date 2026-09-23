@@ -329,5 +329,27 @@ def prune(
     console.print(f"Removed {asyncio.run(go())} cached verdicts.")
 
 
+@app.command()
+def mark(
+    url: Annotated[
+        str, typer.Argument(help="The posting URL, as printed in the digest.")
+    ],
+    state: Annotated[str, typer.Argument(help="shortlist, applied or dismissed.")],
+    config: ConfigOpt = Path("config.yaml"),
+) -> None:
+    """Record what you did with a posting so the digest stops repeating it."""
+    if state not in Store.STATES:
+        console.print(f"[red]state must be one of: {', '.join(Store.STATES)}[/]")
+        raise typer.Exit(2)
+    cfg = _load(config)
+
+    async def go() -> None:
+        async with Store(cfg.resolve(cfg.output.db_path)) as store:
+            await store.mark(url, state)
+
+    asyncio.run(go())
+    console.print(f"{state}: {url}")
+
+
 if __name__ == "__main__":
     app()

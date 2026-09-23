@@ -6,6 +6,7 @@ dispatch, scoring, store, digest file, and exit codes.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import httpx
@@ -15,6 +16,7 @@ from typer.testing import CliRunner
 
 from conftest import plain
 from rolescan.cli import app
+from rolescan.store import Store
 
 runner = CliRunner()
 
@@ -206,3 +208,43 @@ def test_discover_marks_disabled_sources(tmp_path: Path) -> None:
     result = runner.invoke(app, ["discover", "-c", str(cfg)])
     assert result.exit_code == 0
     assert "disabled" in plain(result.output), "probing a disabled source must say so"
+
+
+def test_mark_rejects_an_unknown_state(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["mark", "https://x/1", "maybe"])
+    assert result.exit_code == 2
+    assert "shortlist" in plain(result.output)
+
+
+def test_mark_records_a_state_readable_back(tmp_path: Path) -> None:
+    cfg = _project(tmp_path)
+    result = runner.invoke(app, ["mark", "https://x/1", "shortlist", "-c", str(cfg)])
+    assert result.exit_code == 0, result.output
+    assert "shortlist: https://x/1" in plain(result.output)
+
+    async def read() -> str | None:
+        async with Store(tmp_path / "seen.db") as store:
+            return await store.application_state("https://x/1")
+
+    assert asyncio.run(read()) == "shortlist"
+
+
+def test_mark_twice_updates_rather_than_duplicates(tmp_path: Path) -> None:
+    cfg = _project(tmp_path)
+    runner.invoke(app, ["mark", "https://x/1", "shortlist", "-c", str(cfg)])
+    result = runner.invoke(app, ["mark", "https://x/1", "applied", "-c", str(cfg)])
+    assert result.exit_code == 0, result.output
+
+    async def read() -> tuple[str | None, int]:
+        async with Store(tmp_path / "seen.db") as store:
+            state = await store.application_state("https://x/1")
+            rows = list(
+                await store.db.execute_fetchall(
+                    "SELECT COUNT(*) FROM applications WHERE url = ?", ("https://x/1",)
+                )
+            )
+            return state, int(rows[0][0])
+
+    state, count = asyncio.run(read())
+    assert state == "applied"
+    assert count == 1
