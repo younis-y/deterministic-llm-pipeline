@@ -95,16 +95,7 @@ async def test_scan_reports_a_match(config: Config) -> None:
 
 
 @respx.mock
-async def test_second_run_reports_nothing_new(scoring_config: Config) -> None:
-    """Report once, never again — as long as the posting was actually judged.
-
-    Uses a working scorer deliberately. A run whose scorer could not answer
-    no longer records what it could not judge (see
-    `test_an_unjudged_posting_is_not_buried_in_seen`), so "seen" and "scored"
-    are now the same guarantee and this test has to establish the healthy half
-    of it.
-    """
-    mock_ollama()
+async def test_second_run_reports_nothing_new(config: Config) -> None:
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200,
@@ -114,8 +105,8 @@ async def test_second_run_reports_nothing_new(scoring_config: Config) -> None:
             ),
         )
     )
-    assert len((await run_scan(scoring_config)).reportable) == 1
-    second = await run_scan(scoring_config)
+    assert len((await run_scan(config)).reportable) == 1
+    second = await run_scan(config)
     assert second.reportable == []
     assert second.already_seen == 1
 
@@ -295,7 +286,6 @@ async def test_a_second_scan_does_not_refetch_an_unchanged_posting(
         '"description":"&lt;p&gt;Forecasting day-ahead electricity prices.&lt;/p&gt;"}'
         "</script></head><body>x</body></html>"
     )
-    mock_ollama()
     respx.get("https://ex.test/sitemap.xml").mock(
         return_value=httpx.Response(200, text=sitemap)
     )
@@ -306,7 +296,7 @@ async def test_a_second_scan_does_not_refetch_an_unchanged_posting(
     cfg = Config.model_validate(
         {
             "profile": {"min_keyword_score": 0, "min_report_score": 0},
-            "llm": {"enabled": True, "backend": "ollama"},
+            "llm": {"enabled": False},
             "output": {"dir": str(tmp_path), "db_path": str(tmp_path / "seen.db")},
             "sources": [
                 {
@@ -405,14 +395,49 @@ def _cfg(tmp_path: Path, llm: dict[str, object]) -> Config:
 
 
 @respx.mock
-async def test_an_unjudged_posting_is_not_buried_in_seen(tmp_path: Path) -> None:
+async def test_an_unjudged_posting_is_not_buried_in_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The forty-postings defect, in one test.
 
     `seen` used to be seeded from every fresh posting regardless of whether
-    anything had judged it. With scoring unavailable, a run recorded forty
-    real roles it had formed no opinion of, and `filter_new` then suppressed
-    every one of them for good. Nothing in the digest said so, because from
-    the outside the run had succeeded.
+    anything had judged it. The configured backend here cannot start at all -
+    `anthropic` with no key, which is how the real incident began - so a run
+    recorded forty real roles it had formed no opinion of, and `filter_new`
+    then suppressed every one of them for good. Nothing in the digest said so,
+    because from the outside the run had succeeded.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json=_payload(
+                "Graduate Energy Data Scientist",
+                "Python, trading, energy, day-ahead forecasting.",
+            ),
+        )
+    )
+    cfg = _cfg(tmp_path, {"enabled": True, "backend": "anthropic", "api_key": ""})
+    first = await run_scan(cfg)
+    assert first.llm_unusable, "the backend was supposed to work and did not"
+    assert first.prefiltered == 0, "this posting reached the scorer"
+    assert await _seen_uids(tmp_path / "seen.db") == set()
+
+    second = await run_scan(cfg)
+    assert second.already_seen == 0, "it must still be reachable tomorrow"
+
+
+@respx.mock
+async def test_a_deliberate_keyword_only_run_does_record_what_it_judged(
+    tmp_path: Path,
+) -> None:
+    """The other side of the line, and the reason the gate is not `enabled`.
+
+    `llm.enabled: false` is not a broken backend. Those postings WERE judged,
+    on keywords, which is this user's chosen judgement — so they are recorded
+    and not reported again. Refusing to record them would repeat the same
+    roles in every digest forever: the same silent failure the rest of this
+    wave exists to end, just a quieter one.
     """
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
@@ -425,11 +450,12 @@ async def test_an_unjudged_posting_is_not_buried_in_seen(tmp_path: Path) -> None
     )
     cfg = _cfg(tmp_path, {"enabled": False})
     first = await run_scan(cfg)
+    assert first.llm_unusable == "", "nobody asked for a judge, so none is broken"
     assert first.prefiltered == 0, "this posting reached the scorer"
-    assert await _seen_uids(tmp_path / "seen.db") == set()
+    assert len(await _seen_uids(tmp_path / "seen.db")) == 1
 
     second = await run_scan(cfg)
-    assert second.already_seen == 0, "it must still be reachable tomorrow"
+    assert second.already_seen == 1, "a keyword-only run must not repeat itself"
 
 
 @respx.mock

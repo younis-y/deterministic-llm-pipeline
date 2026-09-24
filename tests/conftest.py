@@ -30,17 +30,11 @@ sources:
 """
 
 
-# A config identical to the one above except that scoring actually runs. The
-# pipeline now distinguishes "the scorer judged this" from "the scorer was
-# unavailable and this came back unjudged" - it records the first and refuses
-# to record the second - so a healthy scoring run has to be expressible in a
-# test, without a key and without a network call. Ollama is the backend that
-# needs no key; `mock_ollama` answers for it in-process.
-FIXTURE_CONFIG_SCORING = FIXTURE_CONFIG.replace(
-    "llm:\n  enabled: false\n",
-    "llm:\n  enabled: true\n  backend: ollama\n",
-)
-
+# The pipeline distinguishes "the intended judge answered" from "the intended
+# judge could not start", and records only the first - so a *healthy* scoring
+# run has to be expressible in a test, without a key and without a network
+# call. Ollama is the backend that needs no key; `mock_ollama` answers for it
+# in-process.
 LLM_VERDICT = {
     "fit_score": 72,
     "verdict": "consider",
@@ -76,14 +70,6 @@ def profile() -> ProfileConfig:
 def config(tmp_path: Path) -> Config:
     path = tmp_path / "config.yaml"
     path.write_text(FIXTURE_CONFIG)
-    return Config.load(path)
-
-
-@pytest.fixture
-def scoring_config(tmp_path: Path) -> Config:
-    """Like `config`, but with a backend that can actually return a verdict."""
-    path = tmp_path / "config.yaml"
-    path.write_text(FIXTURE_CONFIG_SCORING)
     return Config.load(path)
 
 

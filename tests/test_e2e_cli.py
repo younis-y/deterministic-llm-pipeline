@@ -15,7 +15,7 @@ import pytest
 import respx
 from typer.testing import CliRunner
 
-from conftest import mock_ollama, plain
+from conftest import plain
 from rolescan.cli import app
 from rolescan.store import Store
 
@@ -62,16 +62,6 @@ BOARD = {
 }
 
 
-# The same config with a backend that can actually answer. `mock_ollama`
-# supplies the answer in-process, so an end-to-end run can be a *healthy* one
-# without a key or a network call - which matters now that the pipeline
-# refuses to mark a posting seen when the scorer could not judge it.
-SCORING_CONFIG = CONFIG.replace(
-    "llm:\n  enabled: false\n",
-    "llm:\n  enabled: true\n  backend: ollama\n",
-)
-
-
 def _project(tmp_path: Path, config_text: str = CONFIG) -> Path:
     cfg = tmp_path / "config.yaml"
     cfg.write_text(config_text)
@@ -98,8 +88,7 @@ def test_missing_config_exits_cleanly(tmp_path: Path) -> None:
 
 @respx.mock
 def test_full_scan_writes_a_digest(tmp_path: Path) -> None:
-    cfg = _project(tmp_path, SCORING_CONFIG)
-    mock_ollama()
+    cfg = _project(tmp_path)
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(200, json=BOARD)
     )

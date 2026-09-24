@@ -69,7 +69,13 @@ class ScanResult:
     Distinct from `llm_errors`, which counts calls that were made and failed.
     This one means no call was ever attempted: wrong backend name, no key,
     SDK absent. Carried on the result so the digest can say it, because the
-    person this matters to reads the 06:30 email, not the launchd log."""
+    person this matters to reads the 06:30 email, not the launchd log.
+
+    Load-bearing, not only cosmetic: together with `llm_errors` it is what
+    decides whether a posting is recorded as seen. Empty means "no judge was
+    asked for", which is a deliberate keyword-only run and records normally;
+    non-empty means "a judge was asked for and could not start", which must
+    not bury postings it never looked at."""
     reportable: list[ScoredJob] = field(default_factory=list)
     dry_run: bool = False
 
@@ -203,20 +209,24 @@ async def run_scan(
             # rejected today is not re-surfaced tomorrow - and ONLY those.
             #
             # Recording a posting writes it to `seen`, and `filter_new` then
-            # suppresses it forever. Doing that to a posting the scorer never
-            # judged buries a real role on the strength of a verdict that was
-            # never reached. It has happened: a run with scoring unavailable
-            # recorded forty new postings, every one of them unjudged, and
-            # they can never surface again.
+            # suppresses it forever. Doing that to a posting the intended judge
+            # never saw buries a real role on the strength of a verdict that
+            # was never reached. It has happened: a run whose backend could not
+            # start recorded forty new postings, every one of them unjudged,
+            # and they can never surface again.
             #
-            # Prefiltered rejects are safe to record either way: they were
-            # assessed, on keywords, and rejected. It is the candidates that
-            # reached a scorer which could not answer that must stay unseen.
-            scoring_unavailable = scorer.errors > 0 or not cfg.llm.enabled
+            # The line is between a judge that was SUPPOSED to work and did
+            # not, and no judge having been asked for. Scoring switched off on
+            # purpose is not a failure: those postings were judged, on
+            # keywords, which is that user's chosen judgement, and refusing to
+            # record them would repeat the same roles in every digest forever
+            # - the same silent failure this wave exists to end, just quieter.
+            #
+            # Prefiltered rejects are recorded either way: they were assessed,
+            # on keywords, and rejected on their merits.
+            backend_broke = bool(result.llm_unusable) or scorer.errors > 0
             recorded = list(rejects)
-            recorded += [
-                s for s in judged if s.fit is not None or not scoring_unavailable
-            ]
+            recorded += [s for s in judged if s.fit is not None or not backend_broke]
             await store.record_all(recorded)
 
     keep = [s for s in judged if s.score >= cfg.profile.min_report_score]
