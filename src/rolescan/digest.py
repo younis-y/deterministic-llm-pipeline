@@ -237,7 +237,7 @@ def _stats(result: ScanResult) -> str:
         # chance to notice a blocker term that is matching the wrong thing.
         bits.append(
             f"{result.hidden_blocked} blocked and hidden "
-            "(set output.show_blocked true to see them)"
+            "(output.show_blocked is false)"
         )
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
@@ -305,9 +305,10 @@ def _failures(result: ScanResult) -> list[str]:
             f"**The pre-scan backend check failed, but scoring ran anyway.** "
             f"{result.llm_unusable}.",
             "",
-            "The scores below are real. It is the liveness probe that failed, "
-            "not the backend — it is deliberately short so an unattended run "
-            "cannot hang on it, and a loaded server can exceed it.",
+            "Scoring itself worked, so the fit scores in this digest are "
+            "real. It is the liveness probe that failed, not the backend — it "
+            "is deliberately short so an unattended run cannot hang on it, "
+            "and a loaded server can exceed it.",
             "",
         ]
     if result.llm_errors:

@@ -85,10 +85,11 @@ def _hard_hit(term: str, blob: str) -> bool:
     "cryptographic", so a security-adjacent quant role mentioning
     cryptographic hashing once was force-blocked over the model's objection.
 
-    `\w` boundaries rather than `\b` because `\b` is defined against the
-    adjacent character in the PATTERN as well as the text, so a term ending
-    in punctuation - `10+ years`, `c++` - would anchor on the wrong side and
-    silently stop matching. Multi-word terms are unaffected either way.
+    `\w` lookarounds rather than `\b`, because `\b` is defined against the
+    adjacent character in the PATTERN as well as the text: for a term ending
+    in punctuation, such as `c++`, a trailing `\b` would then demand a word
+    character immediately after it and the bar would silently stop matching.
+    Multi-word terms are unaffected either way.
     """
     return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", blob) is not None
 
