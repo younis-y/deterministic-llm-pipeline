@@ -91,6 +91,80 @@ def _load(path: Path) -> Config:
         raise typer.Exit(2) from e
 
 
+def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
+    """The loudest thing this command prints, deliberately.
+
+    Every silent self-disabling defect this tool has had ended here: a judge
+    that could not run, a run that reported success, and an empty digest with
+    nothing in it saying why.
+    """
+    if not result.llm_unusable:
+        return
+    if not (result.llm_calls or result.llm_cached):
+        console.print(
+            f"\n[bold red]LLM scoring did not run: {result.llm_unusable}.[/]\n"
+            "[bold red]Every posting was ranked on keyword score alone, "
+            f"against min_report_score={cfg.profile.min_report_score}, which "
+            "is calibrated for LLM fit scores — so this digest is probably "
+            "empty for that reason and not because the market is.[/]\n"
+            "[dim]Fix the backend, or run with --no-llm to accept a "
+            "keyword-only digest without this warning.[/]\n"
+        )
+        return
+    # Scoring worked, so the claim above would be false and the reader would
+    # be looking at fit scores under a line saying there are none. Still worth
+    # printing: the probe is short by design, and one that keeps failing on a
+    # healthy server is a real thing to know.
+    console.print(
+        f"\n[yellow]The pre-scan backend check failed "
+        f"({result.llm_unusable}), but scoring ran anyway: "
+        f"{result.llm_calls} scored, {result.llm_cached} from cache.[/]\n"
+        "[dim]The liveness probe is deliberately short so an unattended "
+        "run cannot hang on it; a loaded server can exceed it.[/]\n"
+    )
+
+
+def _ranked_table(result: ScanResult) -> Table:
+    table = Table(title="Ranked", show_edge=False, header_style="bold")
+    table.add_column("Score", justify="right")
+    table.add_column("Verdict")
+    table.add_column("Role")
+    table.add_column("CV")
+    for item in result.reportable:
+        table.add_row(
+            str(item.score),
+            f"[{_VERDICT_STYLE[item.verdict]}]{item.verdict.value}[/]",
+            f"{item.job.title} — {item.job.company}",
+            item.fit.cv_variant.value if item.fit else "-",
+        )
+    return table
+
+
+def _deliver(text: str, cfg: Config, path: Path, *, email: bool) -> None:
+    """Send the digest, or say exactly why it is not being sent.
+
+    Never falls through in silence. A disabled emailer used to look exactly
+    like a successful send from the caller's side, which under launchd means
+    nobody finds out until they wonder why the 06:30 mail stopped arriving.
+    """
+    if not email:
+        console.print("[dim]email skipped: --no-email[/]")
+        return
+    if not cfg.output.email.enabled:
+        console.print(f"[yellow]email skipped:[/] {_email_skip_reason(cfg)}")
+        return
+    try:
+        if send_email(text, cfg.output.email, html_body=render_html(text)):
+            console.print("[green]emailed[/]")
+    except Exception as e:
+        # The digest is already on disk, so nothing is lost - but the run did
+        # not do what it was scheduled to do, and launchd only records that if
+        # the exit status says so.
+        console.print(f"[red]email failed:[/] {e}")
+        console.print(f"[dim]the digest is still on disk at {path}[/]")
+        raise typer.Exit(1) from e
+
+
 @app.command()
 def scan(
     config: ConfigOpt = Path("config.yaml"),
@@ -116,98 +190,22 @@ def scan(
         return result, shortlist_rows
 
     result, shortlist_rows = asyncio.run(_go())
-
-    llm_ran = bool(result.llm_calls or result.llm_cached)
-    if result.llm_unusable and not llm_ran:
-        # The loudest thing this command prints, deliberately. Every silent
-        # self-disabling defect this tool has had ended here: a judge that
-        # could not run, a run that reported success, and an empty digest with
-        # nothing in it saying why.
-        console.print(
-            f"\n[bold red]LLM scoring did not run: {result.llm_unusable}.[/]\n"
-            "[bold red]Every posting was ranked on keyword score alone, "
-            f"against min_report_score={cfg.profile.min_report_score}, which "
-            "is calibrated for LLM fit scores — so this digest is probably "
-            "empty for that reason and not because the market is.[/]\n"
-            "[dim]Fix the backend, or run with --no-llm to accept a "
-            "keyword-only digest without this warning.[/]\n"
-        )
-    elif result.llm_unusable:
-        # Scoring worked, so the claim above would be false and the reader
-        # would be looking at fit scores under a line saying there are none.
-        # Still worth printing: the probe is short by design, and one that
-        # keeps failing on a healthy server is a real thing to know.
-        console.print(
-            f"\n[yellow]The pre-scan backend check failed "
-            f"({result.llm_unusable}), but scoring ran anyway: "
-            f"{result.llm_calls} scored, {result.llm_cached} from cache.[/]\n"
-            "[dim]The liveness probe is deliberately short so an unattended "
-            "run cannot hang on it; a loaded server can exceed it.[/]\n"
-        )
+    _warn_if_llm_did_not_run(result, cfg)
 
     text = render_markdown(
         result, shortlist=shortlist_rows, config_path=config.resolve()
     )
-
     path = write_digest(text, cfg.resolve(cfg.output.dir))
     console.print(Markdown(text))
     console.print(f"\n[dim]written to {path}[/]")
 
     if result.reportable:
-        table = Table(title="Ranked", show_edge=False, header_style="bold")
-        table.add_column("Score", justify="right")
-        table.add_column("Verdict")
-        table.add_column("Role")
-        table.add_column("CV")
-        for item in result.reportable:
-            table.add_row(
-                str(item.score),
-                f"[{_VERDICT_STYLE[item.verdict]}]{item.verdict.value}[/]",
-                f"{item.job.title} — {item.job.company}",
-                item.fit.cv_variant.value if item.fit else "-",
-            )
-        console.print(table)
+        console.print(_ranked_table(result))
 
-    if not email:
-        console.print("[dim]email skipped: --no-email[/]")
-    elif not cfg.output.email.enabled:
-        # Never fall through in silence. A disabled emailer used to look
-        # exactly like a successful send from the caller's side, which under
-        # launchd means nobody finds out until they wonder why the 06:30 mail
-        # stopped arriving.
-        console.print(f"[yellow]email skipped:[/] {_email_skip_reason(cfg)}")
-    else:
-        try:
-            if send_email(text, cfg.output.email, html_body=render_html(text)):
-                console.print("[green]emailed[/]")
-        except Exception as e:
-            # The digest is already on disk, so nothing is lost - but the run
-            # did not do what it was scheduled to do, and launchd only records
-            # that if the exit status says so.
-            console.print(f"[red]email failed:[/] {e}")
-            console.print(f"[dim]the digest is still on disk at {path}[/]")
-            raise typer.Exit(1) from e
+    _deliver(text, cfg, path, email=email)
 
 
-@app.command()
-def discover(
-    config: ConfigOpt = Path("config.yaml"),
-    verbose: VerboseOpt = False,
-) -> None:
-    """Probe every configured board and report which slugs actually work."""
-    _setup_logging(verbose)
-    cfg = _load(config)
-
-    async def probe() -> list[tuple[SourceEntry, ProbeResult]]:
-        async with Fetcher(cfg.http) as fetcher:
-
-            async def one(entry: SourceEntry) -> tuple[SourceEntry, ProbeResult]:
-                return entry, await get_source(entry, fetcher).probe()
-
-            return list(await asyncio.gather(*(one(e) for e in cfg.sources)))
-
-    rows = asyncio.run(probe())
-
+def _probe_table(rows: list[tuple[SourceEntry, ProbeResult]]) -> Table:
     table = Table(title="Configured sources", show_edge=False, header_style="bold")
     for col in ("", "Kind", "Slug", "Label", "Jobs", "Note"):
         table.add_column(col)
@@ -222,29 +220,70 @@ def discover(
             str(result.count) if result.count >= 0 else "-",
             result.detail,
         )
-    console.print(table)
+    return table
 
+
+def _probe_summary(rows: list[tuple[SourceEntry, ProbeResult]]) -> str:
+    """The one line worth reading if you read nothing else.
+
+    `trustworthy` rather than "not failed": a board that answered 200 with
+    zero rows is not evidence the slug is right, and counting it as verified
+    is the bug this command exists to avoid.
+    """
     verified = sum(1 for _, r in rows if r.trustworthy)
     unknown = sum(1 for _, r in rows if r.status is ProbeStatus.UNKNOWN)
     skipped = sum(1 for _, r in rows if r.status is ProbeStatus.SKIPPED)
     failed = sum(1 for _, r in rows if r.status is ProbeStatus.FAIL)
-    console.print(
+    return (
         f"\n[green]{verified} verified[/], [yellow]{unknown} unverifiable[/], "
         f"[dim]{skipped} skipped[/], [red]{failed} broken[/]  "
         f"(of {len(rows)} configured)"
     )
-    if unknown:
+
+
+def _slug_hints(rows: list[tuple[SourceEntry, ProbeResult]]) -> list[str]:
+    """Where to find the real slug, for the kinds that actually failed."""
+    kinds = {e.kind for e, r in rows if r.status is ProbeStatus.FAIL}
+    return [
+        f"  [cyan]{name:16}[/] {cls.slug_hint}"
+        for name, cls in sorted(available().items())
+        if name in kinds and cls.slug_hint
+    ]
+
+
+async def _probe_all(cfg: Config) -> list[tuple[SourceEntry, ProbeResult]]:
+    async with Fetcher(cfg.http) as fetcher:
+
+        async def one(entry: SourceEntry) -> tuple[SourceEntry, ProbeResult]:
+            return entry, await get_source(entry, fetcher).probe()
+
+        return list(await asyncio.gather(*(one(e) for e in cfg.sources)))
+
+
+@app.command()
+def discover(
+    config: ConfigOpt = Path("config.yaml"),
+    verbose: VerboseOpt = False,
+) -> None:
+    """Probe every configured board and report which slugs actually work."""
+    _setup_logging(verbose)
+    cfg = _load(config)
+    rows = asyncio.run(_probe_all(cfg))
+    statuses = {r.status for _, r in rows}
+
+    console.print(_probe_table(rows))
+    console.print(_probe_summary(rows))
+
+    if ProbeStatus.UNKNOWN in statuses:
         console.print(
             "\n[yellow]UNKNOWN[/] means the API answered 200 with zero rows and "
             "does not 404 unknown slugs, so an empty board and a wrong slug are\n"
             "indistinguishable. Open the careers page in a browser to settle it."
         )
-    if failed:
+    if ProbeStatus.FAIL in statuses:
         console.print("\n[bold]Where the slug comes from:[/]")
-        kinds = {e.kind for e, r in rows if r.status is ProbeStatus.FAIL}
-        for name, cls in sorted(available().items()):
-            if name in kinds and cls.slug_hint:
-                console.print(f"  [cyan]{name:16}[/] {cls.slug_hint}")
+        for line in _slug_hints(rows):
+            console.print(line)
 
 
 @app.command()
