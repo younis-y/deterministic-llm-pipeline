@@ -52,11 +52,10 @@ profile:
   # things that are genuinely structural (a clearance, a nationality gate, a
   # visa you do not hold). A lighter weight is a preference, not a wall - it
   # still costs points and still shows on the posting, but the LLM can still
-  # say apply. NOTE: none of the example weights below reach 50, so as
-  # written none of them hard-block; raise the ones you mean as a genuine bar
-  # (security clearance is the obvious candidate) to 50+.
+  # say apply. The clearance below sits in the hard range; the rest are
+  # preferences, which is the distinction this field exists to express.
   blockers:
-    security clearance: 25
+    security clearance: 60
     "10+ years": 20
     director: 15
     unpaid: 30
