@@ -29,6 +29,7 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
     total = 0
     hits: list[str] = []
     penalties: list[str] = []
+    blockers: list[str] = []
 
     for term, weight in profile.keywords.items():
         needle = term.casefold()
@@ -43,9 +44,13 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
         if term.casefold() in blob:
             total -= penalty
             penalties.append(term)
+            blockers.append(term)
 
     if not _location_ok(job, profile):
         total -= profile.location_penalty
+        # Not a hard bar: the candidate allows remote and has several target
+        # cities, so this goes in keyword_penalties (for display) but never
+        # in blocker_hits (which forces a `blocked` verdict).
         penalties.append("location mismatch")
 
     return ScoredJob(
@@ -53,6 +58,7 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
         keyword_score=total,
         keyword_hits=hits,
         keyword_penalties=penalties,
+        blocker_hits=blockers,
     )
 
 

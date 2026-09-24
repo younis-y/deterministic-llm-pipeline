@@ -48,6 +48,7 @@ def test_title_hits_outweigh_body_hits(profile: ProfileConfig) -> None:
 def test_gated_role_is_penalised(gated_job: Job, profile: ProfileConfig) -> None:
     scored = score_keywords(gated_job, profile)
     assert "uae national" in scored.keyword_penalties
+    assert "uae national" in scored.blocker_hits
     assert scored.keyword_score < profile.min_keyword_score
 
 
@@ -67,7 +68,23 @@ def test_wrong_location_is_penalised(profile: ProfileConfig) -> None:
         location="Austin, Texas",
         url="https://x",
     )
-    assert "location mismatch" in score_keywords(job, profile).keyword_penalties
+    scored = score_keywords(job, profile)
+    assert "location mismatch" in scored.keyword_penalties
+
+
+def test_wrong_location_is_never_a_blocker_hit(profile: ProfileConfig) -> None:
+    """A location mismatch lowers the score but is not a hard structural bar,
+    so it must never appear in blocker_hits - only real configured blocker
+    terms belong there, since blocker_hits is what forces a `blocked`
+    verdict."""
+    job = Job(
+        source="s",
+        company="c",
+        title="Energy Data Scientist",
+        location="Austin, Texas",
+        url="https://x",
+    )
+    assert score_keywords(job, profile).blocker_hits == []
 
 
 def test_remote_beats_location_mismatch(profile: ProfileConfig) -> None:

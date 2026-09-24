@@ -508,6 +508,45 @@ async def test_a_healthy_run_still_records_what_it_judged(tmp_path: Path) -> Non
 
 
 @respx.mock
+async def test_a_configured_blocker_overrides_a_high_llm_score(tmp_path: Path) -> None:
+    """The user's blockers are an instruction, not a hint. A posting that
+    clears the keyword prefilter and that the LLM scores well above
+    min_report_score must still be excluded once it hits a hard blocker term
+    - the LLM's opinion does not get to outvote a blocker the user configured."""
+    mock_ollama()  # canned verdict: fit_score=72, verdict="consider" - not blocked
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json=_payload(
+                "Graduate Energy Data Scientist",
+                "Python, trading, energy, day-ahead forecasting. "
+                "10+ years experience required.",
+            ),
+        )
+    )
+    cfg = Config.model_validate(
+        {
+            "profile": {
+                "keywords": _KEYWORDS,
+                "blockers": {"10+ years": 20},
+                "min_keyword_score": 18,
+                "min_report_score": 55,
+            },
+            "llm": {"enabled": True, "backend": "ollama"},
+            "output": {
+                "dir": str(tmp_path),
+                "db_path": str(tmp_path / "seen.db"),
+                "show_blocked": False,
+            },
+            "sources": [{"kind": "greenhouse", "slug": "acme", "label": "Acme"}],
+        }
+    )
+    result = await run_scan(cfg)
+    assert result.prefiltered == 0, "the posting must have reached the LLM"
+    assert result.reportable == [], "a hard blocker must not reach the digest"
+
+
+@respx.mock
 async def test_a_prefiltered_reject_is_recorded_even_with_scoring_off(
     tmp_path: Path,
 ) -> None:

@@ -199,6 +199,13 @@ class ScoredJob(BaseModel):
     keyword_score: int = 0
     keyword_hits: list[str] = Field(default_factory=list)
     keyword_penalties: list[str] = Field(default_factory=list)
+    blocker_hits: list[str] = Field(default_factory=list)
+    """Configured `blockers` terms found in the posting text - a subset of
+    keyword_penalties that excludes the location-mismatch flag, which is a
+    preference, not a hard bar. A hit here is an instruction the user wrote
+    into their config, not a hint: it makes this posting `blocked` regardless
+    of what the LLM decides, because a model's opinion does not get to
+    outvote it."""
     fit: FitVerdict | None = None
     llm_cached: bool = False
 
@@ -211,10 +218,15 @@ class ScoredJob(BaseModel):
 
     @property
     def verdict(self) -> Verdict:
+        """The user's configured blockers are a floor the LLM cannot lift:
+        a real blocker hit is always `blocked`, even when an LLM verdict
+        scored this posting highly. Short of that floor, the LLM's verdict
+        wins when there is one; otherwise this falls back to the keyword
+        score alone."""
+        if self.blocker_hits:
+            return Verdict.BLOCKED
         if self.fit is not None:
             return self.fit.verdict
-        if self.keyword_penalties:
-            return Verdict.BLOCKED
         return Verdict.CONSIDER if self.keyword_score > 0 else Verdict.SKIP
 
     @property

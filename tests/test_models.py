@@ -116,9 +116,46 @@ def test_verdict_falls_back_to_keywords(energy_job: Job) -> None:
     assert ScoredJob(job=energy_job, keyword_score=40).verdict is Verdict.CONSIDER
     assert ScoredJob(job=energy_job, keyword_score=0).verdict is Verdict.SKIP
     penalised = ScoredJob(
-        job=energy_job, keyword_score=5, keyword_penalties=["uae national"]
+        job=energy_job,
+        keyword_score=5,
+        keyword_penalties=["uae national"],
+        blocker_hits=["uae national"],
     )
     assert penalised.verdict is Verdict.BLOCKED
+
+
+def test_configured_blocker_overrides_a_high_llm_verdict(energy_job: Job) -> None:
+    """A hard blocker the user configured is an instruction, not a hint: the
+    LLM scoring this posting highly must not be able to outvote it."""
+    scored = ScoredJob(
+        job=energy_job,
+        keyword_penalties=["security clearance"],
+        blocker_hits=["security clearance"],
+        fit=_verdict(fit_score=88, verdict=Verdict.APPLY),
+    )
+    assert scored.verdict is Verdict.BLOCKED
+    assert scored.is_blocked
+
+
+def test_location_mismatch_never_blocks_even_with_a_high_llm_score(
+    energy_job: Job,
+) -> None:
+    """The candidate allows remote and has several target cities: a location
+    mismatch is a preference, not a structural bar, and must not become one -
+    whether or not the LLM ran."""
+    with_llm = ScoredJob(
+        job=energy_job,
+        keyword_penalties=["location mismatch"],
+        fit=_verdict(fit_score=88, verdict=Verdict.APPLY),
+    )
+    assert with_llm.verdict is Verdict.APPLY
+    assert not with_llm.is_blocked
+
+    without_llm = ScoredJob(
+        job=energy_job, keyword_score=5, keyword_penalties=["location mismatch"]
+    )
+    assert without_llm.verdict is Verdict.CONSIDER
+    assert not without_llm.is_blocked
 
 
 def test_cv_variants_match_the_files_that_exist() -> None:

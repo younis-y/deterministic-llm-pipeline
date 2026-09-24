@@ -44,8 +44,13 @@ def _role(item: ScoredJob) -> list[str]:
     if fit is not None:
         lines.append(fit.reason)
         lines.append("")
-        if fit.blockers:
-            lines.append("**Blocked by:** " + "; ".join(fit.blockers))
+        # A configured blocker can override the LLM's own verdict, in which
+        # case fit.blockers (what the model itself noticed) may be empty even
+        # though this posting is blocked. Show whichever list is non-empty so
+        # a blocked entry never renders with no stated reason.
+        blocked_by = list(dict.fromkeys([*fit.blockers, *item.blocker_hits]))
+        if blocked_by:
+            lines.append("**Blocked by:** " + "; ".join(blocked_by))
             lines.append("")
         # No CV advice for a role you cannot be considered for. Suggesting one
         # reads as an invitation to waste an afternoon on it.
