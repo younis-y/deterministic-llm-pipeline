@@ -530,6 +530,11 @@ async def test_a_dismissed_url_does_not_reappear(tmp_path: Path) -> None:
 
     again = await run_scan(cfg, dry_run=True)
     assert again.reportable == [], "a dismissed posting must never return"
+    # Counted with the already-seen rather than vanishing, so the stats line
+    # still adds up: unique = already seen + prefiltered + what was scored.
+    assert again.unique == 1
+    assert again.already_seen == 1
+    assert again.prefiltered == 0
 
 
 # --- an unusable judge must reach the reader, not just the log -------------

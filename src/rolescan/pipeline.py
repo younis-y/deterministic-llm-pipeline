@@ -168,14 +168,20 @@ async def run_scan(
         scored = [score_keywords(j, cfg.profile) for j in unique]
 
         fresh = await store.filter_new(scored)
-        result.already_seen = len(scored) - len(fresh)
 
         # A dismissed posting must never come back, however many boards carry
         # it. `seen` alone cannot do this: the same role arrives under a new
         # uid from the next source that lists it.
+        #
+        # Counted with the already-seen, and before that total is taken, so
+        # the stats line still reconciles: unique = already seen + filtered
+        # before scoring + whatever reached the scorer. A dismissal is a
+        # posting the reader has already dealt with, which is what the reader
+        # takes "already seen" to mean.
         dismissed = await store.dismissed_urls()
         if dismissed:
             fresh = [s for s in fresh if s.job.url not in dismissed]
+        result.already_seen = len(scored) - len(fresh)
 
         gate = cfg.profile.min_keyword_score
         candidates = [s for s in fresh if s.keyword_score >= gate]

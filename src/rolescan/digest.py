@@ -230,14 +230,13 @@ def _failures(result: ScanResult) -> list[str]:
         # keyword scores are not calibrated against min_report_score, so this
         # digest is close to empty by construction rather than by market.
         lines += [
-            "**LLM scoring did not run at all.** "
-            f"{result.llm_unusable}.",
+            f"**LLM scoring did not run at all.** {result.llm_unusable}.",
             "",
-            "Everything below was ranked on keyword score alone. Keyword "
-            "scores are not on the same scale as the fit scores "
-            "`min_report_score` was set for, so expect this digest to be "
-            "much shorter than it should be — or empty — until the backend "
-            "works.",
+            "Every posting in this digest was ranked on keyword score alone. "
+            "Keyword scores are not on the same scale as the fit scores "
+            "`min_report_score` was set for, so expect this digest to be much "
+            "shorter than it should be — or empty — until the backend works. "
+            "It is not a quiet market.",
             "",
         ]
     if result.llm_errors:
