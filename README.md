@@ -151,14 +151,25 @@ rolescan sources      every registered source kind and its slug format
 rolescan backends     every registered LLM backend, and which need a key
 rolescan cvs          which CV variants were found and how they parse
 rolescan scan         fetch, score, write the digest   (--dry, --no-llm, --no-email)
+rolescan mark URL S   record what you did with a posting: shortlist, applied, dismissed
 rolescan show         reprint the latest digest
 rolescan stats        how many postings the store has seen
 rolescan prune        drop stale cached verdicts
 ```
 
+`mark` takes one of three states. `shortlist` keeps a posting in the digest's
+**Shortlist** section, which is repeated under the new roles on every run so an
+open application stays in front of you rather than scrolling away with
+yesterday's email. `applied` clears it from that section. `dismissed` clears it
+too, and additionally stops the posting ever being reported again, however many
+boards go on listing it. Every shortlist row in the digest carries the exact
+`mark` command to clear it, with the config path already filled in.
+
 `discover` distinguishes five outcomes on purpose. `EMPTY` means a real board
 with no openings; `UNKNOWN` means an API that cannot tell an empty board from a
-wrong slug. Collapsing those into a single "OK" hides which of them actually returned postings. ## Finding slugs
+wrong slug. Collapsing those into a single "OK" hides which of them actually returned postings.
+
+## Finding slugs
 
 `rolescan slugs` searches a harvested ATS directory you download yourself. It
 matches on `difflib.SequenceMatcher` with a length-aware cap and a directional

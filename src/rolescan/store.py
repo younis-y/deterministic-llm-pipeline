@@ -23,7 +23,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
-from typing import Self
+from typing import ClassVar, Self
 
 import aiosqlite
 from pydantic import ValidationError
@@ -80,7 +80,7 @@ class Store:
     """Async SQLite store. Use as an async context manager."""
 
     #: The only states an application row may hold.
-    STATES: tuple[str, ...] = ("shortlist", "applied", "dismissed")
+    STATES: ClassVar[tuple[str, ...]] = ("shortlist", "applied", "dismissed")
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -265,7 +265,14 @@ class Store:
     async def mark(
         self, url: str, state: str, company: str = "", title: str = ""
     ) -> None:
-        """Record what the user did with a posting. Last write wins."""
+        """Record what the user did with a posting.
+
+        The newest `state` always wins. `company` and `title` do not:
+        a blank one leaves whatever is already stored in place, so
+        re-marking a posting from a context that has no metadata (the
+        digest prints a bare url) cannot erase the labels an earlier
+        mark captured.
+        """
         if state not in self.STATES:
             raise ValueError(f"state must be one of {self.STATES}, got {state!r}")
         await self.db.execute(

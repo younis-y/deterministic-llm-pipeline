@@ -31,6 +31,12 @@ def _fold(name: str) -> str:
     return _KEY.sub("", name.casefold())
 
 
+#: Per-variant prompt budget, deliberately below what the files hold. The
+#: stripped variants run 3,746-3,879 characters, so roughly the last third of
+#: each CV never reaches the model. That is the intended trade: six variants in
+#: one system prompt, on every scored posting, several times a day. The tail of
+#: a CV is education and interests, which is the part the fit score needs
+#: least. Raise it only against a measured token bill.
 _PER_VARIANT_CHARS = 2600
 
 _COMMENT = re.compile(r"(?<!\\)%.*$", re.MULTILINE)

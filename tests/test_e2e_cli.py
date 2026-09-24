@@ -392,6 +392,42 @@ def test_an_smtp_failure_exits_non_zero_and_leaves_the_digest_on_disk(
 
 
 @respx.mock
+def test_mark_fills_in_company_and_title_from_the_posting_cache(
+    tmp_path: Path,
+) -> None:
+    """Marking a url the store already knows must not write a blank row: the
+    digest's Shortlist section then has nothing to show but the url."""
+    from rolescan.models import Job
+    from rolescan.store import Store
+
+    cfg = _project(tmp_path)
+    job = Job(
+        source="greenhouse",
+        company="Acme Energy",
+        title="Graduate Data Scientist",
+        location="London",
+        url="https://boards.greenhouse.io/acme/jobs/1",
+        description="Python, energy.",
+    )
+
+    async def seed() -> None:
+        async with Store(tmp_path / "seen.db") as store:
+            await store.put_posting(job.url, "2026-09-20", job)
+
+    asyncio.run(seed())
+
+    result = runner.invoke(app, ["mark", job.url, "shortlist", "-c", str(cfg)])
+    assert result.exit_code == 0, result.output
+
+    async def read() -> list[tuple[str, str, str]]:
+        async with Store(tmp_path / "seen.db") as store:
+            return await store.shortlist()
+
+    rows = asyncio.run(read())
+    assert rows == [(job.url, "Acme Energy", "Graduate Data Scientist")]
+
+
+@respx.mock
 def test_the_digest_prints_a_mark_command_that_works_from_anywhere(
     tmp_path: Path,
 ) -> None:

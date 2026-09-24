@@ -401,7 +401,13 @@ def mark(
 
     async def go() -> None:
         async with Store(cfg.resolve(cfg.output.db_path)) as store:
-            await store.mark(url, state)
+            # Fill in company and title from the posting cache when we have
+            # it. Without this a `mark shortlist` writes a permanently blank
+            # row, and the digest's Shortlist section can only show the url.
+            cached = await store.get_posting(url)
+            company = cached[1].company if cached else ""
+            title = cached[1].title if cached else ""
+            await store.mark(url, state, company=company, title=title)
 
     asyncio.run(go())
     console.print(f"{state}: {url}")
