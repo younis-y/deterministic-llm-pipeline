@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 __all__ = ["Config", "LLMConfig", "OutputConfig", "ProfileConfig", "SourceEntry"]
 
@@ -92,6 +92,21 @@ class LLMConfig(BaseModel):
     description_chars: Annotated[int, Field(ge=500)] = 6000
     cache_days: Annotated[int, Field(ge=0)] = 30
 
+    _auto_disabled: bool = PrivateAttr(default=False)
+    """Set when `_resolve_key` switched scoring off, rather than the user."""
+
+    @property
+    def wants_scoring(self) -> bool:
+        """Whether the config asks for LLM scoring at all.
+
+        Not the same question as `enabled`, because this model answers that
+        one itself: a hosted backend with no key is switched off here, which
+        is precisely the case that most needs reporting at startup. Someone
+        who wrote `llm.enabled: false` has made a choice and does not need
+        telling their backend is unusable; someone whose key vanished does.
+        """
+        return self.enabled or self._auto_disabled
+
     @model_validator(mode="after")
     def _resolve_key(self) -> Self:
         """Disable hosted scoring when there is no key — but only hosted.
@@ -110,6 +125,7 @@ class LLMConfig(BaseModel):
         needs_key = judge.needs_api_key if judge else True
         if self.enabled and needs_key and not self.api_key:
             object.__setattr__(self, "enabled", False)
+            self._auto_disabled = True
         return self
 
 

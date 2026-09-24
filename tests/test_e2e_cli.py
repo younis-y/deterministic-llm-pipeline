@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import ClassVar
 
 import httpx
 import pytest
 import respx
 from typer.testing import CliRunner
 
-from conftest import plain
+from conftest import mock_ollama, plain
 from rolescan.cli import app
 from rolescan.store import Store
 
@@ -61,9 +62,19 @@ BOARD = {
 }
 
 
-def _project(tmp_path: Path) -> Path:
+# The same config with a backend that can actually answer. `mock_ollama`
+# supplies the answer in-process, so an end-to-end run can be a *healthy* one
+# without a key or a network call - which matters now that the pipeline
+# refuses to mark a posting seen when the scorer could not judge it.
+SCORING_CONFIG = CONFIG.replace(
+    "llm:\n  enabled: false\n",
+    "llm:\n  enabled: true\n  backend: ollama\n",
+)
+
+
+def _project(tmp_path: Path, config_text: str = CONFIG) -> Path:
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(CONFIG)
+    cfg.write_text(config_text)
     cvs = tmp_path / "cvs"
     cvs.mkdir()
     (cvs / "CV_EnergySystems-Modelling.tex").write_text(
@@ -87,7 +98,8 @@ def test_missing_config_exits_cleanly(tmp_path: Path) -> None:
 
 @respx.mock
 def test_full_scan_writes_a_digest(tmp_path: Path) -> None:
-    cfg = _project(tmp_path)
+    cfg = _project(tmp_path, SCORING_CONFIG)
+    mock_ollama()
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(200, json=BOARD)
     )
@@ -248,3 +260,152 @@ def test_mark_twice_updates_rather_than_duplicates(tmp_path: Path) -> None:
     state, count = asyncio.run(read())
     assert state == "applied"
     assert count == 1
+
+
+# --- email: three outcomes, three distinguishable results ------------------
+
+EMAIL_CONFIG = CONFIG.replace(
+    "output:\n  dir: digests\n  db_path: seen.db\n",
+    "output:\n"
+    "  dir: digests\n"
+    "  db_path: seen.db\n"
+    "  email:\n"
+    "    enabled: true\n"
+    "    smtp_host: smtp.example.test\n"
+    "    username: me@example.test\n"
+    "    password: not-a-real-password\n"
+    "    to: me@example.test\n",
+)
+
+
+class _FakeSMTP:
+    """Stands in for smtplib.SMTP. Records rather than sends."""
+
+    sent: ClassVar[list[str]] = []
+
+    def __init__(self, host: str, port: int, timeout: int = 30) -> None:
+        self.host = host
+
+    def __enter__(self) -> _FakeSMTP:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def starttls(self) -> None:
+        return None
+
+    def login(self, user: str, password: str) -> None:
+        return None
+
+    def send_message(self, msg: object) -> None:
+        _FakeSMTP.sent.append(str(msg))
+
+
+@respx.mock
+def test_no_email_says_it_was_skipped(tmp_path: Path) -> None:
+    """Silence after a scan used to mean either "sent" or "not configured"."""
+    cfg = _project(tmp_path)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    result = runner.invoke(app, ["scan", "-c", str(cfg), "--no-email"])
+    assert result.exit_code == 0, result.output
+    assert "email skipped: --no-email" in plain(result.output)
+
+
+@respx.mock
+def test_a_disabled_emailer_says_why_it_is_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EmailConfig switches itself off when the password is missing. The run
+    then finished, exited 0, and said nothing at all — so the first sign was
+    the 06:30 email not arriving."""
+    monkeypatch.delenv("ROLESCAN_SMTP_PASS", raising=False)
+    monkeypatch.delenv("JOBSCAN_SMTP_PASS", raising=False)
+    no_password = EMAIL_CONFIG.replace("    password: not-a-real-password\n", "")
+    cfg = _project(tmp_path, no_password)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    result = runner.invoke(app, ["scan", "-c", str(cfg)])
+    assert result.exit_code == 0, result.output
+    out = plain(result.output)
+    assert "email skipped" in out
+    assert "ROLESCAN_SMTP_PASS" in out
+
+
+@respx.mock
+def test_a_missing_smtp_host_is_named_rather_than_blamed_on_the_password(
+    tmp_path: Path,
+) -> None:
+    no_host = EMAIL_CONFIG.replace("    smtp_host: smtp.example.test\n", "")
+    cfg = _project(tmp_path, no_host)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    result = runner.invoke(app, ["scan", "-c", str(cfg)])
+    assert result.exit_code == 0, result.output
+    assert "smtp_host" in plain(result.output)
+
+
+@respx.mock
+def test_a_working_send_reports_success_and_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("rolescan.digest.smtplib.SMTP", _FakeSMTP)
+    _FakeSMTP.sent.clear()
+    cfg = _project(tmp_path, EMAIL_CONFIG)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    result = runner.invoke(app, ["scan", "-c", str(cfg)])
+    assert result.exit_code == 0, result.output
+    assert "emailed" in plain(result.output)
+    assert len(_FakeSMTP.sent) == 1
+
+
+@respx.mock
+def test_an_smtp_failure_exits_non_zero_and_leaves_the_digest_on_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The spec: "SMTP failure writes the digest to disk and exits non-zero,
+    so launchd records it." The disk write was there; the exit code was not,
+    so a scan that never delivered anything looked, to launchd and to the
+    reader, exactly like one that did."""
+
+    def boom(host: str, port: int, timeout: int = 30) -> None:
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("rolescan.digest.smtplib.SMTP", boom)
+    cfg = _project(tmp_path, EMAIL_CONFIG)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    result = runner.invoke(app, ["scan", "-c", str(cfg)])
+    assert result.exit_code == 1, result.output
+    assert "email failed" in plain(result.output)
+    assert (tmp_path / "digests" / "latest.md").is_file()
+
+
+# --- the mark command --------------------------------------------------------
+
+
+@respx.mock
+def test_the_digest_prints_a_mark_command_that_works_from_anywhere(
+    tmp_path: Path,
+) -> None:
+    """`rolescan mark` defaults to ./config.yaml, so the command the digest
+    printed exited 2 with "No config at config.yaml" everywhere but the
+    project directory — and under launchd the config is at an absolute path."""
+    cfg = _project(tmp_path)
+    runner.invoke(app, ["mark", "https://x/1", "shortlist", "-c", str(cfg)])
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    result = runner.invoke(app, ["scan", "-c", str(cfg), "--no-email"])
+    assert result.exit_code == 0, result.output
+
+    digest = (tmp_path / "digests" / "latest.md").read_text()
+    assert f"rolescan mark https://x/1 applied --config {cfg}" in digest
+    assert f"rolescan mark https://x/1 dismissed --config {cfg}" in digest

@@ -21,7 +21,12 @@ from dataclasses import dataclass, field
 from rolescan.config import Config, SourceEntry
 from rolescan.http import Fetcher
 from rolescan.models import Job, ScoredJob
-from rolescan.scoring import CVLibrary, FitScorer, score_keywords
+from rolescan.scoring import (
+    CVLibrary,
+    FitScorer,
+    score_keywords,
+    unusable_backend_reason,
+)
 from rolescan.sources import get_source
 from rolescan.sources.base import PostingCache, SourceSkipped
 from rolescan.store import Store
@@ -58,6 +63,13 @@ class ScanResult:
     llm_cached: int = 0
     llm_errors: int = 0
     llm_error_detail: str = ""
+    llm_unusable: str = ""
+    """Why the configured judge could not be used at all, or "".
+
+    Distinct from `llm_errors`, which counts calls that were made and failed.
+    This one means no call was ever attempted: wrong backend name, no key,
+    SDK absent. Carried on the result so the digest can say it, because the
+    person this matters to reads the 06:30 email, not the launchd log."""
     reportable: list[ScoredJob] = field(default_factory=list)
     dry_run: bool = False
 
@@ -121,8 +133,25 @@ def deduplicate(jobs: list[Job]) -> list[Job]:
     return list(best.values())
 
 
-async def run_scan(cfg: Config, *, dry_run: bool = False) -> ScanResult:
+async def run_scan(
+    cfg: Config, *, dry_run: bool = False, check_llm: bool = True
+) -> ScanResult:
+    """Run one scan.
+
+    `check_llm` is False only when the caller has deliberately turned scoring
+    off (`--no-llm`); otherwise the configured judge is validated before
+    anything is fetched, so a backend that cannot run says so instead of
+    quietly degrading the whole digest to keyword scores.
+    """
     result = ScanResult(dry_run=dry_run)
+    if check_llm:
+        result.llm_unusable = unusable_backend_reason(cfg.llm)
+        if result.llm_unusable:
+            log.warning(
+                "LLM scoring is unavailable: %s. Postings will be ranked on "
+                "keyword score alone.",
+                result.llm_unusable,
+            )
 
     db_path = cfg.resolve(cfg.output.db_path)
     # The store opens BEFORE fetching, not after: the structured source needs
@@ -141,10 +170,17 @@ async def run_scan(cfg: Config, *, dry_run: bool = False) -> ScanResult:
         fresh = await store.filter_new(scored)
         result.already_seen = len(scored) - len(fresh)
 
-        candidates = [
-            s for s in fresh if s.keyword_score >= cfg.profile.min_keyword_score
-        ]
-        result.prefiltered = len(fresh) - len(candidates)
+        # A dismissed posting must never come back, however many boards carry
+        # it. `seen` alone cannot do this: the same role arrives under a new
+        # uid from the next source that lists it.
+        dismissed = await store.dismissed_urls()
+        if dismissed:
+            fresh = [s for s in fresh if s.job.url not in dismissed]
+
+        gate = cfg.profile.min_keyword_score
+        candidates = [s for s in fresh if s.keyword_score >= gate]
+        rejects = [s for s in fresh if s.keyword_score < gate]
+        result.prefiltered = len(rejects)
 
         cvs = CVLibrary.load(
             cfg.resolve(cfg.profile.cv_dir) if cfg.profile.cv_dir else None
@@ -157,11 +193,25 @@ async def run_scan(cfg: Config, *, dry_run: bool = False) -> ScanResult:
         result.llm_error_detail = scorer.first_error
 
         if not dry_run:
-            # Record every fresh posting, not only the reported ones, so a role
-            # rejected today is not re-surfaced tomorrow.
-            by_uid = {s.job.uid: s for s in fresh}
-            by_uid.update({s.job.uid: s for s in judged})
-            await store.record_all(list(by_uid.values()))
+            # Record the postings that were actually assessed, so a role
+            # rejected today is not re-surfaced tomorrow - and ONLY those.
+            #
+            # Recording a posting writes it to `seen`, and `filter_new` then
+            # suppresses it forever. Doing that to a posting the scorer never
+            # judged buries a real role on the strength of a verdict that was
+            # never reached. It has happened: a run with scoring unavailable
+            # recorded forty new postings, every one of them unjudged, and
+            # they can never surface again.
+            #
+            # Prefiltered rejects are safe to record either way: they were
+            # assessed, on keywords, and rejected. It is the candidates that
+            # reached a scorer which could not answer that must stay unseen.
+            scoring_unavailable = scorer.errors > 0 or not cfg.llm.enabled
+            recorded = list(rejects)
+            recorded += [
+                s for s in judged if s.fit is not None or not scoring_unavailable
+            ]
+            await store.record_all(recorded)
 
     keep = [s for s in judged if s.score >= cfg.profile.min_report_score]
     if not cfg.output.show_blocked:

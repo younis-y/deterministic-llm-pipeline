@@ -61,6 +61,25 @@ def _setup_logging(verbose: bool) -> None:
         logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+def _email_skip_reason(cfg: Config) -> str:
+    """Why no email is going out, in the reader's terms.
+
+    `EmailConfig` switches itself off when the host or the password is
+    missing, so by the time we get here "disabled" covers three different
+    situations and only one of them is deliberate. Printing the right one is
+    the difference between a two-second fix and assuming the digest was sent.
+    """
+    email = cfg.output.email
+    if not email.smtp_host:
+        return "no output.email.smtp_host is set in the config"
+    if not email.password:
+        return (
+            "no SMTP password is visible — export ROLESCAN_SMTP_PASS "
+            "(~/.zshenv, so launchd's non-interactive shell sources it)"
+        )
+    return "output.email.enabled is false in the config"
+
+
 def _load(path: Path) -> Config:
     if not path.is_file():
         console.print(f"[red]No config at {path}[/]. Copy config.example.yaml.")
@@ -91,13 +110,31 @@ def scan(
         cfg.llm.enabled = False
 
     async def _go() -> tuple[ScanResult, list[tuple[str, str, str]]]:
-        result = await run_scan(cfg, dry_run=dry)
+        result = await run_scan(cfg, dry_run=dry, check_llm=not no_llm)
         async with Store(cfg.resolve(cfg.output.db_path)) as store:
             shortlist_rows = await store.shortlist()
         return result, shortlist_rows
 
     result, shortlist_rows = asyncio.run(_go())
-    text = render_markdown(result, shortlist=shortlist_rows)
+
+    if result.llm_unusable:
+        # The loudest thing this command prints, deliberately. Every silent
+        # self-disabling defect this tool has had ended here: a judge that
+        # could not run, a run that reported success, and an empty digest with
+        # nothing in it saying why.
+        console.print(
+            f"\n[bold red]LLM scoring did not run: {result.llm_unusable}.[/]\n"
+            "[bold red]Every posting was ranked on keyword score alone, "
+            f"against min_report_score={cfg.profile.min_report_score}, which "
+            "is calibrated for LLM fit scores — so this digest is probably "
+            "empty for that reason and not because the market is.[/]\n"
+            "[dim]Fix the backend, or run with --no-llm to accept a "
+            "keyword-only digest without this warning.[/]\n"
+        )
+
+    text = render_markdown(
+        result, shortlist=shortlist_rows, config_path=config.resolve()
+    )
 
     path = write_digest(text, cfg.resolve(cfg.output.dir))
     console.print(Markdown(text))
@@ -118,12 +155,25 @@ def scan(
             )
         console.print(table)
 
-    if email and cfg.output.email.enabled:
+    if not email:
+        console.print("[dim]email skipped: --no-email[/]")
+    elif not cfg.output.email.enabled:
+        # Never fall through in silence. A disabled emailer used to look
+        # exactly like a successful send from the caller's side, which under
+        # launchd means nobody finds out until they wonder why the 06:30 mail
+        # stopped arriving.
+        console.print(f"[yellow]email skipped:[/] {_email_skip_reason(cfg)}")
+    else:
         try:
-            if send_email(text, cfg.output.email, html=render_html(text)):
+            if send_email(text, cfg.output.email, html_body=render_html(text)):
                 console.print("[green]emailed[/]")
         except Exception as e:
+            # The digest is already on disk, so nothing is lost - but the run
+            # did not do what it was scheduled to do, and launchd only records
+            # that if the exit status says so.
             console.print(f"[red]email failed:[/] {e}")
+            console.print(f"[dim]the digest is still on disk at {path}[/]")
+            raise typer.Exit(1) from e
 
 
 @app.command()

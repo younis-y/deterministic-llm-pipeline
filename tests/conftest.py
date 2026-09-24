@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 
 from rolescan.config import Config, ProfileConfig
 from rolescan.models import Job
@@ -27,6 +30,38 @@ sources:
 """
 
 
+# A config identical to the one above except that scoring actually runs. The
+# pipeline now distinguishes "the scorer judged this" from "the scorer was
+# unavailable and this came back unjudged" - it records the first and refuses
+# to record the second - so a healthy scoring run has to be expressible in a
+# test, without a key and without a network call. Ollama is the backend that
+# needs no key; `mock_ollama` answers for it in-process.
+FIXTURE_CONFIG_SCORING = FIXTURE_CONFIG.replace(
+    "llm:\n  enabled: false\n",
+    "llm:\n  enabled: true\n  backend: ollama\n",
+)
+
+LLM_VERDICT = {
+    "fit_score": 72,
+    "verdict": "consider",
+    "confidence": "medium",
+    "reason": "Strong power-market overlap, but the role wants five years.",
+    "cv_variant": "CV_EnergySystems-Modelling",
+    "tailoring": ["Lead with the day-ahead forecasting project."],
+    "blockers": [],
+    "keywords_missing": ["Kubernetes"],
+}
+
+
+def mock_ollama(base_url: str = "http://localhost:11434") -> None:
+    """Route the ollama backend at a canned verdict. Call inside @respx.mock."""
+    respx.post(f"{base_url}/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"content": json.dumps(LLM_VERDICT)}}
+        )
+    )
+
+
 @pytest.fixture
 def profile() -> ProfileConfig:
     return ProfileConfig(
@@ -41,6 +76,14 @@ def profile() -> ProfileConfig:
 def config(tmp_path: Path) -> Config:
     path = tmp_path / "config.yaml"
     path.write_text(FIXTURE_CONFIG)
+    return Config.load(path)
+
+
+@pytest.fixture
+def scoring_config(tmp_path: Path) -> Config:
+    """Like `config`, but with a backend that can actually return a verdict."""
+    path = tmp_path / "config.yaml"
+    path.write_text(FIXTURE_CONFIG_SCORING)
     return Config.load(path)
 
 

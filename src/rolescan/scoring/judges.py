@@ -18,6 +18,7 @@ ship one from another package under the `rolescan.judges` entry-point group.
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 from abc import ABC, abstractmethod
 from importlib.metadata import entry_points
@@ -26,7 +27,13 @@ from typing import Any, ClassVar
 from rolescan.config import LLMConfig
 from rolescan.models import FitVerdict
 
-__all__ = ["Judge", "available_judges", "get_judge", "register"]
+__all__ = [
+    "Judge",
+    "available_judges",
+    "get_judge",
+    "register",
+    "unusable_backend_reason",
+]
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +48,11 @@ class Judge(ABC):
     #: LLMConfig, so a local backend is not disabled for want of a key it never
     #: needed.
     needs_api_key: ClassVar[bool] = False
+    #: Import name of the SDK this backend needs, if any. Declared rather than
+    #: discovered because the import itself is deliberately lazy, and a missing
+    #: package should be one line at startup, not N identical scoring errors
+    #: after the scan has already spent its fetch budget.
+    requires_module: ClassVar[str] = ""
     #: One line, shown by `rolescan backends`.
     description: ClassVar[str] = ""
 
@@ -93,6 +105,52 @@ def get_judge(name: str, cfg: LLMConfig) -> Judge:
     return cls(cfg)
 
 
+def _importable(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        # find_spec raises rather than returning None when a parent package is
+        # missing or the name is malformed. Either way it cannot be imported.
+        return False
+
+
+def unusable_backend_reason(cfg: LLMConfig) -> str:
+    """Why the configured judge cannot score anything, or "" if it can.
+
+    Checked before the scan runs, because every way this goes wrong used to go
+    wrong silently. A misnamed backend, a revoked key, an SDK that was never
+    installed: each one leaves `FitScorer` handing back keyword scores while
+    the run reports success, and a keyword-only digest against an
+    LLM-calibrated `min_report_score` is empty by construction. The digest then
+    says "nothing new worth your time" about a working market.
+
+    Gated on `cfg.wants_scoring`, not `cfg.enabled`: `LLMConfig` switches
+    itself off when a hosted backend has no key, which is the single most
+    common cause and the one that most needs saying out loud. A config that
+    asked for no scoring in the first place gets nothing to read.
+    """
+    if not cfg.wants_scoring:
+        return ""
+    cls = _REGISTRY.get(cfg.backend)
+    if cls is None:
+        known = ", ".join(sorted(_REGISTRY)) or "none"
+        return (
+            f"llm.backend {cfg.backend!r} is not a registered backend "
+            f"(registered: {known})"
+        )
+    if cls.needs_api_key and not cfg.api_key:
+        return (
+            f"backend {cfg.backend!r} is configured but no API key is visible "
+            "(export ANTHROPIC_API_KEY, or set llm.api_key in the config)"
+        )
+    if cls.requires_module and not _importable(cls.requires_module):
+        return (
+            f"backend {cfg.backend!r} needs the {cls.requires_module} package, "
+            f"which is not installed (pip install 'rolescan[{cfg.backend}]')"
+        )
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # built-in backends
 # ---------------------------------------------------------------------------
@@ -108,6 +166,7 @@ class AnthropicJudge(Judge):
 
     name = "anthropic"
     needs_api_key = True
+    requires_module = "anthropic"
     description = "Claude API. Best quality. Needs ANTHROPIC_API_KEY."
 
     def __init__(self, cfg: LLMConfig) -> None:

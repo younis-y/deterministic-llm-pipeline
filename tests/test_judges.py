@@ -15,7 +15,11 @@ import respx
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob
 from rolescan.scoring import CVLibrary, FitScorer
-from rolescan.scoring.judges import available_judges, get_judge
+from rolescan.scoring.judges import (
+    available_judges,
+    get_judge,
+    unusable_backend_reason,
+)
 
 VERDICT_JSON = {
     "fit_score": 72,
@@ -192,3 +196,72 @@ def test_the_unverified_ollama_backend_says_so_where_it_is_chosen() -> None:
 
     out = CliRunner().invoke(app, ["backends"]).output.casefold()
     assert "not yet verified" in out
+
+
+# --- a judge that cannot run must say so, loudly, before the scan ----------
+
+
+def _unregister(name: str) -> None:
+    from rolescan.scoring import judges
+
+    judges._REGISTRY.pop(name, None)
+
+
+def test_an_unknown_backend_name_is_reported_with_the_real_ones() -> None:
+    cfg = LLMConfig(enabled=True, backend="gpt4", api_key="present")
+    reason = unusable_backend_reason(cfg)
+    assert "gpt4" in reason
+    assert "anthropic" in reason and "ollama" in reason
+
+
+def test_a_hosted_backend_with_no_key_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact production failure: the key was revoked, LLMConfig switched
+    scoring off by itself, and every digest afterwards was keyword-only and
+    empty with nothing anywhere saying why."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = LLMConfig(enabled=True, backend="anthropic", api_key="")
+    assert cfg.enabled is False, "the silent self-disable still happens"
+    reason = unusable_backend_reason(cfg)
+    assert "anthropic" in reason
+    assert "api key" in reason.casefold()
+    assert "ANTHROPIC_API_KEY" in reason
+
+
+def test_a_backend_whose_sdk_is_absent_is_reported() -> None:
+    """`anthropic` is imported lazily, so a missing SDK used to surface as N
+    identical scoring errors after the fetch budget had already been spent."""
+    from rolescan.scoring.judges import Judge, register
+
+    @register
+    class _NoSdkJudge(Judge):
+        name = "nosdk"
+        needs_api_key = False
+        requires_module = "a_package_that_is_not_installed_anywhere"
+        description = "test only"
+
+        async def verdict(self, system: str, user: str) -> FitVerdict:
+            raise NotImplementedError
+
+    try:
+        reason = unusable_backend_reason(LLMConfig(enabled=True, backend="nosdk"))
+    finally:
+        _unregister("nosdk")
+    assert "a_package_that_is_not_installed_anywhere" in reason
+    assert "not installed" in reason
+
+
+def test_a_usable_backend_reports_nothing() -> None:
+    assert unusable_backend_reason(LLMConfig(enabled=True, backend="ollama")) == ""
+
+
+def test_a_deliberate_keyword_only_run_is_not_nagged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`llm.enabled: false` is a choice, not a fault. Warning about a backend
+    nobody asked to use would train the reader to ignore the one line that
+    matters when the key really does go missing."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = LLMConfig(enabled=False, backend="anthropic")
+    assert unusable_backend_reason(cfg) == ""

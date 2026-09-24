@@ -73,7 +73,14 @@ def _role(item: ScoredJob) -> list[str]:
     return lines
 
 
-def _shortlist_section(shortlist: list[tuple[str, str, str]]) -> list[str]:
+def _shortlist_section(
+    shortlist: list[tuple[str, str, str]], config_path: Path | None
+) -> list[str]:
+    # `rolescan mark` defaults to ./config.yaml, so a command printed without
+    # --config only works from the project directory. Under launchd the config
+    # is at an absolute path and the reader is on a phone: they copy the line
+    # into whatever shell they have open and get "No config at config.yaml".
+    flag = f" --config {config_path}" if config_path is not None else ""
     lines = [
         "",
         "## Shortlist",
@@ -96,7 +103,8 @@ def _shortlist_section(shortlist: list[tuple[str, str, str]]) -> list[str]:
         lines.append(f"- {headline}")
         lines.append(f"  {url}")
         lines.append(
-            f"  `rolescan mark {url} applied` · `rolescan mark {url} dismissed`"
+            f"  `rolescan mark {url} applied{flag}` · "
+            f"`rolescan mark {url} dismissed{flag}`"
         )
     return lines
 
@@ -106,6 +114,7 @@ def render_markdown(
     *,
     title: str = "Job scan",
     shortlist: list[tuple[str, str, str]] | None = None,
+    config_path: Path | None = None,
 ) -> str:
     stamp = datetime.now(UTC).strftime("%A %d %B %Y")
     out: list[str] = [f"# {title}, {stamp}", ""]
@@ -122,7 +131,7 @@ def render_markdown(
         ]
         out += _failures(result)
         if shortlist:
-            out += _shortlist_section(shortlist)
+            out += _shortlist_section(shortlist, config_path)
         return "\n".join(out)
 
     live = [s for s in result.reportable if not s.is_blocked]
@@ -153,7 +162,7 @@ def render_markdown(
 
     out += _failures(result)
     if shortlist:
-        out += _shortlist_section(shortlist)
+        out += _shortlist_section(shortlist, config_path)
     return "\n".join(out)
 
 
@@ -211,9 +220,26 @@ def _stats(result: ScanResult) -> str:
 def _failures(result: ScanResult) -> list[str]:
     failed = result.failed_sources
     skipped = result.skipped_sources
-    if not failed and not skipped and not result.llm_errors:
+    if not failed and not skipped and not result.llm_errors and not result.llm_unusable:
         return []
     lines = ["", "---", ""]
+    if result.llm_unusable:
+        # The configured judge never ran at all, so there are no scoring errors
+        # to report and the digest would otherwise look like a normal quiet
+        # day. It is not one: every posting fell back to a keyword score, and
+        # keyword scores are not calibrated against min_report_score, so this
+        # digest is close to empty by construction rather than by market.
+        lines += [
+            "**LLM scoring did not run at all.** "
+            f"{result.llm_unusable}.",
+            "",
+            "Everything below was ranked on keyword score alone. Keyword "
+            "scores are not on the same scale as the fit scores "
+            "`min_report_score` was set for, so expect this digest to be "
+            "much shorter than it should be — or empty — until the backend "
+            "works.",
+            "",
+        ]
     if result.llm_errors:
         # Every score fell back to keywords. Without this the digest is
         # indistinguishable from a deliberate --no-llm run.
@@ -273,8 +299,12 @@ def send_email(
     cfg: EmailConfig,
     *,
     subject: str | None = None,
-    html: str | None = None,
+    html_body: str | None = None,
 ) -> bool:
+    """Send the digest. Named `html_body`, not `html`, because this module
+    imports the stdlib `html` for escaping and a parameter of that name
+    shadows it: the next person reaching for `html.escape()` in here would get
+    an AttributeError on a str."""
     if not cfg.enabled:
         return False
     msg = EmailMessage()
@@ -282,8 +312,8 @@ def send_email(
     msg["From"] = cfg.username
     msg["To"] = cfg.to
     msg.set_content(text)
-    if html is not None:
-        msg.add_alternative(html, subtype="html")
+    if html_body is not None:
+        msg.add_alternative(html_body, subtype="html")
     with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=30) as s:
         s.starttls()
         s.login(cfg.username, cfg.password)
