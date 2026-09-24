@@ -151,7 +151,7 @@ async def run_scan(
     """
     result = ScanResult(dry_run=dry_run)
     if check_llm:
-        result.llm_unusable = unusable_backend_reason(cfg.llm)
+        result.llm_unusable = await unusable_backend_reason(cfg.llm)
         if result.llm_unusable:
             log.warning(
                 "LLM scoring is unavailable: %s. Postings will be ranked on "

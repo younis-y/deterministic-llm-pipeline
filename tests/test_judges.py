@@ -207,14 +207,14 @@ def _unregister(name: str) -> None:
     judges._REGISTRY.pop(name, None)
 
 
-def test_an_unknown_backend_name_is_reported_with_the_real_ones() -> None:
+async def test_an_unknown_backend_name_is_reported_with_the_real_ones() -> None:
     cfg = LLMConfig(enabled=True, backend="gpt4", api_key="present")
-    reason = unusable_backend_reason(cfg)
+    reason = await unusable_backend_reason(cfg)
     assert "gpt4" in reason
     assert "anthropic" in reason and "ollama" in reason
 
 
-def test_a_hosted_backend_with_no_key_is_reported(
+async def test_a_hosted_backend_with_no_key_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The exact production failure: the key was revoked, LLMConfig switched
@@ -223,13 +223,13 @@ def test_a_hosted_backend_with_no_key_is_reported(
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = LLMConfig(enabled=True, backend="anthropic", api_key="")
     assert cfg.enabled is False, "the silent self-disable still happens"
-    reason = unusable_backend_reason(cfg)
+    reason = await unusable_backend_reason(cfg)
     assert "anthropic" in reason
     assert "api key" in reason.casefold()
     assert "ANTHROPIC_API_KEY" in reason
 
 
-def test_a_backend_whose_sdk_is_absent_is_reported() -> None:
+async def test_a_backend_whose_sdk_is_absent_is_reported() -> None:
     """`anthropic` is imported lazily, so a missing SDK used to surface as N
     identical scoring errors after the fetch budget had already been spent."""
     from rolescan.scoring.judges import Judge, register
@@ -245,18 +245,23 @@ def test_a_backend_whose_sdk_is_absent_is_reported() -> None:
             raise NotImplementedError
 
     try:
-        reason = unusable_backend_reason(LLMConfig(enabled=True, backend="nosdk"))
+        reason = await unusable_backend_reason(LLMConfig(enabled=True, backend="nosdk"))
     finally:
         _unregister("nosdk")
     assert "a_package_that_is_not_installed_anywhere" in reason
     assert "not installed" in reason
 
 
-def test_a_usable_backend_reports_nothing() -> None:
-    assert unusable_backend_reason(LLMConfig(enabled=True, backend="ollama")) == ""
+@respx.mock
+async def test_a_usable_backend_reports_nothing() -> None:
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:8b"}]})
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="llama3.1:8b")
+    assert await unusable_backend_reason(cfg) == ""
 
 
-def test_a_deliberate_keyword_only_run_is_not_nagged(
+async def test_a_deliberate_keyword_only_run_is_not_nagged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`llm.enabled: false` is a choice, not a fault. Warning about a backend
@@ -264,4 +269,97 @@ def test_a_deliberate_keyword_only_run_is_not_nagged(
     matters when the key really does go missing."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = LLMConfig(enabled=False, backend="anthropic")
-    assert unusable_backend_reason(cfg) == ""
+    assert await unusable_backend_reason(cfg) == ""
+
+
+# --- ollama preflight: a reachable server is not the same as a usable one --
+
+
+@respx.mock
+async def test_ollama_preflight_passes_when_the_model_is_pulled() -> None:
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(
+            200,
+            json={"models": [{"name": "llama3.1:8b"}, {"name": "qwen2.5:7b"}]},
+        )
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    judge = get_judge("ollama", cfg)
+    assert await judge.preflight() == ""
+
+
+@respx.mock
+async def test_ollama_preflight_reports_an_unreachable_server() -> None:
+    respx.get("http://localhost:11434/api/tags").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    reason = await get_judge("ollama", cfg).preflight()
+    assert "localhost:11434" in reason
+    assert "ollama serve" in reason
+
+
+@respx.mock
+async def test_ollama_preflight_names_the_address_it_tried() -> None:
+    respx.get("http://box.local:11434/api/tags").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", base_url="http://box.local:11434")
+    reason = await get_judge("ollama", cfg).preflight()
+    assert "box.local:11434" in reason
+
+
+@respx.mock
+async def test_ollama_preflight_reports_a_reachable_server_missing_the_model() -> None:
+    """The server is up, but the configured model was never pulled — a
+    reachable-but-unusable state that is at least as common in practice as
+    the server being down outright, and just as silent without this check."""
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:8b"}]})
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    reason = await get_judge("ollama", cfg).preflight()
+    assert "qwen2.5:7b" in reason
+    assert "not pulled" in reason.casefold()
+    assert "llama3.1:8b" in reason, "names what IS available, not just what isn't"
+
+
+@respx.mock
+async def test_ollama_preflight_end_to_end_via_unusable_backend_reason() -> None:
+    """The seam this whole feature depends on: a preflight failure must reach
+    `unusable_backend_reason`, the function the scan actually calls, not just
+    be reachable in isolation on the judge."""
+    respx.get("http://localhost:11434/api/tags").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama")
+    reason = await unusable_backend_reason(cfg)
+    assert "localhost:11434" in reason
+    assert "ollama serve" in reason
+
+
+async def test_a_backend_with_no_preflight_override_is_unaffected() -> None:
+    """The default `Judge.preflight()` is "nothing to check" — a backend
+    that never overrides it must report itself usable without touching the
+    network at all. No respx mock is installed here on purpose: a stray
+    network call would fail loudly rather than silently pass."""
+    from rolescan.scoring.judges import Judge, register
+
+    @register
+    class _NoPreflightJudge(Judge):
+        name = "nopreflight"
+        needs_api_key = False
+        description = "test only"
+
+        async def verdict(self, system: str, user: str) -> FitVerdict:
+            raise NotImplementedError
+
+    try:
+        judge = get_judge("nopreflight", LLMConfig(enabled=True, backend="nopreflight"))
+        assert await judge.preflight() == ""
+        reason = await unusable_backend_reason(
+            LLMConfig(enabled=True, backend="nopreflight")
+        )
+        assert reason == ""
+    finally:
+        _unregister("nopreflight")

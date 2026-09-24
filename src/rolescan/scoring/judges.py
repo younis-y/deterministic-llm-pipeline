@@ -39,6 +39,12 @@ log = logging.getLogger(__name__)
 
 _REGISTRY: dict[str, type[Judge]] = {}
 
+#: How long a preflight liveness check is allowed to take. Short on purpose:
+#: this runs before every scan, not just when something is already wrong, so
+#: it must never become a new way for the tool to hang. `LLMConfig.timeout`
+#: is for a chat completion and is far too long for this.
+PREFLIGHT_TIMEOUT = 3.0
+
 
 class Judge(ABC):
     """Renders a prompt into a FitVerdict, however it likes."""
@@ -48,6 +54,9 @@ class Judge(ABC):
     #: LLMConfig, so a local backend is not disabled for want of a key it never
     #: needed.
     needs_api_key: ClassVar[bool] = False
+    #: Env var the no-key message tells the user to set. Only meaningful when
+    #: `needs_api_key` is True; a backend that needs no key leaves it blank.
+    api_key_env: ClassVar[str] = ""
     #: Import name of the SDK this backend needs, if any. Declared rather than
     #: discovered because the import itself is deliberately lazy, and a missing
     #: package should be one line at startup, not N identical scoring errors
@@ -62,6 +71,18 @@ class Judge(ABC):
     @abstractmethod
     async def verdict(self, system: str, user: str) -> FitVerdict:
         """One posting, one judgement. Raise on failure; FitScorer counts it."""
+
+    async def preflight(self) -> str:
+        """Why this backend cannot be reached right now, or "" if it can.
+
+        Distinct from a static cause like a missing key or SDK: this is a
+        liveness fact, checked once before the scan starts, not at import
+        time. The default is "nothing to check" — true of a hosted API,
+        whose failure modes (bad key, no network) already surface at the
+        first call. A backend that can be silently unreachable, like a local
+        server, overrides this.
+        """
+        return ""
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.cfg.model}>"
@@ -114,20 +135,26 @@ def _importable(module: str) -> bool:
         return False
 
 
-def unusable_backend_reason(cfg: LLMConfig) -> str:
+async def unusable_backend_reason(cfg: LLMConfig) -> str:
     """Why the configured judge cannot score anything, or "" if it can.
 
     Checked before the scan runs, because every way this goes wrong used to go
     wrong silently. A misnamed backend, a revoked key, an SDK that was never
-    installed: each one leaves `FitScorer` handing back keyword scores while
-    the run reports success, and a keyword-only digest against an
-    LLM-calibrated `min_report_score` is empty by construction. The digest then
-    says "nothing new worth your time" about a working market.
+    installed, a local server that is not running: each one leaves
+    `FitScorer` handing back keyword scores while the run reports success, and
+    a keyword-only digest against an LLM-calibrated `min_report_score` is
+    empty by construction. The digest then says "nothing new worth your time"
+    about a working market.
 
     Gated on `cfg.wants_scoring`, not `cfg.enabled`: `LLMConfig` switches
     itself off when a hosted backend has no key, which is the single most
     common cause and the one that most needs saying out loud. A config that
     asked for no scoring in the first place gets nothing to read.
+
+    The first three checks are static — name, key, SDK — and cost nothing.
+    The last, `Judge.preflight()`, is a liveness fact and needs the network,
+    so it only runs once the static causes are ruled out. Async for that
+    reason alone: this is the only check here that ever awaits anything.
     """
     if not cfg.wants_scoring:
         return ""
@@ -139,16 +166,17 @@ def unusable_backend_reason(cfg: LLMConfig) -> str:
             f"(registered: {known})"
         )
     if cls.needs_api_key and not cfg.api_key:
+        env = cls.api_key_env or "the appropriate environment variable"
         return (
             f"backend {cfg.backend!r} is configured but no API key is visible "
-            "(export ANTHROPIC_API_KEY, or set llm.api_key in the config)"
+            f"(export {env}, or set llm.api_key in the config)"
         )
     if cls.requires_module and not _importable(cls.requires_module):
         return (
             f"backend {cfg.backend!r} needs the {cls.requires_module} package, "
             f"which is not installed (pip install 'rolescan[{cfg.backend}]')"
         )
-    return ""
+    return await cls(cfg).preflight()
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +194,7 @@ class AnthropicJudge(Judge):
 
     name = "anthropic"
     needs_api_key = True
+    api_key_env = "ANTHROPIC_API_KEY"
     requires_module = "anthropic"
     description = "Claude API. Best quality. Needs ANTHROPIC_API_KEY."
 
@@ -254,6 +283,49 @@ class OllamaJudge(Judge):
             # small model on an old Ollama can still return prose.
             msg = f"ollama did not return a usable verdict: {e}"
             raise RuntimeError(msg) from e
+
+    async def preflight(self) -> str:
+        """A cheap reachability probe, run once before the scan starts.
+
+        Deliberately not a chat completion: `/api/tags` is what `ollama list`
+        calls, answered from memory with no model load, so it is safe to run
+        on every scan without adding real latency. It also happens to be the
+        one endpoint that can answer the second question that matters here —
+        not just "is a server listening" but "does it have the model this
+        config asks for" — which is the same class of silent failure and, in
+        practice, the more common one: the server is up, the model was never
+        pulled.
+        """
+        import httpx
+
+        url = f"{self.cfg.base_url.rstrip('/')}/api/tags"
+        try:
+            async with httpx.AsyncClient(timeout=PREFLIGHT_TIMEOUT) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+        except httpx.HTTPError as e:
+            return (
+                f"could not reach ollama at {self.cfg.base_url} ({e}). Start "
+                "it with `ollama serve`, or set llm.backend to anthropic. "
+                "Ollama listens on port 11434 by default."
+            )
+
+        names: set[str] = set()
+        for entry in response.json().get("models") or []:
+            name = entry.get("name") or entry.get("model") or ""
+            if name:
+                names.add(name)
+
+        wanted = self.cfg.model
+        short_names = {n.split(":")[0] for n in names}
+        if wanted and wanted not in names and wanted not in short_names:
+            available = ", ".join(sorted(names)) or "none"
+            return (
+                f"ollama is reachable at {self.cfg.base_url} but model "
+                f"{wanted!r} is not pulled (available: {available}). Run "
+                f"`ollama pull {wanted}`, or set llm.model to one that is."
+            )
+        return ""
 
 
 load_plugins()

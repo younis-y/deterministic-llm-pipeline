@@ -47,12 +47,22 @@ LLM_VERDICT = {
 }
 
 
-def mock_ollama(base_url: str = "http://localhost:11434") -> None:
-    """Route the ollama backend at a canned verdict. Call inside @respx.mock."""
+def mock_ollama(
+    base_url: str = "http://localhost:11434", model: str = "claude-sonnet-5"
+) -> None:
+    """Route the ollama backend at a canned verdict, and its preflight at a
+    server that is up and has `model` pulled. Call inside @respx.mock.
+
+    `model` defaults to `LLMConfig.model`'s own default, so callers that
+    build a config without overriding `llm.model` still pass preflight.
+    """
     respx.post(f"{base_url}/api/chat").mock(
         return_value=httpx.Response(
             200, json={"message": {"content": json.dumps(LLM_VERDICT)}}
         )
+    )
+    respx.get(f"{base_url}/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": model}]})
     )
 
 
@@ -104,6 +114,7 @@ def gated_job() -> Job:
         ),
         posted="2026-08-22",
     )
+
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 

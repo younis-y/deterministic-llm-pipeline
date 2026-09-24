@@ -477,6 +477,9 @@ async def test_a_posting_the_scorer_errored_on_is_not_buried_either(
     respx.post("http://localhost:11434/api/chat").mock(
         return_value=httpx.Response(500, text="model exploded")
     )
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": "claude-sonnet-5"}]})
+    )
     cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama"})
     result = await run_scan(cfg)
     assert result.llm_errors == 1

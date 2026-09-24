@@ -306,7 +306,11 @@ def backends() -> None:
     table.add_column("Needs a key")
     table.add_column("What it is")
     for name, cls in sorted(available_judges().items()):
-        needs = "[yellow]ANTHROPIC_API_KEY[/]" if cls.needs_api_key else "[green]no[/]"
+        needs = (
+            f"[yellow]{cls.api_key_env or 'yes'}[/]"
+            if cls.needs_api_key
+            else "[green]no[/]"
+        )
         table.add_row(name, needs, cls.description)
     console.print(table)
     console.print(
