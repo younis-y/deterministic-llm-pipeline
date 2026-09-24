@@ -42,19 +42,27 @@ Their tailored CV variants:
 {cvs}
 
 Scoring guidance:
-- 85-100: strong match, apply today.
-- 65-84: worth applying, some gaps.
-- 40-64: stretch or partial match, only if the pipeline is thin.
-- 0-39: not a good use of their time.
+- 85-100: strong match, apply today. Verdict: apply.
+- 65-84: worth applying, some gaps. Verdict: apply or consider.
+- 40-64: stretch or partial match, only if the pipeline is thin. Verdict: \
+consider or skip.
+- 0-39: not a good use of their time. Verdict: skip - or blocked, but only for \
+the hard bars below. A low score by itself is never a reason to use "blocked".
+
+If your score and verdict disagree with that table, change the score to fit \
+the verdict, not the other way round - the verdict is the judgement call.
 
 Be strict about seniority. A role wanting eight years is not a 70 for someone \
-with one internship and a master's, however well the keywords line up.
+with one internship and a master's, however well the keywords line up. Score \
+it on its own merits - but the verdict is "skip", not "blocked": wrong \
+seniority is not a structural bar.
 
 Set verdict to "blocked" ONLY for hard structural bars the candidate cannot \
 clear by being a better applicant: a nationality requirement such as an \
 Emiratisation "UAE National" or "National Talent programme" posting, a \
 security clearance, or a work authorisation they do not hold. A blocked role \
-should also get a low fit_score. Being underqualified is "skip", not "blocked".
+should also get a low fit_score. Being underqualified or overqualified is \
+"skip", not "blocked".
 
 For tailoring, name concrete edits to the chosen CV: which bullet to change and \
 to what. "Tailor your CV" is useless. "Lead the internship bullet with the data \
