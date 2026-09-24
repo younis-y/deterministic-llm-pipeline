@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rolescan.config import ProfileConfig
-from rolescan.models import CVVariant, Job
+from rolescan.models import CVVariant, Job, Verdict
 from rolescan.scoring import score_keywords
 from rolescan.scoring.cv import CVLibrary, strip_latex
 from rolescan.scoring.keyword import TITLE_MULTIPLIER
@@ -114,6 +114,96 @@ def test_blank_location_is_not_penalised(profile: ProfileConfig) -> None:
 def test_empty_profile_scores_zero() -> None:
     job = Job(source="s", company="c", title="Anything", url="https://x")
     assert score_keywords(job, ProfileConfig()).keyword_score == 0
+
+
+# --- blockers: a severity gradient, not a flat ban list --------------------
+
+
+def _matlab_job(title: str = "Data Scientist") -> Job:
+    return Job(
+        source="s",
+        company="c",
+        title=title,
+        location="London",
+        url="https://x",
+        description="Python, energy, trading. Some MATLAB experience useful.",
+    )
+
+
+def test_a_soft_blocker_is_penalised_but_not_a_blocker_hit() -> None:
+    """matlab: 15 in the real config is a preference ("capable, but does not
+    want to use it again"), not a structural bar. It must cost its weight and
+    still show up for display, but it must not force `blocked`."""
+    profile = ProfileConfig(
+        keywords={"energy": 6, "trading": 6},
+        blockers={"matlab": 15},
+    )
+    scored = score_keywords(_matlab_job(), profile)
+    assert "matlab" in scored.keyword_penalties
+    assert "matlab" not in scored.blocker_hits
+    assert scored.keyword_score == 6 + 6 - 15
+
+
+def test_a_hard_blocker_is_both_penalised_and_a_blocker_hit() -> None:
+    """security clearance: 60 in the real config is structural. Same
+    mechanism as the soft case, just over the line."""
+    profile = ProfileConfig(
+        keywords={"energy": 6},
+        blockers={"security clearance": 60},
+    )
+    job = Job(
+        source="s",
+        company="c",
+        title="Analyst",
+        url="https://x",
+        description="energy. Active security clearance required.",
+    )
+    scored = score_keywords(job, profile)
+    assert "security clearance" in scored.keyword_penalties
+    assert "security clearance" in scored.blocker_hits
+
+
+def test_hard_blocker_threshold_is_inclusive() -> None:
+    """A term weighted exactly at hard_blocker_score is hard - the boundary
+    is >=, not >."""
+    profile = ProfileConfig(blockers={"matlab": 50}, hard_blocker_score=50)
+    scored = score_keywords(_matlab_job(), profile)
+    assert "matlab" in scored.blocker_hits
+
+    just_under = ProfileConfig(blockers={"matlab": 49}, hard_blocker_score=50)
+    assert "matlab" not in score_keywords(_matlab_job(), just_under).blocker_hits
+
+
+def test_soft_blocker_does_not_block_without_an_llm_verdict() -> None:
+    """No-LLM path: a soft blocker still costs its weight and can still push
+    the keyword score to (or below) zero, but must not force `blocked` - the
+    fallback verdict is decided by the keyword score alone, same as before
+    this field existed."""
+    profile = ProfileConfig(
+        keywords={"energy": 6, "trading": 6}, blockers={"matlab": 15}
+    )
+    scored = score_keywords(_matlab_job(), profile)
+    assert scored.keyword_score == 6 + 6 - 15
+    assert scored.verdict is Verdict.SKIP, "keyword score alone decides, not a block"
+    assert not scored.is_blocked
+
+
+def test_hard_blocker_still_blocks_without_an_llm_verdict() -> None:
+    """No-LLM path, hard term: unchanged from the previous fix - a real
+    blocker still forces `blocked` even with no LLM verdict at all."""
+    profile = ProfileConfig(
+        keywords={"energy": 6}, blockers={"security clearance": 60}
+    )
+    job = Job(
+        source="s",
+        company="c",
+        title="Analyst",
+        url="https://x",
+        description="energy. Active security clearance required.",
+    )
+    scored = score_keywords(job, profile)
+    assert scored.verdict is Verdict.BLOCKED
+    assert scored.is_blocked
 
 
 # --- CV library ------------------------------------------------------------

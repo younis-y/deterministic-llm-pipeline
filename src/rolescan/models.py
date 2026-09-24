@@ -200,12 +200,16 @@ class ScoredJob(BaseModel):
     keyword_hits: list[str] = Field(default_factory=list)
     keyword_penalties: list[str] = Field(default_factory=list)
     blocker_hits: list[str] = Field(default_factory=list)
-    """Configured `blockers` terms found in the posting text - a subset of
-    keyword_penalties that excludes the location-mismatch flag, which is a
-    preference, not a hard bar. A hit here is an instruction the user wrote
+    """Configured `blockers` terms found in the posting text whose weight
+    meets `ProfileConfig.hard_blocker_score` - a subset of keyword_penalties
+    that excludes both the location-mismatch flag and any blocker term below
+    the hardness threshold, since `blockers` is a severity gradient rather
+    than a flat list of bans. A hit here is an instruction the user wrote
     into their config, not a hint: it makes this posting `blocked` regardless
     of what the LLM decides, because a model's opinion does not get to
-    outvote it."""
+    outvote a genuine structural bar. A lighter blocker term (below the
+    threshold) still lands in keyword_penalties and still costs its weight in
+    keyword_score, but never here."""
     fit: FitVerdict | None = None
     llm_cached: bool = False
 

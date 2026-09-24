@@ -44,7 +44,8 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
         if term.casefold() in blob:
             total -= penalty
             penalties.append(term)
-            blockers.append(term)
+            if penalty >= profile.hard_blocker_score:
+                blockers.append(term)
 
     if not _location_ok(job, profile):
         total -= profile.location_penalty

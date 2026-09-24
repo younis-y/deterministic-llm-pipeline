@@ -30,6 +30,10 @@ profile:
     data scientist: 7
     python: 4
     graduate: 4
+  # A term weighted at or above hard_blocker_score (50 by default) is a hard
+  # bar the LLM cannot override; lighter terms just cost points. None of these
+  # are 50+ as written, so raise the structural ones (uae national,
+  # emiratisation, security clearance) if you want them to actually block.
   blockers:
     uae national: 40
     emiratisation: 30

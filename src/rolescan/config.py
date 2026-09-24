@@ -68,6 +68,15 @@ class ProfileConfig(BaseModel):
     single biggest lever on cost."""
     min_report_score: Annotated[int, Field(ge=0, le=100)] = 55
     """Final gate. Postings below this never reach the digest."""
+    hard_blocker_score: Annotated[int, Field(ge=0)] = 50
+    """`blockers` is a severity gradient, not a flat list of bans: a weight of
+    60 next to "security clearance" and a weight of 15 next to "matlab" are
+    both legitimate, but they mean different things. This is the line between
+    them. A term weighted at or above it is a structural bar - the candidate
+    cannot apply their way past it, so it forces `blocked` and the LLM does
+    not get a vote. A term below it is a preference: it still subtracts its
+    weight from the keyword score and still shapes ranking, but it must never
+    force `blocked` on its own."""
 
 
 class LLMConfig(BaseModel):

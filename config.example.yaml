@@ -46,13 +46,22 @@ profile:
     analyst: 3
     graduate: 4
 
-  # Subtracted. These keep the digest free of roles you cannot get.
+  # Subtracted, and always shown when they hit. A term weighted at or above
+  # hard_blocker_score (50 by default) is a hard bar: it forces a `blocked`
+  # verdict that no LLM opinion can override, so reserve that range for
+  # things that are genuinely structural (a clearance, a nationality gate, a
+  # visa you do not hold). A lighter weight is a preference, not a wall - it
+  # still costs points and still shows on the posting, but the LLM can still
+  # say apply. NOTE: none of the example weights below reach 50, so as
+  # written none of them hard-block; raise the ones you mean as a genuine bar
+  # (security clearance is the obvious candidate) to 50+.
   blockers:
     security clearance: 25
     "10+ years": 20
     director: 15
     unpaid: 30
   location_penalty: 25
+  # hard_blocker_score: 50   # the apply/preference vs. cannot-apply line
 
   min_keyword_score: 18   # below this, a posting never reaches the LLM
   min_report_score: 55    # below this, a posting never reaches the digest
