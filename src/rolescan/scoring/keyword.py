@@ -31,7 +31,6 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
     total = 0
     hits: list[str] = []
     penalties: list[str] = []
-    blockers: list[str] = []
 
     for term, weight in profile.keywords.items():
         needle = term.casefold()
@@ -53,9 +52,7 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
     # preference, however heavy), or here alone (a bar that costs nothing).
     # Both fields are normalised at load and matched identically, so the two
     # can never disagree about whether a term is present.
-    for term in profile.hard_blockers:
-        if _term_hit(term, blob):
-            blockers.append(term)
+    blockers = [t for t in profile.hard_blockers if _term_hit(t, blob)]
 
     if not _location_ok(job, profile):
         total -= profile.location_penalty

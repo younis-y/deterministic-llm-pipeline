@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import date
 
 import pytest
@@ -51,7 +52,7 @@ def test_content_hash_changes_with_description(energy_job: Job) -> None:
     [
         ("2026-08-20", date(2026, 8, 20)),
         ("2026-08-20T11:22:33Z", date(2026, 8, 20)),
-        (1755648000000, date.fromtimestamp(1755648000)),  # Lever epoch millis
+        (1755648000000, date(2025, 8, 20)),  # Lever epoch millis, read as UTC
         ("", None),
         (None, None),
         ("Posted Today", None),  # Workday's non-date
@@ -60,6 +61,22 @@ def test_content_hash_changes_with_description(energy_job: Job) -> None:
 def test_date_coercion(raw: object, expected: date | None) -> None:
     job = Job(source="s", company="c", title="t", url="https://x", posted=raw)
     assert job.posted == expected
+
+
+def test_epoch_dates_do_not_move_with_the_machine_timezone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A naive fromtimestamp read Lever's epoch millis against whatever the
+    host clock was set to, so a posting published at 23:30 UTC landed on the
+    previous day anywhere west of Greenwich. `posted` is what the recency
+    window filters on, so the same payload made a role a day older in New
+    York than in London."""
+    late = 1755647999000  # 2025-08-19T23:59:59Z
+    for tz in ("UTC", "America/New_York", "Asia/Dubai"):
+        monkeypatch.setenv("TZ", tz)
+        time.tzset()
+        job = Job(source="s", company="c", title="t", url="https://x", posted=late)
+        assert job.posted == date(2025, 8, 19), tz
 
 
 def test_job_requires_title_and_url() -> None:

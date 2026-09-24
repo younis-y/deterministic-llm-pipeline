@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Annotated, Self
 
@@ -103,9 +103,14 @@ class Job(BaseModel):
         if isinstance(v, datetime):
             return v.date()
         if isinstance(v, int | float):
-            # Lever hands back epoch milliseconds.
+            # Lever hands back epoch milliseconds. Converted against UTC
+            # explicitly, not against whatever the machine's clock is set to:
+            # a naive fromtimestamp puts a posting published at 23:30 UTC on
+            # the previous day anywhere west of Greenwich, and `posted` is
+            # what the recency window filters on - so the same posting was a
+            # day older in New York than in London, from the same payload.
             seconds = float(v) / 1000 if v > 1e11 else float(v)
-            return datetime.fromtimestamp(seconds).date()
+            return datetime.fromtimestamp(seconds, tz=UTC).date()
         text = str(v)[:10]
         try:
             return date.fromisoformat(text)

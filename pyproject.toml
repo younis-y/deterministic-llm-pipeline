@@ -79,14 +79,47 @@ select = [
     "PTH",            # prefer pathlib
     "RET",            # return simplification
     "TID",            # tidy imports
+    "C90",            # mccabe complexity — the gate that stops run_scan recurring
+    "PERF",           # perflint: inefficient loop patterns
+    "FURB",           # refurb: modernisations that usually shorten code
+    "DTZ",            # naive datetimes (found a real bug in Job._parse_date)
+    "ARG",            # unused arguments
+    "PIE",            # misc simplifications
+    "ERA",            # commented-out code
+    "EM",             # exception message hygiene
+    "RSE",            # raise ... from
 ]
+
+# Deliberately NOT selected. Recorded so nobody re-adds them without thinking.
+#
+#   S  (bandit)     477 of its 575 findings are S101 "assert used", in the test
+#                   suite, which is what tests are for. The two findings worth
+#                   having are handled at the site: see the `# noqa: S608` in
+#                   store.py. Turning the rule on to silence 477 of them with a
+#                   per-file ignore buys nothing this does not already have.
+#   PL (pylint)     PLC0415 flags 17 import-outside-top-level, every one of them
+#                   a deliberate lazy import of an optional SDK (anthropic) or a
+#                   cycle break — the mechanism that makes those dependencies
+#                   optional. PLR2004 magic-value-comparison fires 31 times,
+#                   mostly on HTTP status codes and test fixtures.
+#   D  (pydocstyle) This codebase documents deliberately and at length, in
+#                   sentences rather than to a template. A docstring linter
+#                   would generate churn, not clarity.
 ignore = [
     "ANN401",  # allow Any in narrow spots
     "B008",    # typer uses function calls in defaults by design
 ]
 
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["ANN", "E501"]
+# ARG: pytest fixtures are legitimately requested and not referenced.
+# C90: a long, linear, branch-free test is not complex in the sense that
+# matters; splitting one to satisfy the gate makes it harder to read.
+# EM: a test double raising `OSError("connection refused")` is clearest read
+# exactly like that, and no reader ever sees the traceback.
+"tests/*" = ["ANN", "E501", "ARG", "C90", "EM"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["rolescan"]

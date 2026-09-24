@@ -47,8 +47,7 @@ class SmartRecruiters(Source):
                 url, params={"limit": 100, "offset": offset}
             )
             content = data.get("content") or []
-            for p in content:
-                jobs.append(self._parse(p))
+            jobs.extend(self._parse(p) for p in content)
             offset += len(content)
             if not content or offset >= int(data.get("totalFound") or 0):
                 break
@@ -154,24 +153,22 @@ class Ashby(Source):
             f"https://api.ashbyhq.com/posting-api/job-board/{self.slug}",
             params={"includeCompensation": "true"},
         )
-        out: list[Job] = []
-        for p in data.get("jobs") or []:
-            out.append(
-                Job(
-                    source=self.name,
-                    company=self.label,
-                    title=p.get("title", ""),
-                    location=p.get("location", ""),
-                    url=first_str(p, "jobUrl", "applyUrl"),
-                    description=strip_html(
-                        p.get("descriptionHtml") or p.get("descriptionPlain", "")
-                    ),
-                    posted=p.get("publishedAt"),
-                    remote=bool(p.get("isRemote")) or _is_remote(p.get("location", "")),
-                    raw_id=str(p.get("id") or ""),
-                )
+        return [
+            Job(
+                source=self.name,
+                company=self.label,
+                title=p.get("title", ""),
+                location=p.get("location", ""),
+                url=first_str(p, "jobUrl", "applyUrl"),
+                description=strip_html(
+                    p.get("descriptionHtml") or p.get("descriptionPlain", "")
+                ),
+                posted=p.get("publishedAt"),
+                remote=bool(p.get("isRemote")) or _is_remote(p.get("location", "")),
+                raw_id=str(p.get("id") or ""),
             )
-        return out
+            for p in data.get("jobs") or []
+        ]
 
 
 @register

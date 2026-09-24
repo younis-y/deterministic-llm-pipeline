@@ -49,7 +49,9 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
 #: Whole <script>/<style> elements, contents included. strip_html only removes
 #: the tags, so without this a page's JavaScript ends up in the description.
-_SCRIPT_STYLE = re.compile(r"<(script|style|noscript)\b[^>]*>.*?</\1\s*>", re.I | re.S)
+_SCRIPT_STYLE = re.compile(
+    r"<(script|style|noscript)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL
+)
 
 #: Body-text fallback ceiling. The LLM scorer trims to `description_chars`
 #: anyway; this only stops a pathological page filling the store.
@@ -108,14 +110,14 @@ _COUNTRY = {
 }
 _JOB_POSTING = "jobposting"
 _SYNTAXES = ["json-ld", "microdata", "rdfa"]
-_LOC = re.compile(r"<loc>\s*([^<]+?)\s*</loc>", re.I)
+_LOC = re.compile(r"<loc>\s*([^<]+?)\s*</loc>", re.IGNORECASE)
 
 #: Java's Date.toString, which SuccessFactors emits for datePosted and
 #: validThrough: "Wed Aug 05 00:00:00 UTC 2026". Not ISO, so Job._parse_date
 #: discards it and every posting arrives with posted=None.
 _JAVA_DATE = re.compile(
     r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\b.*?\b(\d{4})\b",
-    re.I,
+    re.IGNORECASE,
 )
 _MONTHS = {
     m: i
@@ -295,7 +297,9 @@ class Structured(Source):
     async def fetch(self) -> list[Job]:
         if not self.sitemap_url:
             msg = f"structured source {self.slug!r} needs a `sitemap:` url"
-            raise FetchError("", msg)
+            # EM101 misreads this: "" is FetchError's url argument, and the
+            # message is already in `msg`, which is what the rule asks for.
+            raise FetchError("", msg)  # noqa: EM101
 
         entries = self._parse_sitemap(await self.fetcher.fetch_text(self.sitemap_url))
         wanted = self._select(entries)

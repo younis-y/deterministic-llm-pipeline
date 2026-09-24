@@ -213,7 +213,11 @@ class _Text(HTMLParser):
     def handle_data(self, data: str) -> None:
         self.parts.append(data)
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],  # noqa: ARG002  HTMLParser's signature
+    ) -> None:
         if tag in {"br", "p", "li", "div", "tr"}:
             self.parts.append("\n")
 

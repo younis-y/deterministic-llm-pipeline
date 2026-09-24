@@ -133,6 +133,11 @@ class Store:
         if not scored:
             return []
         uids = [s.job.uid for s in scored]
+        # The only thing interpolated is a run of `?` placeholders, whose
+        # length comes from len(uids) and nothing else. Every value is bound.
+        # Checked because bandit's S608 flags this shape on sight and the
+        # answer should be written down rather than rediscovered: there is no
+        # SQL builder here and no posting text anywhere near the statement.
         placeholders = ",".join("?" * len(uids))
         cur = await self.db.execute(
             f"SELECT uid FROM seen WHERE uid IN ({placeholders})",
@@ -274,7 +279,8 @@ class Store:
         mark captured.
         """
         if state not in self.STATES:
-            raise ValueError(f"state must be one of {self.STATES}, got {state!r}")
+            msg = f"state must be one of {self.STATES}, got {state!r}"
+            raise ValueError(msg)
         await self.db.execute(
             """
             INSERT INTO applications (url, state, company, title, updated)
