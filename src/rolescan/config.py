@@ -180,9 +180,20 @@ class LLMConfig(BaseModel):
         """
         from rolescan.scoring.judges import available_judges
 
-        if not self.api_key:
-            object.__setattr__(self, "api_key", os.environ.get("ANTHROPIC_API_KEY", ""))
         judge = available_judges().get(self.backend)
+        if not self.api_key:
+            # The judge names its own variable, so a third-party backend
+            # declaring api_key_env = "OPENAI_API_KEY" is read from the one it
+            # asked for. Reading ANTHROPIC_API_KEY unconditionally made this a
+            # public plugin API that names a variable it never looks at: the
+            # user exports it, the config still self-disables, and the message
+            # tells them to export what they just exported.
+            env = (
+                judge.api_key_env
+                if judge and judge.api_key_env
+                else "ANTHROPIC_API_KEY"
+            )
+            object.__setattr__(self, "api_key", os.environ.get(env, ""))
         needs_key = judge.needs_api_key if judge else True
         if self.enabled and needs_key and not self.api_key:
             object.__setattr__(self, "enabled", False)

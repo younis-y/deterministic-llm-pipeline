@@ -117,7 +117,8 @@ def scan(
 
     result, shortlist_rows = asyncio.run(_go())
 
-    if result.llm_unusable:
+    llm_ran = bool(result.llm_calls or result.llm_cached)
+    if result.llm_unusable and not llm_ran:
         # The loudest thing this command prints, deliberately. Every silent
         # self-disabling defect this tool has had ended here: a judge that
         # could not run, a run that reported success, and an empty digest with
@@ -130,6 +131,18 @@ def scan(
             "empty for that reason and not because the market is.[/]\n"
             "[dim]Fix the backend, or run with --no-llm to accept a "
             "keyword-only digest without this warning.[/]\n"
+        )
+    elif result.llm_unusable:
+        # Scoring worked, so the claim above would be false and the reader
+        # would be looking at fit scores under a line saying there are none.
+        # Still worth printing: the probe is short by design, and one that
+        # keeps failing on a healthy server is a real thing to know.
+        console.print(
+            f"\n[yellow]The pre-scan backend check failed "
+            f"({result.llm_unusable}), but scoring ran anyway: "
+            f"{result.llm_calls} scored, {result.llm_cached} from cache.[/]\n"
+            "[dim]The liveness probe is deliberately short so an unattended "
+            "run cannot hang on it; a loaded server can exceed it.[/]\n"
         )
 
     text = render_markdown(

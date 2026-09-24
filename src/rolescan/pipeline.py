@@ -63,6 +63,13 @@ class ScanResult:
     llm_cached: int = 0
     llm_errors: int = 0
     llm_error_detail: str = ""
+    llm_backend: str = ""
+    """The backend scoring was configured to use, whether or not it ran.
+
+    Carried so the digest can address the right failure. "A 401 here means
+    ANTHROPIC_API_KEY is missing" is exactly wrong advice for someone whose
+    local server returned HTTP 500, and the digest is the one place the end
+    user reads."""
     llm_unusable: str = ""
     """Why the configured judge could not be used at all, or "".
 
@@ -165,7 +172,7 @@ async def run_scan(
     anything is fetched, so a backend that cannot run says so instead of
     quietly degrading the whole digest to keyword scores.
     """
-    result = ScanResult(dry_run=dry_run)
+    result = ScanResult(dry_run=dry_run, llm_backend=cfg.llm.backend)
     if check_llm:
         result.llm_unusable = await unusable_backend_reason(cfg.llm)
         if result.llm_unusable:

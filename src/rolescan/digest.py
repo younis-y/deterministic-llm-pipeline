@@ -12,6 +12,7 @@ from pathlib import Path
 from rolescan.config import EmailConfig
 from rolescan.models import ScoredJob, Verdict
 from rolescan.pipeline import ScanResult
+from rolescan.scoring.judges import available_judges
 
 __all__ = ["render_html", "render_markdown", "send_email", "write_digest"]
 
@@ -241,13 +242,43 @@ def _stats(result: ScanResult) -> str:
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
 
+def _llm_ran(result: ScanResult) -> bool:
+    """Whether any posting in this digest actually carries an LLM score."""
+    return bool(result.llm_calls or result.llm_cached)
+
+
+def _llm_error_hint(result: ScanResult) -> str:
+    """One line naming the likely cause, for the backend that was configured.
+
+    "A 401 here means ANTHROPIC_API_KEY is missing" is the right sentence for
+    the hosted backend and exactly the wrong one for `ollama returned HTTP
+    500`: it sends someone to look at a credential that backend has never
+    had. This is the place the end user actually reads, so the distinction
+    has to be real here, not only in the CLI.
+    """
+    judge = available_judges().get(result.llm_backend)
+    if judge is None:
+        return ""
+    if judge.needs_api_key:
+        env = judge.api_key_env or "the backend's API key"
+        return (
+            f"A 401 here means {env} is missing, revoked, or from another "
+            "organisation."
+        )
+    return (
+        f"The `{result.llm_backend}` backend needs no API key, so a credential "
+        "is not the cause. Check the server is still up and still holding "
+        "`llm.model`, and that `llm.timeout` is long enough for it."
+    )
+
+
 def _failures(result: ScanResult) -> list[str]:
     failed = result.failed_sources
     skipped = result.skipped_sources
     if not failed and not skipped and not result.llm_errors and not result.llm_unusable:
         return []
     lines = ["", "---", ""]
-    if result.llm_unusable:
+    if result.llm_unusable and not _llm_ran(result):
         # The configured judge never ran at all, so there are no scoring errors
         # to report and the digest would otherwise look like a normal quiet
         # day. It is not one: every posting fell back to a keyword score, and
@@ -263,6 +294,22 @@ def _failures(result: ScanResult) -> list[str]:
             "It is not a quiet market.",
             "",
         ]
+    elif result.llm_unusable:
+        # The preflight said the backend was unusable and then scoring worked.
+        # Claiming nothing was scored, above postings carrying fit scores and
+        # confidence levels, makes the digest contradict itself and teaches
+        # the reader to disbelieve the warning on the day it is true. The
+        # probe is a few seconds by design, and a server part-way through
+        # loading a large model can exceed it.
+        lines += [
+            f"**The pre-scan backend check failed, but scoring ran anyway.** "
+            f"{result.llm_unusable}.",
+            "",
+            "The scores below are real. It is the liveness probe that failed, "
+            "not the backend — it is deliberately short so an unattended run "
+            "cannot hang on it, and a loaded server can exceed it.",
+            "",
+        ]
     if result.llm_errors:
         # Every score fell back to keywords. Without this the digest is
         # indistinguishable from a deliberate --no-llm run.
@@ -272,8 +319,7 @@ def _failures(result: ScanResult) -> list[str]:
             "",
             f"`{result.llm_error_detail}`" if result.llm_error_detail else "",
             "",
-            "A 401 here means ANTHROPIC_API_KEY is missing, revoked, or from "
-            "another organisation.",
+            _llm_error_hint(result),
             "",
         ]
     if failed:

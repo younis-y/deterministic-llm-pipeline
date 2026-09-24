@@ -476,3 +476,63 @@ async def test_a_judge_whose_constructor_raises_does_not_kill_the_scan() -> None
         assert "no config for you" in reason
     finally:
         _unregister("exploding")
+
+
+# --- a plugin's key comes from the variable the plugin names ---------------
+
+
+async def test_a_third_party_judge_key_is_read_from_its_own_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`judges.py` tells the user to export `cls.api_key_env`, so the config
+    has to read that variable. Reading ANTHROPIC_API_KEY unconditionally made
+    a public plugin API that names a variable it never looks at: the user
+    exports OPENAI_API_KEY, the config still self-disables for want of a key,
+    and the message tells them to export what they just exported."""
+    from rolescan.scoring.judges import Judge, register
+
+    @register
+    class _OtherHostedJudge(Judge):
+        name = "otherhosted"
+        needs_api_key = True
+        api_key_env = "OTHER_PROVIDER_KEY"
+        description = "test only"
+
+        async def verdict(self, system: str, user: str) -> FitVerdict:
+            raise NotImplementedError
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OTHER_PROVIDER_KEY", "sk-other-123")
+    try:
+        cfg = LLMConfig(enabled=True, backend="otherhosted")
+        assert cfg.api_key == "sk-other-123"
+        assert cfg.enabled, "a backend with its key exported must not self-disable"
+        assert await unusable_backend_reason(cfg) == ""
+    finally:
+        _unregister("otherhosted")
+
+
+async def test_a_third_party_judge_without_its_key_still_self_disables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rolescan.scoring.judges import Judge, register
+
+    @register
+    class _OtherHostedJudge2(Judge):
+        name = "otherhosted2"
+        needs_api_key = True
+        api_key_env = "OTHER_PROVIDER_KEY_2"
+        description = "test only"
+
+        async def verdict(self, system: str, user: str) -> FitVerdict:
+            raise NotImplementedError
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-for-this-backend")
+    monkeypatch.delenv("OTHER_PROVIDER_KEY_2", raising=False)
+    try:
+        cfg = LLMConfig(enabled=True, backend="otherhosted2")
+        assert cfg.api_key == "", "another provider's key is not this one's"
+        assert not cfg.enabled
+        assert "OTHER_PROVIDER_KEY_2" in await unusable_backend_reason(cfg)
+    finally:
+        _unregister("otherhosted2")

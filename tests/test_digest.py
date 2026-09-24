@@ -213,3 +213,54 @@ def test_html_render_escapes_hostile_content() -> None:
     html = render_html("<script>alert(1)</script>")
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+
+
+# --- the failure notes have to fit the backend that actually failed --------
+
+
+def test_an_ollama_error_does_not_blame_the_anthropic_key() -> None:
+    """`ollama returned HTTP 500` has nothing to do with a credential that
+    backend has never had. The wave generalised this string in judges.py and
+    cli.py and missed the one place the end user actually reads."""
+    text = render_markdown(
+        ScanResult(
+            llm_backend="ollama",
+            llm_errors=2,
+            llm_error_detail="RuntimeError: ollama returned HTTP 500",
+        )
+    )
+    assert "ANTHROPIC_API_KEY" not in text
+    assert "needs no API key" in text
+    assert "llm.timeout" in text
+
+
+def test_an_anthropic_error_still_names_the_key() -> None:
+    text = render_markdown(ScanResult(llm_backend="anthropic", llm_errors=1))
+    assert "ANTHROPIC_API_KEY" in text
+    assert "401" in text
+
+
+def test_a_failed_preflight_does_not_claim_nothing_was_scored() -> None:
+    """The 3s liveness probe covers connect, read, write and pool, and
+    `FitScorer` is built regardless of it - so a slow `/api/tags` produced a
+    digest that printed "LLM scoring did not run at all" above postings
+    carrying fit scores and confidence levels. A message that contradicts the
+    page it is printed on teaches the reader to ignore it."""
+    result = ScanResult(
+        llm_backend="ollama",
+        llm_unusable="could not reach ollama at http://localhost:11434",
+        llm_calls=4,
+        llm_cached=1,
+    )
+    text = render_markdown(result)
+    assert "did not run at all" not in text
+    assert "scoring ran anyway" in text
+
+
+def test_a_backend_that_really_did_not_run_still_says_so() -> None:
+    result = ScanResult(
+        llm_backend="ollama",
+        llm_unusable="could not reach ollama at http://localhost:11434",
+    )
+    text = render_markdown(result)
+    assert "LLM scoring did not run at all" in text

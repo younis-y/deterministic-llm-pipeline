@@ -15,7 +15,7 @@ import pytest
 import respx
 from typer.testing import CliRunner
 
-from conftest import plain
+from conftest import OLLAMA_MODEL, mock_ollama, plain
 from rolescan.cli import app
 from rolescan.store import Store
 
@@ -434,3 +434,40 @@ def test_the_digest_prints_a_mark_command_that_works_from_anywhere(
     digest = (tmp_path / "digests" / "latest.md").read_text()
     assert f"rolescan mark https://x/1 applied --config {cfg}" in digest
     assert f"rolescan mark https://x/1 dismissed --config {cfg}" in digest
+
+
+# --- a slow preflight must not make the CLI contradict the digest ----------
+
+OLLAMA_CONFIG = CONFIG.replace(
+    "llm:\n  enabled: false",
+    f"llm:\n  enabled: true\n  backend: ollama\n  model: {OLLAMA_MODEL}",
+)
+
+
+@respx.mock
+def test_a_failed_preflight_does_not_claim_nothing_was_scored(tmp_path: Path) -> None:
+    """The preflight is a few seconds by design and `FitScorer` is built
+    regardless of it, so a slow `/api/tags` left the CLI printing "LLM
+    scoring did not run" in bold red over postings that carry fit scores.
+    Keeping the short timeout is right; claiming the scan did not happen is
+    not."""
+    cfg = _project(tmp_path, OLLAMA_CONFIG)
+    mock_ollama(model=OLLAMA_MODEL)
+    # The probe times out; the chat endpoint mocked above still answers.
+    respx.get("http://localhost:11434/api/tags").mock(
+        side_effect=httpx.ReadTimeout("timed out")
+    )
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+
+    result = runner.invoke(app, ["scan", "-c", str(cfg), "--no-email"])
+    assert result.exit_code == 0, result.output
+    out = plain(result.output)
+    assert "LLM scoring did not run" not in out
+    assert "scoring ran anyway" in out
+
+    text = (tmp_path / "digests" / "latest.md").read_text()
+    assert "did not run at all" not in text
+    assert "scoring ran anyway" in text
+    assert "confidence" in text, "the postings really do carry LLM scores"
