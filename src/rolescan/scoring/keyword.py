@@ -44,8 +44,14 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
         if term.casefold() in blob:
             total -= penalty
             penalties.append(term)
-            if penalty >= profile.hard_blocker_score:
-                blockers.append(term)
+
+    # Hardness is a list, not a threshold on the weights above. A weight says
+    # what a term costs; this says what no application can get past. A term
+    # can be in both (it costs its weight AND blocks), in `blockers` alone (a
+    # preference, however heavy), or here alone (a bar that costs nothing).
+    for term in profile.hard_blockers:
+        if term in blob:
+            blockers.append(term)
 
     if not _location_ok(job, profile):
         total -= profile.location_penalty

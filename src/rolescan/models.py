@@ -22,6 +22,7 @@ __all__ = [
     "Job",
     "ScoredJob",
     "Verdict",
+    "normalise_term",
 ]
 
 _WS = re.compile(r"\s+")
@@ -29,6 +30,19 @@ _WS = re.compile(r"\s+")
 
 def _norm(text: str) -> str:
     return _WS.sub(" ", text).strip()
+
+
+def normalise_term(term: str) -> str:
+    """Normalise a configured term the way posting text is normalised.
+
+    Matching is a search over `Job.blob`, which is casefolded and has its
+    whitespace collapsed by `_norm`. A term that has not been through the
+    same normalisation can never match: `UAE  National` with two spaces, or
+    a trailing space picked up from a YAML quote, is a bar that silently
+    stops working. The config loader and the matcher both come through here
+    so there is exactly one answer to what a term looks like.
+    """
+    return _norm(term).casefold()
 
 
 class Verdict(StrEnum):
@@ -200,16 +214,24 @@ class ScoredJob(BaseModel):
     keyword_hits: list[str] = Field(default_factory=list)
     keyword_penalties: list[str] = Field(default_factory=list)
     blocker_hits: list[str] = Field(default_factory=list)
-    """Configured `blockers` terms found in the posting text whose weight
-    meets `ProfileConfig.hard_blocker_score` - a subset of keyword_penalties
-    that excludes both the location-mismatch flag and any blocker term below
-    the hardness threshold, since `blockers` is a severity gradient rather
-    than a flat list of bans. A hit here is an instruction the user wrote
-    into their config, not a hint: it makes this posting `blocked` regardless
-    of what the LLM decides, because a model's opinion does not get to
-    outvote a genuine structural bar. A lighter blocker term (below the
-    threshold) still lands in keyword_penalties and still costs its weight in
-    keyword_score, but never here."""
+    """`ProfileConfig.hard_blockers` terms found in the posting text.
+
+    Hardness is its own list, not a weight: `blockers` says how much a term
+    costs, `hard_blockers` says which terms are structural. The two change on
+    different timescales - weights get retuned whenever the prefilter is
+    calibrated, while a passport or a clearance is a fact about the candidate
+    that changes once a decade - so one number could not honestly encode both.
+
+    A hit here is an instruction the user wrote into their config, not a hint:
+    it makes this posting `blocked` regardless of what the LLM decides,
+    because a model's opinion does not get to outvote a genuine structural
+    bar. A weighted term that is NOT in `hard_blockers` still lands in
+    keyword_penalties and still costs its weight in keyword_score, but never
+    here. Neither does the location-mismatch flag.
+
+    Because this list can delete a role from the digest outright, its terms
+    are matched on word boundaries rather than as bare substrings: see
+    `rolescan.scoring.keyword`."""
     fit: FitVerdict | None = None
     llm_cached: bool = False
 

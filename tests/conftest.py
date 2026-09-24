@@ -18,6 +18,7 @@ profile:
   locations: [london, abu dhabi, remote]
   keywords: {energy: 6, data scientist: 7, python: 4, trading: 6, graduate: 4}
   blockers: {uae national: 60, "10+ years": 20, principal: 12}
+  hard_blockers: [uae national]
   min_keyword_score: 18
   min_report_score: 55
 llm:
@@ -72,6 +73,7 @@ def profile() -> ProfileConfig:
         locations=["london", "abu dhabi", "remote"],
         keywords={"energy": 6, "data scientist": 7, "python": 4, "trading": 6},
         blockers={"uae national": 60, "10+ years": 20},
+        hard_blockers=["uae national"],
         min_keyword_score=18,
     )
 

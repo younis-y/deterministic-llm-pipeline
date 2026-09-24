@@ -65,6 +65,15 @@ def _role(item: ScoredJob) -> list[str]:
                 lines.append("**Gaps:** " + ", ".join(fit.keywords_missing))
                 lines.append("")
     else:
+        # Same rule as the LLM branch, for the keyword-only path: a BLOCKED
+        # badge must never appear without the term that caused it. A hard
+        # blocker does not have to carry a weight, so it need not show up in
+        # keyword_penalties below - and if it does not, nothing else here
+        # names it.
+        if item.blocker_hits:
+            blocked_by = list(dict.fromkeys(item.blocker_hits))
+            lines.append("**Blocked by:** " + "; ".join(blocked_by))
+            lines.append("")
         if item.keyword_penalties:
             lines.append("**Flags:** " + ", ".join(sorted(set(item.keyword_penalties))))
             lines.append("")

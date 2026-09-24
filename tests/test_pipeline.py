@@ -509,10 +509,9 @@ async def test_a_healthy_run_still_records_what_it_judged(tmp_path: Path) -> Non
 
 @respx.mock
 async def test_a_hard_blocker_overrides_a_high_llm_score(tmp_path: Path) -> None:
-    """The user's blockers are an instruction, not a hint - at least once a
-    term's weight clears `hard_blocker_score`. A posting that clears the
-    keyword prefilter and that the LLM scores well above min_report_score
-    must still be excluded once it hits a hard blocker term - the LLM's
+    """A term in `hard_blockers` is an instruction, not a hint. A posting that
+    clears the keyword prefilter and that the LLM scores well above
+    min_report_score must still be excluded once it hits one - the LLM's
     opinion does not get to outvote a structural bar the user configured."""
     mock_ollama()  # canned verdict: fit_score=72, verdict="consider" - not blocked
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
@@ -538,6 +537,7 @@ async def test_a_hard_blocker_overrides_a_high_llm_score(tmp_path: Path) -> None
                     "trading": 15,
                 },
                 "blockers": {"10+ years": 60},
+                "hard_blockers": ["10+ years"],
                 "min_keyword_score": 18,
                 "min_report_score": 55,
             },
@@ -556,11 +556,13 @@ async def test_a_hard_blocker_overrides_a_high_llm_score(tmp_path: Path) -> None
 
 
 @respx.mock
-async def test_a_soft_blocker_does_not_override_the_llm(tmp_path: Path) -> None:
-    """A blocker term weighted below `hard_blocker_score` is a preference,
-    not a structural bar (matlab: 15 in the real config - "capable, but does
-    not want to use it again"). It must cost its weight in keyword_score but
-    must not force `blocked`: the LLM's own verdict stands."""
+async def test_a_weighted_term_alone_does_not_override_the_llm(
+    tmp_path: Path,
+) -> None:
+    """A term in `blockers` but not in `hard_blockers` is a preference, not a
+    structural bar (matlab: 15 in the real config - "capable, but does not
+    want to use it again"). It must cost its weight in keyword_score but must
+    not force `blocked`: the LLM's own verdict stands."""
     mock_ollama()  # canned verdict: fit_score=72, verdict="consider"
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(

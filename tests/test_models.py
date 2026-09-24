@@ -137,8 +137,8 @@ def test_configured_blocker_overrides_a_high_llm_verdict(energy_job: Job) -> Non
     assert scored.is_blocked
 
 
-def test_a_soft_blocker_never_overrides_the_llm_verdict(energy_job: Job) -> None:
-    """A blocker term below hard_blocker_score (matlab: 15 in the real
+def test_a_weighted_term_never_overrides_the_llm_verdict(energy_job: Job) -> None:
+    """A term in `blockers` but not in `hard_blockers` (matlab: 15 in the real
     config) is a preference, not an instruction: score_keywords keeps it out
     of blocker_hits, so it must never force `blocked` even though it is still
     recorded in keyword_penalties for display. The LLM's own apply verdict

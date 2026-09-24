@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from rolescan.config import ProfileConfig
 from rolescan.models import CVVariant, Job, Verdict
 from rolescan.scoring import score_keywords
@@ -116,7 +119,7 @@ def test_empty_profile_scores_zero() -> None:
     assert score_keywords(job, ProfileConfig()).keyword_score == 0
 
 
-# --- blockers: a severity gradient, not a flat ban list --------------------
+# --- blockers cost points; hard_blockers are walls -------------------------
 
 
 def _matlab_job(title: str = "Data Scientist") -> Job:
@@ -130,7 +133,7 @@ def _matlab_job(title: str = "Data Scientist") -> Job:
     )
 
 
-def test_a_soft_blocker_is_penalised_but_not_a_blocker_hit() -> None:
+def test_a_weighted_term_is_penalised_but_not_a_blocker_hit() -> None:
     """matlab: 15 in the real config is a preference ("capable, but does not
     want to use it again"), not a structural bar. It must cost its weight and
     still show up for display, but it must not force `blocked`."""
@@ -144,37 +147,65 @@ def test_a_soft_blocker_is_penalised_but_not_a_blocker_hit() -> None:
     assert scored.keyword_score == 6 + 6 - 15
 
 
-def test_a_hard_blocker_is_both_penalised_and_a_blocker_hit() -> None:
-    """security clearance: 60 in the real config is structural. Same
-    mechanism as the soft case, just over the line."""
-    profile = ProfileConfig(
-        keywords={"energy": 6},
-        blockers={"security clearance": 60},
-    )
-    job = Job(
+def _clearance_job() -> Job:
+    return Job(
         source="s",
         company="c",
         title="Analyst",
         url="https://x",
         description="energy. Active security clearance required.",
     )
-    scored = score_keywords(job, profile)
+
+
+def test_a_hard_blocker_that_is_also_weighted_keeps_its_weight() -> None:
+    """The common case: a term that is both expensive and fatal. It must land
+    in keyword_penalties (costing its points, as before) AND in blocker_hits
+    (forcing `blocked`), from the two independent lists."""
+    profile = ProfileConfig(
+        keywords={"energy": 6},
+        blockers={"security clearance": 60},
+        hard_blockers=["security clearance"],
+    )
+    scored = score_keywords(_clearance_job(), profile)
     assert "security clearance" in scored.keyword_penalties
     assert "security clearance" in scored.blocker_hits
+    assert scored.keyword_score == 6 - 60
 
 
-def test_hard_blocker_threshold_is_inclusive() -> None:
-    """A term weighted exactly at hard_blocker_score is hard - the boundary
-    is >=, not >."""
-    profile = ProfileConfig(blockers={"matlab": 50}, hard_blocker_score=50)
-    scored = score_keywords(_matlab_job(), profile)
-    assert "matlab" in scored.blocker_hits
+def test_a_heavy_weight_alone_does_not_block() -> None:
+    """The defect this design change exists to kill: weight no longer implies
+    hardness. 60 points is a strong preference and nothing more until the term
+    is named in hard_blockers, so a weight retune cannot silently create or
+    destroy a structural bar."""
+    profile = ProfileConfig(keywords={"energy": 6}, blockers={"security clearance": 60})
+    scored = score_keywords(_clearance_job(), profile)
+    assert "security clearance" in scored.keyword_penalties
+    assert scored.blocker_hits == []
+    assert not scored.is_blocked
 
-    just_under = ProfileConfig(blockers={"matlab": 49}, hard_blocker_score=50)
-    assert "matlab" not in score_keywords(_matlab_job(), just_under).blocker_hits
+
+def test_a_hard_blocker_with_no_weight_blocks_and_costs_nothing() -> None:
+    """The other configuration the old threshold made unexpressible: a bar
+    that is fatal but must not distort prefilter ordering. It blocks at zero
+    cost, so unrelated roles are not pushed under min_keyword_score by it."""
+    profile = ProfileConfig(keywords={"energy": 6}, hard_blockers=["security clearance"])
+    scored = score_keywords(_clearance_job(), profile)
+    assert scored.blocker_hits == ["security clearance"]
+    assert scored.keyword_penalties == []
+    assert scored.keyword_score == 6, "a hard bar need not cost points"
+    assert scored.is_blocked
 
 
-def test_soft_blocker_does_not_block_without_an_llm_verdict() -> None:
+def test_hard_blockers_are_matched_case_and_whitespace_insensitively() -> None:
+    """Entries are normalised at load the same way posting text is, so a
+    capitalised or double-spaced entry is a working bar rather than a silent
+    no-op."""
+    profile = ProfileConfig(hard_blockers=["  Security   Clearance "])
+    assert profile.hard_blockers == ["security clearance"]
+    assert "security clearance" in score_keywords(_clearance_job(), profile).blocker_hits
+
+
+def test_weighted_term_does_not_block_without_an_llm_verdict() -> None:
     """No-LLM path: a soft blocker still costs its weight and can still push
     the keyword score to (or below) zero, but must not force `blocked` - the
     fallback verdict is decided by the keyword score alone, same as before
@@ -192,18 +223,50 @@ def test_hard_blocker_still_blocks_without_an_llm_verdict() -> None:
     """No-LLM path, hard term: unchanged from the previous fix - a real
     blocker still forces `blocked` even with no LLM verdict at all."""
     profile = ProfileConfig(
-        keywords={"energy": 6}, blockers={"security clearance": 60}
+        keywords={"energy": 6},
+        blockers={"security clearance": 60},
+        hard_blockers=["security clearance"],
     )
-    job = Job(
-        source="s",
-        company="c",
-        title="Analyst",
-        url="https://x",
-        description="energy. Active security clearance required.",
-    )
-    scored = score_keywords(job, profile)
+    scored = score_keywords(_clearance_job(), profile)
     assert scored.verdict is Verdict.BLOCKED
     assert scored.is_blocked
+
+
+# --- a bad hard_blockers list must fail the load, not the digest -----------
+
+
+def test_an_empty_hard_blocker_is_refused_at_load() -> None:
+    """An empty term matches every posting: every role blocked, and with
+    show_blocked false, every role deleted. This is the one configuration
+    that silently means "everything is hard", so it must not load."""
+    with pytest.raises(ValidationError) as e:
+        ProfileConfig(hard_blockers=["security clearance", ""])
+    assert "hard_blockers[1]" in str(e.value)
+
+
+def test_a_whitespace_only_hard_blocker_is_refused_at_load() -> None:
+    with pytest.raises(ValidationError):
+        ProfileConfig(hard_blockers=["   "])
+
+
+def test_a_single_character_hard_blocker_is_refused_at_load() -> None:
+    """Word-boundary matching turns "a" into a bar on the word "a", which
+    almost every posting contains."""
+    with pytest.raises(ValidationError):
+        ProfileConfig(hard_blockers=["a"])
+
+
+def test_duplicate_hard_blockers_collapse() -> None:
+    profile = ProfileConfig(hard_blockers=["UAE National", "uae national"])
+    assert profile.hard_blockers == ["uae national"]
+
+
+def test_a_hard_blocker_absent_from_blockers_is_allowed() -> None:
+    """Deliberate: a bar that costs nothing is a first-class configuration,
+    not a mistake. Rejecting it would force the author to invent a weight for
+    something whose whole point is that it does not shape ranking."""
+    profile = ProfileConfig(blockers={"matlab": 15}, hard_blockers=["uae national"])
+    assert profile.hard_blockers == ["uae national"]
 
 
 # --- CV library ------------------------------------------------------------

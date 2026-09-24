@@ -14,6 +14,8 @@ from typing import Annotated, Any, Self
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
+from rolescan.models import normalise_term
+
 __all__ = ["Config", "LLMConfig", "OutputConfig", "ProfileConfig", "SourceEntry"]
 
 
@@ -62,21 +64,71 @@ class ProfileConfig(BaseModel):
     allow_remote: bool = True
     keywords: dict[str, int] = Field(default_factory=dict)
     blockers: dict[str, int] = Field(default_factory=dict)
+    """A severity gradient: points off the keyword score when the term is in
+    the posting text. A weight says how much a term costs, and nothing else.
+    Whether a term is survivable is `hard_blockers`."""
+    hard_blockers: list[str] = Field(default_factory=list)
+    """Structural bars: things no application can get past. A term here forces
+    a `blocked` verdict that no LLM opinion can override.
+
+    Separate from `blockers` because the two answer different questions on
+    different timescales. A weight is retuned whenever the prefilter is
+    calibrated; whether a clearance or a passport is a wall is a fact about
+    the candidate that changes once a decade. Folding both into one number
+    made two reasonable configurations unexpressible: a fatal bar that should
+    only cost 10 points, and a 60-point preference that must not block.
+
+    A term listed here keeps whatever weight `blockers` gives it, and costs
+    nothing if `blockers` does not mention it. Entries are normalised at load
+    and matched on word boundaries - see `rolescan.scoring.keyword`."""
     location_penalty: int = 25
     min_keyword_score: Annotated[int, Field(ge=0)] = 18
     """Prefilter gate. Postings below this never reach the LLM, which is the
     single biggest lever on cost."""
     min_report_score: Annotated[int, Field(ge=0, le=100)] = 55
     """Final gate. Postings below this never reach the digest."""
-    hard_blocker_score: Annotated[int, Field(ge=0)] = 50
-    """`blockers` is a severity gradient, not a flat list of bans: a weight of
-    60 next to "security clearance" and a weight of 15 next to "matlab" are
-    both legitimate, but they mean different things. This is the line between
-    them. A term weighted at or above it is a structural bar - the candidate
-    cannot apply their way past it, so it forces `blocked` and the LLM does
-    not get a vote. A term below it is a preference: it still subtracts its
-    weight from the keyword score and still shapes ranking, but it must never
-    force `blocked` on its own."""
+
+    @model_validator(mode="after")
+    def _clean_hard_blockers(self) -> Self:
+        """Normalise the hard bars at load, and refuse the dangerous ones.
+
+        This list can delete a role from the digest permanently, so a mistake
+        in it is not recoverable by the reader: the posting is dropped AND
+        written to `seen`. Two mistakes are worth failing the load for.
+
+        An entry that normalises to nothing matches every posting, so every
+        role would be blocked and, with `output.show_blocked` false, silently
+        deleted - the one configuration that means "everything is hard".
+
+        A one-character entry is the same defect with a smaller blast radius:
+        boundary matching makes it a bar on a single standalone letter, which
+        most prose contains. Neither is worth guessing the author's intent
+        over. Misspellings cannot be caught here, which is why the cheap
+        checks that CAN be made are made loudly.
+        """
+        cleaned: list[str] = []
+        for i, raw in enumerate(self.hard_blockers):
+            term = normalise_term(raw)
+            if not term:
+                msg = (
+                    f"profile.hard_blockers[{i}] ({raw!r}) is empty. An empty "
+                    "hard blocker matches every posting, so every role would "
+                    "be blocked - and with output.show_blocked false, deleted "
+                    "from the digest without a trace."
+                )
+                raise ValueError(msg)
+            if len(term) < 2:
+                msg = (
+                    f"profile.hard_blockers[{i}] ({raw!r}) is a single "
+                    "character. Hard blockers are matched on word boundaries, "
+                    "so this bars any posting containing that letter on its "
+                    "own. Write the whole phrase."
+                )
+                raise ValueError(msg)
+            if term not in cleaned:
+                cleaned.append(term)
+        object.__setattr__(self, "hard_blockers", cleaned)
+        return self
 
 
 class LLMConfig(BaseModel):
