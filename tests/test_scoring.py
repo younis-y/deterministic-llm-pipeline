@@ -232,6 +232,57 @@ def test_hard_blocker_still_blocks_without_an_llm_verdict() -> None:
     assert scored.is_blocked
 
 
+# --- hard terms match on word boundaries; weighted terms do not ------------
+
+
+def _crypto_job(description: str) -> Job:
+    return Job(
+        source="s",
+        company="c",
+        title="Quantitative Analyst",
+        location="London",
+        url="https://x",
+        description=description,
+    )
+
+
+def test_a_hard_blocker_does_not_match_inside_a_longer_word() -> None:
+    """The live defect: `crypto` as a hard bar also matched "cryptographic",
+    so a security-adjacent quant role that mentions cryptographic hashing
+    once was blocked, hidden and recorded as seen - an opportunity the reader
+    never learns about, on a substring."""
+    profile = ProfileConfig(keywords={"energy": 6}, hard_blockers=["crypto"])
+    job = _crypto_job("Low-latency systems. Cryptographic hashing and signing.")
+    scored = score_keywords(job, profile)
+    assert scored.blocker_hits == []
+    assert not scored.is_blocked
+
+
+def test_a_hard_blocker_still_matches_the_whole_word() -> None:
+    """The other half: narrowing the match must not stop the bar working."""
+    profile = ProfileConfig(keywords={"energy": 6}, hard_blockers=["crypto"])
+    scored = score_keywords(_crypto_job("Trading on a crypto exchange."), profile)
+    assert scored.blocker_hits == ["crypto"]
+    assert scored.is_blocked
+
+
+def test_a_multi_word_hard_blocker_is_unaffected_by_boundaries() -> None:
+    profile = ProfileConfig(hard_blockers=["uae national", "10+ years"])
+    job = _crypto_job("Must be a UAE National with 10+ years of experience.")
+    assert score_keywords(job, profile).blocker_hits == ["uae national", "10+ years"]
+
+
+def test_a_weighted_term_keeps_the_loose_match() -> None:
+    """Deliberate asymmetry. A wrong points deduction is recoverable - the
+    posting is still read, still scored by the LLM, still shown with the flag
+    on it - so `blockers` stays a plain substring test and only the terms that
+    can delete a role are narrowed."""
+    profile = ProfileConfig(keywords={"energy": 20}, blockers={"crypto": 15})
+    scored = score_keywords(_crypto_job("energy. Cryptographic hashing."), profile)
+    assert "crypto" in scored.keyword_penalties
+    assert scored.blocker_hits == []
+
+
 # --- a bad hard_blockers list must fail the load, not the digest -----------
 
 

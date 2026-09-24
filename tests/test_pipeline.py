@@ -6,7 +6,7 @@ import httpx
 import pytest
 import respx
 
-from conftest import mock_ollama
+from conftest import OLLAMA_MODEL, mock_ollama
 from rolescan.config import Config
 from rolescan.digest import render_markdown
 from rolescan.models import (
@@ -480,7 +480,7 @@ async def test_a_posting_the_scorer_errored_on_is_not_buried_either(
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": "claude-sonnet-5"}]})
     )
-    cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama"})
+    cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL})
     result = await run_scan(cfg)
     assert result.llm_errors == 1
     assert await _seen_uids(tmp_path / "seen.db") == set()
@@ -500,7 +500,7 @@ async def test_a_healthy_run_still_records_what_it_judged(tmp_path: Path) -> Non
             ),
         )
     )
-    cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama"})
+    cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL})
     result = await run_scan(cfg)
     assert len(result.reportable) == 1
     assert len(await _seen_uids(tmp_path / "seen.db")) == 1
@@ -541,7 +541,7 @@ async def test_a_hard_blocker_overrides_a_high_llm_score(tmp_path: Path) -> None
                 "min_keyword_score": 18,
                 "min_report_score": 55,
             },
-            "llm": {"enabled": True, "backend": "ollama"},
+            "llm": {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL},
             "output": {
                 "dir": str(tmp_path),
                 "db_path": str(tmp_path / "seen.db"),
@@ -553,6 +553,64 @@ async def test_a_hard_blocker_overrides_a_high_llm_score(tmp_path: Path) -> None
     result = await run_scan(cfg)
     assert result.prefiltered == 0, "the posting must have reached the LLM"
     assert result.reportable == [], "a hard blocker must not reach the digest"
+
+
+@respx.mock
+async def test_a_blocked_and_hidden_posting_is_counted(tmp_path: Path) -> None:
+    """The role is deleted, permanently: dropped from the digest AND written
+    to `seen`, so it can never resurface. Nothing counted that. Without a
+    number the reader cannot tell a blocker matching the wrong thing from a
+    market with nothing in it - and the blocker fires on a substring in a
+    config file, over the model's own verdict."""
+    mock_ollama()  # canned verdict: fit_score=72, verdict="consider" - not blocked
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json=_payload(
+                "Graduate Energy Data Scientist",
+                "Python, trading, energy, day-ahead forecasting. "
+                "Active security clearance required.",
+            ),
+        )
+    )
+
+    def _config(*, show_blocked: bool) -> Config:
+        return Config.model_validate(
+            {
+                "profile": {
+                    "keywords": {
+                        "energy": 20,
+                        "data scientist": 20,
+                        "python": 15,
+                        "trading": 15,
+                    },
+                    "hard_blockers": ["security clearance"],
+                    "min_keyword_score": 18,
+                    "min_report_score": 55,
+                },
+                "llm": {
+                    "enabled": True,
+                    "backend": "ollama",
+                    "model": OLLAMA_MODEL,
+                },
+                "output": {
+                    "dir": str(tmp_path),
+                    "db_path": str(tmp_path / "seen.db"),
+                    "show_blocked": show_blocked,
+                },
+                "sources": [{"kind": "greenhouse", "slug": "acme", "label": "Acme"}],
+            }
+        )
+
+    result = await run_scan(_config(show_blocked=False), dry_run=True)
+    assert result.reportable == [], "the blocked posting is gone from the digest"
+    assert result.hidden_blocked == 1, "and something has to say it was here"
+    assert "1 blocked and hidden" in render_markdown(result)
+
+    shown = await run_scan(_config(show_blocked=True), dry_run=True)
+    assert len(shown.reportable) == 1
+    assert shown.hidden_blocked == 0, "nothing was hidden, so nothing to report"
+    assert "blocked and hidden" not in render_markdown(shown)
 
 
 @respx.mock
@@ -581,7 +639,7 @@ async def test_a_weighted_term_alone_does_not_override_the_llm(
                 "min_keyword_score": 18,
                 "min_report_score": 55,
             },
-            "llm": {"enabled": True, "backend": "ollama"},
+            "llm": {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL},
             "output": {
                 "dir": str(tmp_path),
                 "db_path": str(tmp_path / "seen.db"),
@@ -638,7 +696,7 @@ async def test_a_dismissed_url_does_not_reappear(tmp_path: Path) -> None:
             ),
         )
     )
-    cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama"})
+    cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL})
     first = await run_scan(cfg, dry_run=True)
     assert len(first.reportable) == 1
     url = first.reportable[0].job.url

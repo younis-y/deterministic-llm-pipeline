@@ -76,6 +76,22 @@ class ScanResult:
     asked for", which is a deliberate keyword-only run and records normally;
     non-empty means "a judge was asked for and could not start", which must
     not bury postings it never looked at."""
+    hidden_blocked: int = 0
+    """Postings that scored high enough for the digest and were removed from
+    it solely because they were blocked, with `output.show_blocked` false.
+
+    Without this the deletion is invisible. A blocked posting is dropped from
+    `keep` AND written to `seen`, so it can never resurface - and nothing in
+    the digest, the CLI or the store said it had happened. That mattered less
+    while only the LLM could block a posting, for a bar it had actually read.
+    A configured term does it on a substring, over the model's explicit
+    objection, so the reader needs a number: a blocker false positive and a
+    quiet market are otherwise the same digest.
+
+    Counted at the `show_blocked` filter, not at the score gate, so it means
+    exactly "roles the block removed from a digest they would otherwise have
+    made". A blocked posting that fell short of min_report_score was not kept
+    out by the block and is not counted here."""
     reportable: list[ScoredJob] = field(default_factory=list)
     dry_run: bool = False
 
@@ -231,7 +247,21 @@ async def run_scan(
 
     keep = [s for s in judged if s.score >= cfg.profile.min_report_score]
     if not cfg.output.show_blocked:
-        keep = [s for s in keep if not s.is_blocked]
+        visible = [s for s in keep if not s.is_blocked]
+        result.hidden_blocked = len(keep) - len(visible)
+        if result.hidden_blocked:
+            # Logged as well as counted: these postings have just been written
+            # to `seen`, so this line is the only record that a specific role
+            # existed and was deleted on the strength of a configured term.
+            for s in keep:
+                if s.is_blocked:
+                    log.info(
+                        "blocked and hidden: %s at %s (%s)",
+                        s.job.title,
+                        s.job.company,
+                        ", ".join(s.blocker_hits) or "LLM verdict",
+                    )
+        keep = visible
     keep.sort(key=lambda s: s.sort_key(), reverse=True)
     result.reportable = keep[: cfg.output.max_roles]
     return result

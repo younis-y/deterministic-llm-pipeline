@@ -228,6 +228,16 @@ def _stats(result: ScanResult) -> str:
     ]
     if result.llm_calls or result.llm_cached:
         bits.append(f"{result.llm_calls} scored, {result.llm_cached} from cache")
+    if result.hidden_blocked:
+        # Only when it happened: a permanent "0 blocked and hidden" on every
+        # digest would train the reader to skip the line that matters. These
+        # postings scored well enough to be here and were removed anyway, and
+        # they are already recorded as seen, so this is the reader's only
+        # chance to notice a blocker term that is matching the wrong thing.
+        bits.append(
+            f"{result.hidden_blocked} blocked and hidden "
+            "(set output.show_blocked true to see them)"
+        )
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
 

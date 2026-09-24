@@ -363,3 +363,116 @@ async def test_a_backend_with_no_preflight_override_is_unaffected() -> None:
         assert reason == ""
     finally:
         _unregister("nopreflight")
+
+
+# --- the check that prevents silent failure must not cause total failure ---
+
+
+@respx.mock
+async def test_preflight_survives_a_200_that_is_not_json() -> None:
+    """Something else bound to 11434, a proxy, a captive portal.
+    `json.JSONDecodeError` is a `ValueError`, not an `httpx.HTTPError`, so
+    before this it escaped preflight, escaped `run_scan`, and killed the scan
+    before a single source was fetched: no digest, no email, a traceback in a
+    launchd log nobody reads."""
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, text="<html>Login required</html>")
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    reason = await unusable_backend_reason(cfg)
+    assert reason, "an unreadable answer is a reason, not an exception"
+    assert "not with json" in reason.casefold()
+    assert "base_url" in reason
+
+
+@respx.mock
+async def test_preflight_distinguishes_a_broken_server_from_a_stopped_one() -> None:
+    """`httpx.HTTPStatusError` subclasses `HTTPError`, so a server answering
+    500 on /api/tags was told to run `ollama serve` - starting a process that
+    is demonstrably already running. The two causes need different actions."""
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(500, text="internal error")
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    reason = await get_judge("ollama", cfg).preflight()
+    assert "500" in reason
+    assert "ollama serve" not in reason, "the server is up; do not say to start it"
+    assert "running" in reason.casefold()
+
+
+@respx.mock
+async def test_preflight_ignores_junk_entries_in_the_model_list() -> None:
+    """A malformed entry is a reason to report, or to skip, never to raise."""
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(
+            200, json={"models": ["qwen2.5:7b", None, {"name": "qwen2.5:7b"}]}
+        )
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    assert await get_judge("ollama", cfg).preflight() == ""
+
+
+@respx.mock
+async def test_preflight_handles_a_json_body_of_the_wrong_shape() -> None:
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, json=["not", "a", "dict"])
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    reason = await get_judge("ollama", cfg).preflight()
+    assert "not pulled" in reason.casefold()
+
+
+@respx.mock
+async def test_an_untagged_model_is_not_satisfied_by_a_different_tag() -> None:
+    """`llama3.1` means `llama3.1:latest` to ollama, so a server holding only
+    `llama3.1:70b` cannot serve it. Comparing against bare prefixes said it
+    could, and the scan then failed one posting at a time - which is the
+    failure mode this preflight exists to replace."""
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:70b"}]})
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="llama3.1")
+    reason = await get_judge("ollama", cfg).preflight()
+    assert "not pulled" in reason.casefold()
+    assert "llama3.1:70b" in reason
+
+
+@respx.mock
+async def test_an_untagged_model_matches_the_latest_tag() -> None:
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(
+            200, json={"models": [{"name": "llama3.1:latest"}]}
+        )
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="llama3.1")
+    assert await get_judge("ollama", cfg).preflight() == ""
+
+
+async def test_a_judge_whose_constructor_raises_does_not_kill_the_scan() -> None:
+    """`cls(cfg)` now runs at startup, before anything is fetched. Judges are
+    a public plugin API, so a third-party `__init__` that raises would take
+    the whole run down - the same total failure, from the other end."""
+    from rolescan.scoring.judges import Judge, register
+
+    @register
+    class _ExplodingJudge(Judge):
+        name = "exploding"
+        needs_api_key = False
+        description = "test only"
+
+        def __init__(self, cfg: LLMConfig) -> None:
+            msg = "no config for you"
+            raise RuntimeError(msg)
+
+        async def verdict(self, system: str, user: str) -> FitVerdict:
+            raise NotImplementedError
+
+    try:
+        reason = await unusable_backend_reason(
+            LLMConfig(enabled=True, backend="exploding")
+        )
+        assert "exploding" in reason
+        assert "RuntimeError" in reason
+        assert "no config for you" in reason
+    finally:
+        _unregister("exploding")

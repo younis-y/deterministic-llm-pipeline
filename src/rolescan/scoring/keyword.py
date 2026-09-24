@@ -11,6 +11,8 @@ something useful rather than to nothing.
 
 from __future__ import annotations
 
+import re
+
 from rolescan.config import ProfileConfig
 from rolescan.models import Job, ScoredJob
 
@@ -50,7 +52,7 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
     # can be in both (it costs its weight AND blocks), in `blockers` alone (a
     # preference, however heavy), or here alone (a bar that costs nothing).
     for term in profile.hard_blockers:
-        if term in blob:
+        if _hard_hit(term, blob):
             blockers.append(term)
 
     if not _location_ok(job, profile):
@@ -67,6 +69,28 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
         keyword_penalties=penalties,
         blocker_hits=blockers,
     )
+
+
+def _hard_hit(term: str, blob: str) -> bool:
+    r"""Whether a hard blocker term appears in the posting as a whole word.
+
+    Deliberately stricter than the substring test the weighted `blockers` use.
+    A wrong points deduction is recoverable - the LLM still reads the posting
+    and the reader still sees the flag - but a hard blocker deletes the role
+    from the digest and records it as seen, so a wrong hit here is an
+    opportunity the reader never learns about.
+
+    Unanchored matching gets that wrong in practice, not in theory: `crypto`
+    as a hard bar (no interest in crypto trading) also matches
+    "cryptographic", so a security-adjacent quant role mentioning
+    cryptographic hashing once was force-blocked over the model's objection.
+
+    `\w` boundaries rather than `\b` because `\b` is defined against the
+    adjacent character in the PATTERN as well as the text, so a term ending
+    in punctuation - `10+ years`, `c++` - would anchor on the wrong side and
+    silently stop matching. Multi-word terms are unaffected either way.
+    """
+    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", blob) is not None
 
 
 def _location_ok(job: Job, profile: ProfileConfig) -> bool:

@@ -24,6 +24,8 @@ from abc import ABC, abstractmethod
 from importlib.metadata import entry_points
 from typing import Any, ClassVar
 
+import httpx
+
 from rolescan.config import LLMConfig
 from rolescan.models import FitVerdict
 
@@ -176,7 +178,19 @@ async def unusable_backend_reason(cfg: LLMConfig) -> str:
             f"backend {cfg.backend!r} needs the {cls.requires_module} package, "
             f"which is not installed (pip install 'rolescan[{cfg.backend}]')"
         )
-    return await cls(cfg).preflight()
+    try:
+        return await cls(cfg).preflight()
+    except Exception as e:
+        # A judge is a plugin and `cls(cfg)` now runs at startup, so a broken
+        # __init__ or a preflight that raises instead of returning would take
+        # the whole scan down before a single source was fetched: no digest,
+        # no email, a traceback in a launchd log nobody reads. Treated as
+        # "this backend is unusable", which is what it is.
+        log.warning("preflight for backend %s raised: %s", cfg.backend, e)
+        return (
+            f"backend {cfg.backend!r} could not be checked: "
+            f"{type(e).__name__}: {e}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -246,8 +260,6 @@ class OllamaJudge(Judge):
     )
 
     async def verdict(self, system: str, user: str) -> FitVerdict:
-        import httpx
-
         url = f"{self.cfg.base_url.rstrip('/')}/api/chat"
         payload = {
             "model": self.cfg.model,
@@ -275,7 +287,17 @@ class OllamaJudge(Judge):
             msg = f"ollama returned HTTP {e.response.status_code}: {detail}"
             raise RuntimeError(msg) from e
 
-        content = (response.json().get("message") or {}).get("content") or ""
+        try:
+            body = response.json()
+        except ValueError as e:
+            # Same defect class as the preflight one below, one layer down: a
+            # 200 that is not JSON. Contained by FitScorer, so it costs one
+            # posting rather than the scan, but the raw JSONDecodeError is
+            # what the digest would print at the reader.
+            msg = f"ollama returned a 200 that was not JSON: {e}"
+            raise RuntimeError(msg) from e
+        message = body.get("message") if isinstance(body, dict) else None
+        content = (message or {}).get("content") or ""
         try:
             return FitVerdict.model_validate_json(content)
         except ValueError as e:
@@ -296,29 +318,60 @@ class OllamaJudge(Judge):
         practice, the more common one: the server is up, the model was never
         pulled.
         """
-        import httpx
-
         url = f"{self.cfg.base_url.rstrip('/')}/api/tags"
         try:
             async with httpx.AsyncClient(timeout=PREFLIGHT_TIMEOUT) as client:
                 response = await client.get(url)
                 response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as e:
+            # Caught BEFORE HTTPError, which it subclasses. A server that
+            # answers with a status is running: telling its owner to `ollama
+            # serve` sends them to start a process that is already up.
+            return (
+                f"ollama is running at {self.cfg.base_url} but /api/tags "
+                f"returned HTTP {e.response.status_code}: "
+                f"{e.response.text[:120]}. The server is up, so starting it "
+                "again will not help - check the ollama log, or whether "
+                "something else is bound to that port."
+            )
         except httpx.HTTPError as e:
+            # Nothing answered: refused, timed out, DNS, TLS.
             return (
                 f"could not reach ollama at {self.cfg.base_url} ({e}). Start "
                 "it with `ollama serve`, or set llm.backend to anthropic. "
                 "Ollama listens on port 11434 by default."
             )
+        except ValueError as e:
+            # A 200 that is not JSON: a proxy, a captive portal, or another
+            # service on 11434. json.JSONDecodeError is a ValueError, NOT an
+            # httpx.HTTPError, so without this it escapes preflight entirely
+            # and kills the scan before a single source is fetched.
+            return (
+                f"{url} answered, but not with JSON ({e}). Something other "
+                "than ollama is probably listening on that port - check "
+                "llm.base_url."
+            )
 
         names: set[str] = set()
-        for entry in response.json().get("models") or []:
+        entries = payload.get("models") if isinstance(payload, dict) else None
+        for entry in entries or []:
+            # An unexpected shape is a reason to report, never to raise: this
+            # check exists to prevent silent failure, so it must not become a
+            # new way for the scan to fail totally.
+            if not isinstance(entry, dict):
+                continue
             name = entry.get("name") or entry.get("model") or ""
-            if name:
+            if isinstance(name, str) and name:
                 names.add(name)
 
         wanted = self.cfg.model
-        short_names = {n.split(":")[0] for n in names}
-        if wanted and wanted not in names and wanted not in short_names:
+        # An untagged name means `:latest` to ollama, so `llama3.1` is NOT
+        # satisfied by a server holding only `llama3.1:70b`: `ollama run
+        # llama3.1` would try to pull. Comparing against bare prefixes said it
+        # was, and the scan then failed one posting at a time.
+        qualified = wanted if ":" in wanted else f"{wanted}:latest"
+        if wanted and not names & {wanted, qualified}:
             available = ", ".join(sorted(names)) or "none"
             return (
                 f"ollama is reachable at {self.cfg.base_url} but model "

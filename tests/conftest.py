@@ -48,14 +48,20 @@ LLM_VERDICT = {
 }
 
 
+OLLAMA_MODEL = "qwen2.5:7b"
+"""A plausible local tag. `LLMConfig.model` defaults to a Claude model, which
+is right for the default backend and nonsense for this one, so a test that
+mocks ollama sets `llm.model` to this and mocks a server holding it."""
+
+
 def mock_ollama(
-    base_url: str = "http://localhost:11434", model: str = "claude-sonnet-5"
+    base_url: str = "http://localhost:11434", model: str = OLLAMA_MODEL
 ) -> None:
     """Route the ollama backend at a canned verdict, and its preflight at a
     server that is up and has `model` pulled. Call inside @respx.mock.
 
-    `model` defaults to `LLMConfig.model`'s own default, so callers that
-    build a config without overriding `llm.model` still pass preflight.
+    Configs under test must set `llm.model` to the same tag, or preflight
+    correctly reports the model as not pulled.
     """
     respx.post(f"{base_url}/api/chat").mock(
         return_value=httpx.Response(

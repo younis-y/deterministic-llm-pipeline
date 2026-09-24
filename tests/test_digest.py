@@ -11,6 +11,14 @@ the real dataclass. The helpers below use the actual fields: `reports`
 from __future__ import annotations
 
 from rolescan.digest import render_html, render_markdown
+from rolescan.models import (
+    Confidence,
+    CVVariant,
+    FitVerdict,
+    Job,
+    ScoredJob,
+    Verdict,
+)
 from rolescan.pipeline import ScanResult, SourceReport
 
 
@@ -31,6 +39,79 @@ def _all_sources_failed_result() -> ScanResult:
             SourceReport(kind="adzuna", slug="y", label="Adzuna", error="401"),
         ]
     )
+
+
+def _job() -> Job:
+    return Job(
+        source="greenhouse",
+        company="Masdar",
+        title="Data Scientist",
+        location="Abu Dhabi",
+        url="https://x/7",
+        description="Analytics. UAE National (National Talent programme).",
+    )
+
+
+def _fit(**kw: object) -> FitVerdict:
+    base: dict[str, object] = {
+        "fit_score": 78,
+        "verdict": Verdict.APPLY,
+        "confidence": Confidence.HIGH,
+        "reason": "Strong analytics overlap.",
+        "cv_variant": CVVariant.DATA_SCIENCE,
+        "tailoring": ["Lead with the forecasting project."],
+        "blockers": [],
+        "keywords_missing": [],
+    }
+    base.update(kw)
+    return FitVerdict.model_validate(base)
+
+
+# --- a blocked role must say why, and must not invite an application -------
+
+
+def test_a_blocked_role_names_the_configured_term_the_llm_missed() -> None:
+    """The case the whole blocker change turns on: the configured term
+    blocked this posting and the model itself noticed nothing, so
+    `fit.blockers` is empty. Render the merged list or the digest shows a
+    BLOCKED badge with no reason under it, which reads as a bug in the tool
+    rather than a fact about the role."""
+    item = ScoredJob(
+        job=_job(),
+        keyword_score=30,
+        blocker_hits=["uae national"],
+        fit=_fit(blockers=[]),
+    )
+    text = render_markdown(ScanResult(reportable=[item]))
+    assert "`BLOCKED`" in text
+    assert "**Blocked by:** uae national" in text
+    assert "**Send:**" not in text, "no CV advice for a role you cannot be given"
+    assert "**Tailor it:**" not in text
+
+
+def test_a_blocked_role_shows_a_reason_on_the_keyword_only_path() -> None:
+    """Same rule with no LLM verdict at all. A hard blocker need not carry a
+    weight, so it need not appear in keyword_penalties either - and then
+    nothing else on the entry names it."""
+    item = ScoredJob(job=_job(), keyword_score=30, blocker_hits=["uae national"])
+    text = render_markdown(ScanResult(reportable=[item]))
+    assert "`BLOCKED`" in text
+    assert "**Blocked by:** uae national" in text
+    assert "**Send:**" not in text
+
+
+def test_the_stats_line_counts_blocked_and_hidden_postings() -> None:
+    """With show_blocked false the posting is deleted and recorded as seen.
+    This clause is the reader's only evidence it existed."""
+    text = render_markdown(ScanResult(unique=12, hidden_blocked=2))
+    assert "2 blocked and hidden" in text
+    assert "show_blocked" in text
+
+
+def test_the_stats_line_stays_quiet_when_nothing_was_hidden() -> None:
+    """A permanent "0 blocked and hidden" would train the reader to skip the
+    line on the day it matters."""
+    assert "blocked and hidden" not in render_markdown(ScanResult(unique=12))
 
 
 def test_digest_has_a_shortlist_section_when_given_one() -> None:
