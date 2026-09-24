@@ -148,9 +148,22 @@ class Job(BaseModel):
 class FitVerdict(BaseModel):
     """The LLM's judgement on one posting.
 
-    This is the schema handed to the Claude API as a structured output, so the
-    field descriptions are load-bearing: they are the only instructions the
-    model gets about what each field means.
+    This schema constrains sampling on both backends, but the `description`
+    text below reaches only one of them. The Anthropic backend passes the
+    model as a structured output, descriptions included, so they read as
+    instructions. Ollama takes `model_json_schema()` in `format` and uses it
+    as a GRAMMAR: it enforces the shape and the enum values and ignores the
+    prose entirely.
+
+    That misreading has already cost a release. Guidance that lived only in a
+    field description was invisible to the local model, which then skipped 22
+    of 25 benchmark postings while returning perfectly valid JSON - a defect
+    that looks like a bad model rather than a missing instruction.
+
+    So: anything the model MUST know belongs in `SYSTEM` in
+    `rolescan.scoring.llm`, which both backends read. Write descriptions for
+    the reader and for the hosted backend, and never as the only place a rule
+    appears.
     """
 
     model_config = ConfigDict(extra="forbid")

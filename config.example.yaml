@@ -88,9 +88,12 @@ llm:
   #              and the digest says so rather than pretending.
   #   ollama     A local model. Free, offline, no key. Set model to something
   #              you have pulled, e.g. qwen2.5:7b or llama3.1:8b.
-  #              NOT YET VERIFIED against a live Ollama server: written to the
-  #              documented API and tested against a mock, so the first real
-  #              run is the real test. Check the first digest before trusting it.
+  #              Measured against a live server over a 25-posting benchmark
+  #              and one 34-posting scan: 72% verdict accuracy, 0%
+  #              score/verdict violations, and 50% blocker recall from the
+  #              model itself. hard_blockers below do not depend on the model,
+  #              so keep the structural bars there rather than trusting it to
+  #              spot them.
   backend: anthropic
   model: claude-sonnet-5
 

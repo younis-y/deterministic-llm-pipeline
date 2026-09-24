@@ -1,9 +1,10 @@
 """Stage two: LLM fit scoring and CV matching.
 
-Uses the Claude API's structured outputs, so `FitVerdict` comes back as a
-validated pydantic object rather than JSON that has to be coaxed out of prose.
-The schema is enforced by grammar-constrained sampling at the API, which means
-no parse-retry loop and no defensive JSON repair.
+Backend-agnostic: whichever judge is configured returns `FitVerdict` as a
+validated pydantic object rather than JSON coaxed out of prose. Both built-in
+backends constrain sampling to the schema - the Anthropic one through
+structured outputs, the Ollama one through `format` - so there is no
+parse-retry loop and no defensive JSON repair on either path.
 
 Three things keep this cheap:
   * the keyword prefilter, so only plausible roles get here at all
@@ -29,6 +30,21 @@ __all__ = ["FitScorer"]
 
 log = logging.getLogger(__name__)
 
+# Three things about this prompt that are easy to "tidy" into a defect.
+#
+# It is the only instruction BOTH backends read. Ollama takes
+# FitVerdict.model_json_schema() as a grammar and ignores the field
+# descriptions entirely, so a rule that lives only in a description reaches
+# the hosted backend alone. Anything the model must know belongs here.
+#
+# "Wrong seniority is skip, not blocked" is stated twice on purpose: once
+# where seniority is discussed, once where `blocked` is defined. A 14b local
+# model does not reliably carry a constraint across four paragraphs, and a wrong
+# `blocked` costs the reader the role outright - dropped from the digest and
+# recorded as seen. Repetition is cheap; one of these going missing is not.
+#
+# The band-to-verdict mechanism measured 0% score/verdict violations over the
+# 25-posting benchmark. Do not rework it.
 SYSTEM = """\
 You screen job postings for one specific candidate. You are blunt and useful, \
 not encouraging. A generous score wastes their week.
@@ -46,16 +62,18 @@ Scoring guidance:
 - 65-84: worth applying, some gaps. Verdict: apply or consider.
 - 40-64: stretch or partial match, only if the pipeline is thin. Verdict: \
 consider or skip.
-- 0-39: not a good use of their time. Verdict: skip - or blocked, but only for \
+- 0-39: not a good use of their time. Verdict: skip, or blocked but only for \
 the hard bars below. A low score by itself is never a reason to use "blocked".
 
+The bands overlap deliberately: "consider" is correct anywhere from 40 to 84.
+
 If your score and verdict disagree with that table, change the score to fit \
-the verdict, not the other way round - the verdict is the judgement call.
+the verdict, not the other way round. The verdict is the judgement call.
 
 Be strict about seniority. A role wanting eight years is not a 70 for someone \
 with one internship and a master's, however well the keywords line up. Score \
-it on its own merits - but the verdict is "skip", not "blocked": wrong \
-seniority is not a structural bar.
+it on its own merits. The verdict is "skip", not "blocked": wrong seniority \
+is not a structural bar.
 
 Set verdict to "blocked" ONLY for hard structural bars the candidate cannot \
 clear by being a better applicant: a nationality requirement such as an \
@@ -83,7 +101,10 @@ Score this posting for the candidate."""
 
 
 class FitScorer:
-    """Scores postings with Claude, with caching and a spend ceiling."""
+    """Scores postings through the configured judge, with caching and a spend
+    ceiling. Everything expensive and easy to get wrong lives here rather than
+    in the backends: the verdict cache, the per-run call limit, concurrency,
+    ordering and error counting."""
 
     def __init__(
         self,

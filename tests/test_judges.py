@@ -12,6 +12,7 @@ import httpx
 import pytest
 import respx
 
+from conftest import plain
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob
 from rolescan.scoring import CVLibrary, FitScorer
@@ -183,19 +184,30 @@ def test_backends_command_lists_both_and_flags_which_need_a_key() -> None:
     assert "ANTHROPIC_API_KEY" in result.output
 
 
-def test_the_unverified_ollama_backend_says_so_where_it_is_chosen() -> None:
-    """The backend was written to Ollama's documented API and tested against a
-    mock, which proves the request shape but not the contract. That caveat is
-    only useful where someone picks a backend, so it lives in the description
-    `rolescan backends` prints — not just in a note somewhere. Delete this test
-    when the backend has been run against a live server, and the caveat with it.
+def test_the_ollama_backend_reports_what_was_measured_not_a_disclaimer() -> None:
+    """The backend has now been run against a live server, so "NOT YET
+    VERIFIED" is simply false — and this README's credibility rests on saying
+    exactly what is and is not verified, which makes a stale claim worse here
+    than in an average repo.
+
+    The numbers are the honest version and they belong where someone picks a
+    backend, which is the description `rolescan backends` prints. 50% blocker
+    recall is in it on purpose: it is the weakest measurement and the reason
+    `hard_blockers` exists.
     """
     from typer.testing import CliRunner
 
     from rolescan.cli import app
 
-    out = CliRunner().invoke(app, ["backends"]).output.casefold()
-    assert "not yet verified" in out
+    description = available_judges()["ollama"].description.casefold()
+    assert "not yet verified" not in description
+    assert "72% verdict accuracy" in description
+    assert "50% blocker recall" in description
+
+    # And it has to be where a backend is chosen, not only in the source.
+    out = plain(CliRunner().invoke(app, ["backends"]).output).casefold()
+    assert "not yet verified" not in out
+    assert "72%" in out
 
 
 # --- a judge that cannot run must say so, loudly, before the scan ----------

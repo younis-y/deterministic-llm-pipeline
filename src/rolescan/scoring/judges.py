@@ -248,6 +248,19 @@ class OllamaJudge(Judge):
     to it, so FitVerdict still arrives validated rather than coaxed out of
     prose — the same contract the Claude backend gives, locally.
 
+    Measured against a live server, not only a mock: a 25-posting benchmark
+    plus one 34-posting scan. Verdict accuracy 72% against hand-labelled
+    expectations, and 0% score/verdict violations — the band table in `SYSTEM`
+    and the verdict it returned never disagreed.
+
+    Model-level blocker recall was 50%: the model itself named half the
+    structural bars in the benchmark set. That is the number to design around
+    rather than quote selectively. rolescan does not depend on it — configured
+    `hard_blockers` are matched deterministically before the model is called
+    and force `blocked` whatever it says, and `min_report_score` gates the
+    rest — but a bar that appears only in the posting text, and that no
+    configured term names, is one this backend will miss half the time.
+
     Quality is materially below Claude for this task; the point is that the
     tool works for someone who has no key and does not want one.
     """
@@ -255,8 +268,8 @@ class OllamaJudge(Judge):
     name = "ollama"
     needs_api_key = False
     description = (
-        "Local model via Ollama. Free, offline, no key. "
-        "NOT YET VERIFIED against a live server."
+        "Local model via Ollama. Free, offline, no key. Run against a live "
+        "server: 72% verdict accuracy over 25 postings, 50% blocker recall."
     )
 
     async def verdict(self, system: str, user: str) -> FitVerdict:
