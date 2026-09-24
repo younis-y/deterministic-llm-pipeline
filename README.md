@@ -14,7 +14,7 @@ reproducible and free to re-run.
 
 Both the sources and the scoring backends load through **entry points**, so
 adding an ATS adapter or swapping Claude for a local Ollama model is a plugin,
-not a fork. **254 tests run offline** against `respx`-mocked transport: the real
+not a fork. **264 tests run offline** against `respx`-mocked transport: the real
 HTTP clients and real parsers are exercised against recorded response shapes
 rather than stubbed out. `mypy` runs strict across `src` and `tests`.
 
@@ -23,7 +23,7 @@ rather than stubbed out. `mypy` runs strict across `src` and `tests`.
 
 ```bash
 pip install -e ".[dev]"
-pytest                                    # 254 tests, no network
+pytest                                    # 264 tests, no network
 cp config.example.yaml config.yaml        # then edit sources and profile
 rolescan discover                          # probe the sources you configured
 rolescan scan --no-llm                     # keyword-only run, no API key needed
@@ -268,7 +268,29 @@ pip install -e ".[dev]"
 pytest && mypy src tests && ruff check .
 ```
 
-The suite is 254 tests and runs in about five seconds with no network: `respx`
+`ruff check` is the quality gate, not just a formatter: alongside the usual
+rules it enforces `max-complexity = 12` (mccabe), naive-datetime detection,
+unused arguments and exception-message hygiene. `pyproject.toml` records which
+rule families are deliberately **not** selected, and why, so the next person
+does not re-add bandit to read 477 "assert used" findings out of a test suite.
+
+Three more checks are not worth a pre-commit hook but are worth running when
+the dependency list, the module layout or a hot function changes:
+
+```bash
+uvx deptry .                                       # unused/missing/transitive deps
+uvx radon cc src -n C -s                           # complexity regressions
+uvx vulture src --min-confidence 80 \
+    --ignore-names exc_type,exc,tb,attrs           # dead code
+```
+
+All three are clean. The `--ignore-names` are parameters a protocol requires
+and the implementation does not use: `__aexit__`'s three, and `attrs` on
+`HTMLParser.handle_starttag`. `radon` is advisory - the enforced ceiling is
+ruff's `C901`, which counts differently and more conservatively than radon
+does, so expect radon to report grade C on functions ruff passes.
+
+The suite is 264 tests and runs in about five seconds with no network: `respx`
 mocks the transport, so the real HTTP clients and the real parsers are exercised
 against recorded response shapes rather than being stubbed out. `mypy` runs
 strict over `src` and `tests`.

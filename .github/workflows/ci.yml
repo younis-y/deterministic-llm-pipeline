@@ -36,3 +36,23 @@ jobs:
       # here is a real failure rather than a flaky runner.
       - name: Tests
         run: pytest
+
+  # Separate job because these run once, not per Python version, and because
+  # they are about the shape of the project rather than its behaviour.
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Dependencies declared and used
+        run: uvx deptry .
+
+      - name: Dead code
+        run: uvx vulture src --min-confidence 80 --ignore-names exc_type,exc,tb,attrs
+
+      # Advisory. The enforced complexity ceiling is ruff's C901 at 12, in the
+      # Lint step above; this prints radon's view, which is stricter, so a
+      # function drifting upwards is visible before it trips the gate.
+      - name: Complexity report
+        run: uvx radon cc src -n C -s

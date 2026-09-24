@@ -11,7 +11,6 @@ dependencies = [
     "pyyaml>=6.0",
     "typer>=0.15",
     "rich>=13.9",
-    "tenacity>=9.0",
     "aiosqlite>=0.20",
     "extruct>=0.17",
 ]
@@ -152,6 +151,24 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["respx.*", "aiosqlite.*"]
 ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# deptry: unused, missing and transitive dependencies. Run with `uvx deptry .`.
+# ---------------------------------------------------------------------------
+[tool.deptry]
+# src-layout: `rolescan` is this project, not a PyPI package it forgot to
+# declare. Without this every intra-package import reads as DEP001.
+known_first_party = ["rolescan"]
+
+[tool.deptry.package_module_name_map]
+pyyaml = ["yaml"]
+types-PyYAML = ["yaml"]
+
+[tool.deptry.per_rule_ignores]
+# Dev tooling is invoked as a command, never imported, so "unused" is what it
+# should look like. anthropic is imported lazily inside the judge, which is
+# the mechanism that makes the SDK optional.
+DEP002 = ["pytest", "pytest-asyncio", "respx", "ruff", "mypy", "types-PyYAML"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
