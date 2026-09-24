@@ -477,11 +477,16 @@ async def test_a_posting_the_scorer_errored_on_is_not_buried_either(
     respx.post("http://localhost:11434/api/chat").mock(
         return_value=httpx.Response(500, text="model exploded")
     )
+    # The tag this config asks for, so preflight passes and the backend is
+    # genuinely usable. A mismatched tag here made preflight report the model
+    # as not pulled, and the test then passed from the wrong side of
+    # `backend_broke`: on llm_unusable, never on the scoring error it names.
     respx.get("http://localhost:11434/api/tags").mock(
-        return_value=httpx.Response(200, json={"models": [{"name": "claude-sonnet-5"}]})
+        return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
     cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL})
     result = await run_scan(cfg)
+    assert result.llm_unusable == "", "the backend was usable; the call is what failed"
     assert result.llm_errors == 1
     assert await _seen_uids(tmp_path / "seen.db") == set()
 

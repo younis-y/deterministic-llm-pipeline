@@ -284,6 +284,33 @@ async def test_a_deliberate_keyword_only_run_is_not_nagged(
     assert await unusable_backend_reason(cfg) == ""
 
 
+@respx.mock
+async def test_ollama_verdict_survives_a_message_that_is_not_an_object() -> None:
+    """The outer layer was guarded and the inner one was not, so a body of
+    {"message": "hello"} - JSON, and a dict - raised AttributeError on .get.
+    That is precisely the raw exception in the digest those guards exist to
+    prevent: FitScorer catches it, but what the reader is then shown is a
+    Python attribute error rather than a sentence about the backend."""
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": "hello"})
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    with pytest.raises(RuntimeError) as e:
+        await get_judge("ollama", cfg).verdict("system", "user")
+    assert "usable verdict" in str(e.value)
+
+
+@respx.mock
+async def test_ollama_verdict_survives_a_body_that_is_not_an_object() -> None:
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(200, json=["not", "an", "object"])
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    with pytest.raises(RuntimeError) as e:
+        await get_judge("ollama", cfg).verdict("system", "user")
+    assert "usable verdict" in str(e.value)
+
+
 # --- ollama preflight: a reachable server is not the same as a usable one --
 
 

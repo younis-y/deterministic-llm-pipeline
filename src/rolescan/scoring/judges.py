@@ -309,8 +309,15 @@ class OllamaJudge(Judge):
             # what the digest would print at the reader.
             msg = f"ollama returned a 200 that was not JSON: {e}"
             raise RuntimeError(msg) from e
+        # Both layers are checked, not just the outer one. A body of
+        # {"message": "hello"} is JSON, is a dict, and raises AttributeError
+        # on .get - which is exactly the raw exception in the digest that
+        # guarding the outer layer exists to prevent. Anything that is not a
+        # string falls through to the empty content below, where
+        # model_validate_json turns it into the message a reader can act on.
         message = body.get("message") if isinstance(body, dict) else None
-        content = (message or {}).get("content") or ""
+        raw = message.get("content") if isinstance(message, dict) else None
+        content = raw if isinstance(raw, str) else ""
         try:
             return FitVerdict.model_validate_json(content)
         except ValueError as e:

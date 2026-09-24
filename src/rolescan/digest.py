@@ -320,9 +320,15 @@ def _failures(result: ScanResult) -> list[str]:
             "",
             f"`{result.llm_error_detail}`" if result.llm_error_detail else "",
             "",
-            _llm_error_hint(result),
-            "",
         ]
+        # Guarded because the hint is empty for a backend nothing registered,
+        # and an unconditional append then emits a stray blank line where the
+        # advice should be. run_scan always sets llm_backend, so this is
+        # unreachable from a real scan; a ScanResult built anywhere else is
+        # not, and losing the advice silently is the failure this section
+        # exists to prevent.
+        if hint := _llm_error_hint(result):
+            lines += [hint, ""]
     if failed:
         lines += ["**Sources that failed this run**", ""]
         lines += [f"- `{r.kind}/{r.slug}` {r.error}" for r in failed]

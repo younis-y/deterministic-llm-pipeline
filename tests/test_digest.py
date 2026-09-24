@@ -240,6 +240,26 @@ def test_an_anthropic_error_still_names_the_key() -> None:
     assert "401" in text
 
 
+def test_an_unregistered_backend_loses_the_hint_but_not_the_layout() -> None:
+    """`_llm_error_hint` returns "" for a backend nothing registered, and the
+    line was appended regardless, leaving a stray blank line where the advice
+    should be. run_scan always sets llm_backend, so no scan reaches this; a
+    ScanResult built anywhere else does, and the failure section is the one
+    place the reader is told what to do next."""
+    text = render_markdown(
+        ScanResult(
+            llm_backend="",
+            llm_errors=1,
+            llm_error_detail="RuntimeError: something went wrong",
+        )
+    )
+    assert "LLM scoring failed for 1 posting(s)" in text
+    assert text.endswith("`RuntimeError: something went wrong`\n"), (
+        "the section ends at the detail, with no blank line standing in for "
+        "advice that was never produced"
+    )
+
+
 def test_a_failed_preflight_does_not_claim_nothing_was_scored() -> None:
     """The 3s liveness probe covers connect, read, write and pool, and
     `FitScorer` is built regardless of it - so a slow `/api/tags` produced a
