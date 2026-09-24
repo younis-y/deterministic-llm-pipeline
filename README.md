@@ -90,16 +90,21 @@ hard_blockers:       # structural bars. Nothing you can apply your way past.
 ```
 
 `blockers` says what a term *costs*. However heavy, it only moves a posting
-down the ranking, and the LLM can still say apply.
+down the ranking, and the LLM can still say apply — until the deduction takes
+it under `min_keyword_score`, at which point it is prefiltered, recorded as
+seen, and gone. That is why the two fields are matched identically rather than
+the weights being matched loosely.
 
 `hard_blockers` says what no application can get past. A term here forces
 `blocked` whatever the model decides, so the posting is pushed to the bottom of
 the digest — or, with `output.show_blocked: false`, removed from it entirely
 and recorded as seen, which means you never see that role again. **That is a
-real deletion, on a substring you typed into a YAML file**, so keep the list
-short and specific. Terms are matched case-insensitively on word boundaries
-(`crypto` does not match "cryptographic"), a term in both lists keeps its
-weight, and a term in `hard_blockers` alone blocks and costs nothing. Whenever
+real deletion, on a term you typed into a YAML file**, so keep the list short
+and specific. Terms in both fields are normalised at load and matched
+case-insensitively on word boundaries (`crypto` does not match
+"cryptographic", `head of` does not match "head office"), a term in both
+lists keeps its weight, and a term in `hard_blockers` alone blocks and costs
+nothing. Whenever
 a posting is deleted this way the digest's stats line says how many, so a
 blocker matching the wrong thing shows up as a number rather than as silence.
 

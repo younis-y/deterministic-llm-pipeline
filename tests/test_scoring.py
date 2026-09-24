@@ -272,15 +272,51 @@ def test_a_multi_word_hard_blocker_is_unaffected_by_boundaries() -> None:
     assert score_keywords(job, profile).blocker_hits == ["uae national", "10+ years"]
 
 
-def test_a_weighted_term_keeps_the_loose_match() -> None:
-    """Deliberate asymmetry. A wrong points deduction is recoverable - the
-    posting is still read, still scored by the LLM, still shown with the flag
-    on it - so `blockers` stays a plain substring test and only the terms that
-    can delete a role are narrowed."""
+def test_a_weighted_term_does_not_match_inside_a_longer_word() -> None:
+    """The asymmetry this replaces was justified by "a wrong points deduction
+    is recoverable". It is not, whenever the deduction crosses the prefilter:
+    the posting never reaches the LLM, is written to `seen` by the reject
+    path, and can never surface again. A 50-point `crypto` charged to
+    "cryptographic hashing" deletes a modest role as thoroughly as a hard bar
+    would, and more quietly - nothing records that a blocker was involved."""
     profile = ProfileConfig(keywords={"energy": 20}, blockers={"crypto": 15})
     scored = score_keywords(_crypto_job("energy. Cryptographic hashing."), profile)
-    assert "crypto" in scored.keyword_penalties
+    assert scored.keyword_penalties == []
+    assert scored.keyword_score == 20, "no points come off for a word not present"
     assert scored.blocker_hits == []
+
+
+def test_a_weighted_term_still_matches_the_whole_word() -> None:
+    """The other half: narrowing the match must not stop the weight working."""
+    profile = ProfileConfig(keywords={"energy": 20}, blockers={"crypto": 15})
+    scored = score_keywords(_crypto_job("energy. Trading on a crypto exchange."), profile)
+    assert scored.keyword_penalties == ["crypto"]
+    assert scored.keyword_score == 5
+
+
+def test_a_weighted_seniority_term_does_not_match_a_longer_word() -> None:
+    """Both live in the user's config today, and both fire constantly on UK
+    and Gulf adverts: `head of` on "head office", `director` on "directorate"
+    and on the boilerplate "board of directors"."""
+    profile = ProfileConfig(blockers={"head of": 40, "director": 40})
+    job = _crypto_job(
+        "Based at our head office. Reports to the directorate and to the "
+        "board of directors."
+    )
+    assert score_keywords(job, profile).keyword_penalties == []
+
+
+def test_a_weighted_seniority_term_matches_the_real_title() -> None:
+    profile = ProfileConfig(blockers={"head of": 40, "director": 40})
+    job = Job(
+        source="s",
+        company="c",
+        title="Head of Data",
+        location="London",
+        url="https://x",
+        description="You will be a Director of the practice.",
+    )
+    assert score_keywords(job, profile).keyword_penalties == ["head of", "director"]
 
 
 # --- a bad hard_blockers list must fail the load, not the digest -----------
@@ -310,6 +346,40 @@ def test_a_single_character_hard_blocker_is_refused_at_load() -> None:
 def test_duplicate_hard_blockers_collapse() -> None:
     profile = ProfileConfig(hard_blockers=["UAE National", "uae national"])
     assert profile.hard_blockers == ["uae national"]
+
+
+def test_a_weighted_term_is_normalised_at_load() -> None:
+    """A key the loader leaves alone can never match: the matcher searches
+    `Job.blob`, whose whitespace is collapsed, so `security  clearance` with
+    two spaces is a weight that is silently never charged."""
+    profile = ProfileConfig(blockers={"  Security   Clearance ": 60})
+    assert profile.blockers == {"security clearance": 60}
+    assert score_keywords(_clearance_job(), profile).keyword_penalties == [
+        "security clearance"
+    ]
+
+
+def test_the_two_blocker_fields_cannot_disagree_about_a_term() -> None:
+    """The disagreement case: normalising only `hard_blockers` let the same
+    term be hard (normalised, matching) and weightless (unnormalised, never
+    matching) at once, with nothing reporting it."""
+    profile = ProfileConfig(
+        blockers={"security  clearance": 60},
+        hard_blockers=["security  clearance"],
+    )
+    scored = score_keywords(_clearance_job(), profile)
+    assert scored.blocker_hits == ["security clearance"]
+    assert scored.keyword_penalties == ["security clearance"]
+    assert scored.keyword_score == -60
+
+
+def test_an_empty_weighted_blocker_is_dropped_at_load() -> None:
+    """Not refused, as an empty hard bar is: an empty weight cannot delete
+    anything. It is dropped because it is not a term - left in place it took
+    a constant off every posting, since `"" in blob` is always true."""
+    profile = ProfileConfig(keywords={"energy": 20}, blockers={"   ": 60})
+    assert profile.blockers == {}
+    assert score_keywords(_crypto_job("energy work"), profile).keyword_score == 20
 
 
 def test_a_hard_blocker_absent_from_blockers_is_allowed() -> None:

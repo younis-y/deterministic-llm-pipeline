@@ -43,7 +43,7 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
             hits.append(term)
 
     for term, penalty in profile.blockers.items():
-        if term.casefold() in blob:
+        if _term_hit(term, blob):
             total -= penalty
             penalties.append(term)
 
@@ -51,8 +51,10 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
     # what a term costs; this says what no application can get past. A term
     # can be in both (it costs its weight AND blocks), in `blockers` alone (a
     # preference, however heavy), or here alone (a bar that costs nothing).
+    # Both fields are normalised at load and matched identically, so the two
+    # can never disagree about whether a term is present.
     for term in profile.hard_blockers:
-        if _hard_hit(term, blob):
+        if _term_hit(term, blob):
             blockers.append(term)
 
     if not _location_ok(job, profile):
@@ -71,19 +73,27 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
     )
 
 
-def _hard_hit(term: str, blob: str) -> bool:
-    r"""Whether a hard blocker term appears in the posting as a whole word.
+def _term_hit(term: str, blob: str) -> bool:
+    r"""Whether a configured blocker term appears in the posting as a whole word.
 
-    Deliberately stricter than the substring test the weighted `blockers` use.
-    A wrong points deduction is recoverable - the LLM still reads the posting
-    and the reader still sees the flag - but a hard blocker deletes the role
-    from the digest and records it as seen, so a wrong hit here is an
-    opportunity the reader never learns about.
+    Used for every blocker, weighted and hard alike. The loose substring test
+    this replaces was kept for the weighted ones on the grounds that a wrong
+    points deduction is recoverable - the LLM still reads the posting and the
+    reader still sees the flag. It is not: the deduction is taken before
+    `min_keyword_score`, and a posting that falls under that gate is
+    prefiltered, written to `seen` and never shown again. A 50-point term
+    charged to a posting that does not contain it deletes a modest role
+    exactly as thoroughly as a hard bar does, and more quietly, because
+    nothing records that a blocker was involved.
 
-    Unanchored matching gets that wrong in practice, not in theory: `crypto`
+    Unanchored matching gets that wrong in practice, not in theory. `crypto`
     as a hard bar (no interest in crypto trading) also matches
     "cryptographic", so a security-adjacent quant role mentioning
     cryptographic hashing once was force-blocked over the model's objection.
+    The weighted side of the same list carries the same defect at a smaller
+    blast radius and a higher frequency: `head of` matches "head office" and
+    `director` matches "directorate" and "board of directors", all of them
+    constant in UK and Gulf adverts.
 
     `\w` lookarounds rather than `\b`, because `\b` is defined against the
     adjacent character in the PATTERN as well as the text: for a term ending

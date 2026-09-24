@@ -89,12 +89,23 @@ class ProfileConfig(BaseModel):
     """Final gate. Postings below this never reach the digest."""
 
     @model_validator(mode="after")
-    def _clean_hard_blockers(self) -> Self:
-        """Normalise the hard bars at load, and refuse the dangerous ones.
+    def _clean_blocker_terms(self) -> Self:
+        """Normalise every blocker term at load, and refuse the dangerous ones.
 
-        This list can delete a role from the digest permanently, so a mistake
-        in it is not recoverable by the reader: the posting is dropped AND
-        written to `seen`. Two mistakes are worth failing the load for.
+        Both fields are normalised here, with the same function, because both
+        are matched the same way: a search over `Job.blob`, which is
+        casefolded with its whitespace collapsed. A key the loader leaves
+        alone is a term that can never match - `security  clearance` with two
+        spaces, or a trailing space picked up from a YAML quote, is a weight
+        that is never charged and nothing says so. Normalising only one of
+        them was worse than normalising neither: the same term could be hard
+        (normalised, matching) and weightless (unnormalised, never matching)
+        at once, with the two fields disagreeing silently.
+
+        `hard_blockers` is additionally checked for two mistakes worth failing
+        the load over, because that list can delete a role from the digest
+        permanently: the posting is dropped AND written to `seen`, so the
+        reader cannot recover from it.
 
         An entry that normalises to nothing matches every posting, so every
         role would be blocked and, with `output.show_blocked` false, silently
@@ -106,6 +117,16 @@ class ProfileConfig(BaseModel):
         over. Misspellings cannot be caught here, which is why the cheap
         checks that CAN be made are made loudly.
         """
+        weighted: dict[str, int] = {}
+        for raw_key, weight in self.blockers.items():
+            # An empty key is dropped rather than refused: unlike a hard bar
+            # it cannot delete anything, it only shifted every posting by a
+            # constant (`"" in blob` is always true), and a term that is not
+            # a term has no weight to charge.
+            if key := normalise_term(raw_key):
+                weighted[key] = weight
+        object.__setattr__(self, "blockers", weighted)
+
         cleaned: list[str] = []
         for i, raw in enumerate(self.hard_blockers):
             term = normalise_term(raw)

@@ -49,7 +49,13 @@ profile:
   # Subtracted from the keyword score, and always shown when they hit. This is
   # a severity gradient: a weight says how much a term costs you, and nothing
   # more. However heavy, a term here is still only a preference - the LLM can
-  # still say apply.
+  # still say apply, as long as what is left clears min_keyword_score below.
+  #
+  # Matched exactly as hard_blockers are: normalised at load, case-insensitive,
+  # on word boundaries. `director` does not hit "directorate", `head of` does
+  # not hit "head office". A deduction that crosses min_keyword_score deletes
+  # the posting as surely as a hard bar does, so loose matching here was never
+  # the cheap mistake it looked like.
   blockers:
     security clearance: 60
     "10+ years": 20
