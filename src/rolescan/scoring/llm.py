@@ -86,9 +86,12 @@ Write "reason" as ONE sentence under 220 characters: the single fact that \
 decides this match, not a summary of the posting. Twelve of these are read on \
 a phone before work, so a second sentence costs more than it adds.
 
-For tailoring, name concrete edits to the chosen CV: which bullet to change and \
-to what. "Tailor your CV" is useless. "Lead the internship bullet with the data \
-quality monitoring, since the posting names observability twice" is useful.
+For tailoring, name concrete edits to the chosen CV: which bullet to change, \
+what to change it to, and the words in THIS posting that motivate the change. \
+"Tailor your CV" is useless. Every tailoring note must name something that \
+appears in the posting in front of you. If nothing in the posting justifies a \
+specific edit, return no tailoring notes at all - an empty list is correct and \
+useful, a generic note is neither.
 """
 
 USER = """\
