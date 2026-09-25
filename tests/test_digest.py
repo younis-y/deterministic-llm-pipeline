@@ -10,6 +10,8 @@ the real dataclass. The helpers below use the actual fields: `reports`
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from rolescan.digest import render_html, render_markdown
 from rolescan.models import (
     Confidence,
@@ -201,18 +203,237 @@ def test_shortlist_row_with_only_company_still_renders() -> None:
     assert "https://x/2" in text
 
 
+# --- the HTML part is HTML, not markdown in a box --------------------------
+
+
+def _one(job: Job | None = None, fit: FitVerdict | None = None) -> ScanResult:
+    """A scan carrying one scored role, so a block can be inspected."""
+    return ScanResult(
+        reportable=[
+            ScoredJob(job=job or _job(), keyword_score=40, fit=fit or _fit())
+        ]
+    )
+
+
 def test_html_render_wraps_the_body() -> None:
-    html = render_html("# Job scan\n\nsomething")
+    html = render_html(_empty_result())
     assert html.startswith("<!doctype html>")
     assert "Job scan" in html
+
+
+def test_the_apply_link_is_a_real_link_not_markdown_source() -> None:
+    """The complaint the rewrite exists for. The HTML part used to be the
+    markdown escaped into a <pre>, so `[Apply](https://x/7)` arrived as those
+    literal characters and the one thing the reader needs was not clickable."""
+    html = render_html(_one())
+    assert 'href="https://x/7"' in html
+    assert "[Apply](" not in html
+    assert "**" not in html, "markdown emphasis must not reach the reader"
+    assert "<pre" not in html
+
+
+def test_the_job_title_is_itself_the_link() -> None:
+    """The primary action, and the most prominent thing in the block."""
+    html = render_html(_one())
+    title = html.index("Data Scientist")
+    assert 'href="https://x/7"' in html[:title], "the title sits inside the anchor"
 
 
 def test_html_render_escapes_hostile_content() -> None:
     """Job titles and company names are scraped from third-party pages and
     must be treated as hostile input, not trusted text."""
-    html = render_html("<script>alert(1)</script>")
+    job = _job().model_copy(update={"title": "<script>alert(1)</script>"})
+    html = render_html(_one(job=job))
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_every_scraped_field_is_escaped_not_only_the_title() -> None:
+    job = _job().model_copy(
+        update={"company": "<b>Ac</b>me", "location": "<i>Dubai</i>"}
+    )
+    html = render_html(_one(job=job, fit=_fit(reason="<img src=x onerror=1>")))
+    for hostile in ("<b>", "<i>", "<img"):
+        assert hostile not in html
+    assert "&lt;img src=x onerror=1&gt;" in html
+
+
+def test_a_javascript_url_never_becomes_a_live_link() -> None:
+    """Urls are scraped too. The scheme check is an allowlist, not a
+    `javascript:` denylist, so an encoding trick has nothing to beat."""
+    job = _job().model_copy(update={"url": "javascript:alert(1)"})
+    html = render_html(_one(job=job))
+    assert "href=" not in html, "nothing on this card may be a link"
+    assert "javascript:alert(1)</div>" in html, "shown as inert text instead"
+
+
+def test_a_url_cannot_break_out_of_the_href_attribute() -> None:
+    """`quote=True` is the whole reason the escape helper exists: without it
+    a quote in the url closes the attribute and the rest becomes markup."""
+    job = _job().model_copy(
+        update={"url": 'https://x/7"onmouseover="alert(1)'}
+    )
+    html = render_html(_one(job=job))
+    assert 'onmouseover="alert(1)' not in html
+    assert "&quot;onmouseover=&quot;alert(1)" in html
+
+
+def test_a_hostile_shortlist_url_is_not_a_live_link_either() -> None:
+    html = render_html(
+        _empty_result(), shortlist=[("javascript:alert(1)", "Acme", "Analyst")]
+    )
+    assert "href=" not in html
+
+
+def test_the_html_survives_a_mail_client() -> None:
+    """Inline styles only. Stylesheets, web fonts and scripts are stripped by
+    most clients, and flexbox and grid are unreliable in several."""
+    html = render_html(_one(), shortlist=[("https://x/1", "Acme", "Analyst")])
+    for banned in ("<script", "<link", "<style", "@import", "flex", "grid", "onclick"):
+        assert banned not in html.casefold()
+
+
+def test_the_four_verdicts_do_not_look_alike() -> None:
+    """A badge the reader has to actually read is not a badge."""
+    seen = set()
+    for verdict in (Verdict.APPLY, Verdict.CONSIDER, Verdict.SKIP):
+        html = render_html(_one(fit=_fit(verdict=verdict)))
+        assert f">{verdict.value.upper()}<" in html
+        seen.add(html[html.index("border-left:") : html.index("border-left:") + 30])
+    blocked = render_html(
+        ScanResult(
+            reportable=[
+                ScoredJob(job=_job(), blocker_hits=["uae national"], fit=_fit())
+            ]
+        )
+    )
+    seen.add(blocked[blocked.index("border-left:") : blocked.index("border-left:") + 30])
+    assert len(seen) == 4, "each verdict needs its own colour"
+
+
+def test_a_blocked_role_is_not_invited_to_apply_in_html() -> None:
+    result = ScanResult(
+        reportable=[
+            ScoredJob(job=_job(), blocker_hits=["uae national"], fit=_fit(blockers=[]))
+        ]
+    )
+    html = render_html(result)
+    assert ">BLOCKED<" in html
+    assert "uae national" in html
+    assert ">Apply<" not in html, "no invitation to a role you cannot be given"
+    assert ">View posting<" in html, "the posting is still reachable"
+    assert "Send:" not in html
+    assert "Tailor it" not in html
+
+
+def test_the_keyword_only_path_renders_in_html() -> None:
+    result = ScanResult(
+        reportable=[
+            ScoredJob(
+                job=_job(),
+                keyword_score=44,
+                keyword_hits=["energy", "python"],
+                keyword_penalties=["principal"],
+            )
+        ]
+    )
+    html = render_html(result)
+    assert "keyword only" in html
+    assert "energy, python" in html
+    assert "principal" in html
+    assert ">44<" in html
+
+
+def test_the_tailoring_advice_renders_but_subordinate() -> None:
+    html = render_html(_one())
+    assert "CV_DataScience-Gulf" in html
+    assert "Lead with the forecasting project." in html
+    assert html.index("Strong analytics overlap.") < html.index("Tailor it"), (
+        "the reason comes before the tailoring the reader may never open"
+    )
+
+
+def test_html_keeps_the_stats_line_and_the_hidden_blocked_count() -> None:
+    html = render_html(ScanResult(unique=12, hidden_blocked=2))
+    assert "Scanned 12 unique postings" in html
+    assert "2 blocked and hidden" in html
+
+
+def test_html_keeps_the_failures_and_skipped_blocks() -> None:
+    result = ScanResult(
+        reports=[
+            SourceReport(kind="lever", slug="acme", label="Acme", error="timeout"),
+            SourceReport(
+                kind="adzuna", slug="x", label="Adzuna", skipped=True, error="no API key"
+            ),
+        ]
+    )
+    html = render_html(result)
+    assert "Sources that failed this run" in html
+    assert "lever/acme" in html
+    assert "timeout" in html
+    assert "Sources skipped (not searched)" in html
+    assert "rolescan discover" in html
+
+
+def test_html_keeps_the_unusable_backend_note() -> None:
+    html = render_html(ScanResult(llm_unusable="ollama is not running"))
+    assert "LLM scoring did not run at all" in html
+    assert "ollama is not running" in html
+    assert "min_report_score" in html
+    assert "It is not a quiet market." in html
+
+
+def test_html_keeps_the_backend_specific_error_hint() -> None:
+    html = render_html(
+        ScanResult(
+            llm_backend="ollama",
+            llm_errors=2,
+            llm_error_detail="RuntimeError: ollama returned HTTP 500",
+        )
+    )
+    assert "ANTHROPIC_API_KEY" not in html
+    assert "needs no API key" in html
+    assert "llm.timeout" in html
+    assert "ollama returned HTTP 500" in html
+    assert "ANTHROPIC_API_KEY" in render_html(
+        ScanResult(llm_backend="anthropic", llm_errors=1)
+    )
+
+
+def test_html_keeps_the_shortlist_and_its_commands() -> None:
+    html = render_html(
+        _empty_result(),
+        shortlist=[("https://x/1", "Glencore", "Analytics Graduate Programme")],
+        config_path=Path("/etc/rolescan/config.yaml"),
+    )
+    assert "Shortlist" in html
+    assert "Glencore" in html
+    assert "rolescan mark https://x/1 applied --config /etc/rolescan/config.yaml" in html
+    assert "rolescan mark https://x/1 dismissed" in html
+
+
+def test_html_shortlist_row_with_no_company_or_title_falls_back_to_the_url() -> None:
+    html = render_html(_empty_result(), shortlist=[("https://x/9", "", "")])
+    assert "https://x/9" in html
+
+
+def test_html_says_nothing_new_when_there_is_nothing_new() -> None:
+    html = render_html(_empty_result())
+    assert "Nothing new worth your time today." in html
+    assert "Worth a look" not in html
+
+
+def test_html_marks_a_dry_run() -> None:
+    html = render_html(ScanResult(dry_run=True))
+    assert "Dry run" in html
+
+
+def test_html_is_one_column_and_fits_a_phone() -> None:
+    html = render_html(_one())
+    assert "width=device-width" in html
+    assert "max-width:620px" in html
+    assert "word-break:break-word" in html
 
 
 # --- the failure notes have to fit the backend that actually failed --------

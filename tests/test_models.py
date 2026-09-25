@@ -199,3 +199,51 @@ def test_cv_variants_match_the_files_that_exist() -> None:
         "CV_Research-DeepLearning",
         "CV_Consulting-Analytics",
     }
+
+
+# --- reason is one sentence, and an old cached one still loads -------------
+
+
+def _long_reason(n: int) -> str:
+    """`n` characters of plausible prose, never one long word."""
+    words = ("strong", "overlap", "with", "the", "day-ahead", "forecasting", "work")
+    out: list[str] = []
+    while len(" ".join(out)) < n:
+        out.append(words[len(out) % len(words)])
+    return " ".join(out)[:n]
+
+
+def test_a_short_reason_is_left_exactly_as_written() -> None:
+    assert _verdict(reason="Wrong seniority.").reason == "Wrong seniority."
+
+
+def test_an_over_long_reason_is_trimmed_not_rejected() -> None:
+    """The model does not have to obey the character budget for the verdict to
+    be usable, and a verdict already paid for must not be thrown away over
+    prose. Ollama reads the schema as a grammar and ignores `maxLength`
+    entirely, so this is the only thing holding the limit on that backend."""
+    verdict = _verdict(reason=_long_reason(400))
+    assert len(verdict.reason) <= 220
+    assert verdict.reason.endswith("…"), "a trimmed reason reads as trimmed"
+    assert not verdict.reason.endswith(" …"), "cut at a word, not a space"
+
+
+def test_a_reason_of_exactly_the_limit_is_untouched() -> None:
+    text = _long_reason(220)
+    assert _verdict(reason=text).reason == text
+
+
+def test_a_cached_verdict_written_under_the_old_limit_still_loads() -> None:
+    """`Store.get_verdict` treats a ValidationError as a schema change and
+    deletes the row, so a 400-character reason left in the cache would have
+    quietly re-scored every cached posting through the LLM once. It loads."""
+    payload = _verdict().model_dump(mode="json") | {"reason": _long_reason(390)}
+    restored = FitVerdict.model_validate(payload)
+    assert len(restored.reason) <= 220
+    assert restored.reason.startswith("strong overlap")
+
+
+def test_a_non_string_reason_is_still_a_type_error() -> None:
+    """Trimming must not turn the field into "accepts anything"."""
+    with pytest.raises(ValidationError):
+        _verdict(reason=17)

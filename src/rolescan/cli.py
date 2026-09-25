@@ -140,7 +140,9 @@ def _ranked_table(result: ScanResult) -> Table:
     return table
 
 
-def _deliver(text: str, cfg: Config, path: Path, *, email: bool) -> None:
+def _deliver(
+    text: str, html_body: str, cfg: Config, path: Path, *, email: bool
+) -> None:
     """Send the digest, or say exactly why it is not being sent.
 
     Never falls through in silence. A disabled emailer used to look exactly
@@ -154,7 +156,7 @@ def _deliver(text: str, cfg: Config, path: Path, *, email: bool) -> None:
         console.print(f"[yellow]email skipped:[/] {_email_skip_reason(cfg)}")
         return
     try:
-        if send_email(text, cfg.output.email, html_body=render_html(text)):
+        if send_email(text, cfg.output.email, html_body=html_body):
             console.print("[green]emailed[/]")
     except Exception as e:
         # The digest is already on disk, so nothing is lost - but the run did
@@ -192,7 +194,13 @@ def scan(
     result, shortlist_rows = asyncio.run(_go())
     _warn_if_llm_did_not_run(result, cfg)
 
+    # Both parts of the email are rendered from the same ScanResult. The HTML
+    # one is not made from `text`: doing that shipped markdown source as the
+    # HTML alternative, so the apply links were not links.
     text = render_markdown(
+        result, shortlist=shortlist_rows, config_path=config.resolve()
+    )
+    html_body = render_html(
         result, shortlist=shortlist_rows, config_path=config.resolve()
     )
     path = write_digest(text, cfg.resolve(cfg.output.dir))
@@ -202,7 +210,7 @@ def scan(
     if result.reportable:
         console.print(_ranked_table(result))
 
-    _deliver(text, cfg, path, email=email)
+    _deliver(text, html_body, cfg, path, email=email)
 
 
 def _probe_table(rows: list[tuple[SourceEntry, ProbeResult]]) -> Table:

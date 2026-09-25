@@ -27,6 +27,15 @@ __all__ = [
 
 _WS = re.compile(r"\s+")
 
+_REASON_CHARS = 220
+"""Hard ceiling on `FitVerdict.reason`.
+
+A twelve-role digest is read on a phone before work. At 400 characters the
+model filled the space and the digest became a wall of prose nobody scanned,
+so the verdict badge and the score - the two things that decide whether a
+role gets read at all - were buried under paragraphs. One sentence is the
+brief; this is the wall that makes the brief true."""
+
 
 def _norm(text: str) -> str:
     return _WS.sub(" ", text).strip()
@@ -190,8 +199,11 @@ class FitVerdict(BaseModel):
         description="How sure you are, given how much detail the posting gave."
     )
     reason: str = Field(
-        max_length=400,
-        description="One or two sentences. Concrete and specific to this role.",
+        max_length=_REASON_CHARS,
+        description=(
+            "ONE sentence: the single fact that decides this match. Concrete "
+            "and specific to this role, never a summary of the posting."
+        ),
     )
     cv_variant: CVVariant = Field(
         description="Which of the candidate's CV variants to submit."
@@ -220,6 +232,35 @@ class FitVerdict(BaseModel):
             "not evidence. Drives what to learn next."
         ),
     )
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _one_sentence(cls, v: object) -> object:
+        """Trim an over-long reason instead of rejecting the whole verdict.
+
+        Two callers need this and neither can be fixed by asking the model
+        nicely. Ollama takes the schema as a GRAMMAR and does not enforce
+        `maxLength`, so a chatty local model would otherwise fail validation
+        and lose a verdict that was already paid for. And the verdict cache
+        holds rows written when the limit was 400: `Store.get_verdict` treats
+        a ValidationError as a schema change, deletes the row and re-scores,
+        so tightening the limit alone would silently re-run every cached
+        posting through the LLM once - the one cost the cache exists to
+        avoid. Trimming keeps those rows readable.
+
+        The cut lands on a word boundary and is marked with an ellipsis, so a
+        trimmed reason reads as trimmed rather than as a model that stopped
+        mid-thought.
+        """
+        if not isinstance(v, str):
+            return v
+        text = _norm(v)
+        if len(text) <= _REASON_CHARS:
+            return text
+        cut = text[: _REASON_CHARS - 1].rstrip()
+        if " " in cut:
+            cut = cut[: cut.rindex(" ")].rstrip()
+        return cut + "\u2026"
 
 
 class ScoredJob(BaseModel):

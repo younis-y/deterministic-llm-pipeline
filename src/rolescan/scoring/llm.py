@@ -82,6 +82,10 @@ security clearance, or a work authorisation they do not hold. A blocked role \
 should also get a low fit_score. Being underqualified or overqualified is \
 "skip", not "blocked".
 
+Write "reason" as ONE sentence under 220 characters: the single fact that \
+decides this match, not a summary of the posting. Twelve of these are read on \
+a phone before work, so a second sentence costs more than it adds.
+
 For tailoring, name concrete edits to the chosen CV: which bullet to change and \
 to what. "Tailor your CV" is useless. "Lead the internship bullet with the data \
 quality monitoring, since the posting names observability twice" is useful.
