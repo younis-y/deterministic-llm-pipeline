@@ -7,6 +7,7 @@ safe to commit.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Annotated, Any, Self
@@ -17,6 +18,8 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from rolescan.models import normalise_term
 
 __all__ = ["Config", "LLMConfig", "OutputConfig", "ProfileConfig", "SourceEntry"]
+
+log = logging.getLogger(__name__)
 
 
 class SourceEntry(BaseModel):
@@ -107,6 +110,14 @@ class ProfileConfig(BaseModel):
         permanently: the posting is dropped AND written to `seen`, so the
         reader cannot recover from it.
 
+        Normalisation can also collapse two `blockers` keys onto one term,
+        which then has to resolve to a single weight. The heaviest wins, and
+        the collapse is logged. Heaviest rather than last-written because
+        "last" depends on the order two lines happen to sit in the YAML: that
+        is invisible to the author, and it would change the prefilter when the
+        file is merely re-sorted. A weight is also a cost, so taking the larger
+        of the two can never quietly weaken a bar the author did write.
+
         An entry that normalises to nothing matches every posting, so every
         role would be blocked and, with `output.show_blocked` false, silently
         deleted - the one configuration that means "everything is hard".
@@ -123,8 +134,19 @@ class ProfileConfig(BaseModel):
             # it cannot delete anything, it only shifted every posting by a
             # constant (`"" in blob` is always true), and a term that is not
             # a term has no weight to charge.
-            if key := normalise_term(raw_key):
-                weighted[key] = weight
+            key = normalise_term(raw_key)
+            if not key:
+                continue
+            if key in weighted and weighted[key] != weight:
+                log.warning(
+                    "profile.blockers: %r and an earlier key both normalise to "
+                    "%r. Keeping the heavier weight %d and dropping %d.",
+                    raw_key,
+                    key,
+                    max(weighted[key], weight),
+                    min(weighted[key], weight),
+                )
+            weighted[key] = max(weighted.get(key, weight), weight)
         object.__setattr__(self, "blockers", weighted)
 
         cleaned: list[str] = []

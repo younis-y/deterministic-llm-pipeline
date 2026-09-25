@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -371,6 +372,32 @@ def test_the_two_blocker_fields_cannot_disagree_about_a_term() -> None:
     assert scored.blocker_hits == ["security clearance"]
     assert scored.keyword_penalties == ["security clearance"]
     assert scored.keyword_score == -60
+
+
+def test_two_weighted_keys_that_normalise_to_one_keep_the_heavier_weight(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Normalisation can merge two keys, and the merged term needs one weight.
+
+    The heavier wins, not the last-written one: "last" is decided by the order
+    two lines happen to sit in the YAML, which is invisible to the author and
+    would change the prefilter when the file is merely re-sorted. Taking the
+    larger of two costs also cannot quietly weaken a bar the author did write.
+    """
+    with caplog.at_level(logging.WARNING, logger="rolescan.config"):
+        profile = ProfileConfig(
+            blockers={"Security  Clearance": 20, "security clearance ": 60}
+        )
+    assert profile.blockers == {"security clearance": 60}
+    assert score_keywords(_clearance_job(), profile).keyword_score == -60
+    assert "security clearance" in caplog.text, "a silent merge is the bug"
+
+
+def test_the_heavier_weight_wins_whichever_key_is_written_first() -> None:
+    """Order-independence is the whole point of picking by size."""
+    a = ProfileConfig(blockers={"Security  Clearance": 60, "security clearance ": 20})
+    b = ProfileConfig(blockers={"Security  Clearance": 20, "security clearance ": 60})
+    assert a.blockers == b.blockers == {"security clearance": 60}
 
 
 def test_an_empty_weighted_blocker_is_dropped_at_load() -> None:
