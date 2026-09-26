@@ -210,12 +210,18 @@ class FitVerdict(BaseModel):
     )
     tailoring: list[str] = Field(
         default_factory=list,
-        max_length=5,
+        max_length=2,
         description=(
-            "Specific edits to that CV for this role. Each item names what to "
-            "change and why. Empty if the CV already fits as-is."
+            "At most two specific edits to that CV for this role. Each names "
+            "what to change and why. Empty if the CV already fits as-is."
         ),
     )
+    """Capped at two rather than five on measured grounds: generating these is
+    pure decode, which is what a local run spends its time on, and dropping the
+    cap took 7.9% off a 25-posting benchmark. The notes that were being
+    generated did not justify the cost - before the prompt's exemplar was
+    removed, 12 of 25 were the example copied verbatim, and the ones that
+    replaced it are broadly phrased. One or two grounded notes beat five."""
     blockers: list[str] = Field(
         default_factory=list,
         max_length=5,
