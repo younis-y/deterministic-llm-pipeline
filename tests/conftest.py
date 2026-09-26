@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 
 from rolescan.config import Config, ProfileConfig
 from rolescan.models import Job
@@ -14,7 +17,8 @@ profile:
   summary: A candidate.
   locations: [london, abu dhabi, remote]
   keywords: {energy: 6, data scientist: 7, python: 4, trading: 6, graduate: 4}
-  blockers: {uae national: 40, "10+ years": 20, principal: 12}
+  blockers: {uae national: 60, "10+ years": 20, principal: 12}
+  hard_blockers: [uae national]
   min_keyword_score: 18
   min_report_score: 55
 llm:
@@ -27,12 +31,55 @@ sources:
 """
 
 
+# The pipeline distinguishes "the intended judge answered" from "the intended
+# judge could not start", and records only the first - so a *healthy* scoring
+# run has to be expressible in a test, without a key and without a network
+# call. Ollama is the backend that needs no key; `mock_ollama` answers for it
+# in-process.
+LLM_VERDICT = {
+    "fit_score": 72,
+    "verdict": "consider",
+    "confidence": "medium",
+    "reason": "Strong power-market overlap, but the role wants five years.",
+    "cv_variant": "CV_EnergySystems-Modelling",
+    "tailoring": ["Lead with the day-ahead forecasting project."],
+    "blockers": [],
+    "keywords_missing": ["Kubernetes"],
+}
+
+
+OLLAMA_MODEL = "qwen2.5:7b"
+"""A plausible local tag. `LLMConfig.model` defaults to a Claude model, which
+is right for the default backend and nonsense for this one, so a test that
+mocks ollama sets `llm.model` to this and mocks a server holding it."""
+
+
+def mock_ollama(
+    base_url: str = "http://localhost:11434", model: str = OLLAMA_MODEL
+) -> None:
+    """Route the ollama backend at a canned verdict, and its preflight at a
+    server that is up and has `model` pulled. Call inside @respx.mock.
+
+    Configs under test must set `llm.model` to the same tag, or preflight
+    correctly reports the model as not pulled.
+    """
+    respx.post(f"{base_url}/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"content": json.dumps(LLM_VERDICT)}}
+        )
+    )
+    respx.get(f"{base_url}/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": model}]})
+    )
+
+
 @pytest.fixture
 def profile() -> ProfileConfig:
     return ProfileConfig(
         locations=["london", "abu dhabi", "remote"],
         keywords={"energy": 6, "data scientist": 7, "python": 4, "trading": 6},
-        blockers={"uae national": 40, "10+ years": 20},
+        blockers={"uae national": 60, "10+ years": 20},
+        hard_blockers=["uae national"],
         min_keyword_score=18,
     )
 
@@ -75,6 +122,7 @@ def gated_job() -> Job:
         ),
         posted="2026-08-22",
     )
+
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 

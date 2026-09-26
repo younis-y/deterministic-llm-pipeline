@@ -46,13 +46,40 @@ profile:
     analyst: 3
     graduate: 4
 
-  # Subtracted. These keep the digest free of roles you cannot get.
+  # Subtracted from the keyword score, and always shown when they hit. This is
+  # a severity gradient: a weight says how much a term costs you, and nothing
+  # more. However heavy, a term here is still only a preference - the LLM can
+  # still say apply, as long as what is left clears min_keyword_score below.
+  #
+  # Matched exactly as hard_blockers are: normalised at load, case-insensitive,
+  # on word boundaries. `director` does not hit "directorate", `head of` does
+  # not hit "head office". A deduction that crosses min_keyword_score deletes
+  # the posting as surely as a hard bar does, so loose matching here was never
+  # the cheap mistake it looked like.
   blockers:
-    security clearance: 25
+    security clearance: 60
     "10+ years": 20
     director: 15
     unpaid: 30
   location_penalty: 25
+
+  # Structural bars: things no application can get past. A term here forces a
+  # `blocked` verdict that no LLM opinion can override, so a posting matching
+  # one is removed from the digest and never shown again - with
+  # output.show_blocked false it is deleted outright. Reserve it for facts
+  # about you that will not change: a clearance you do not hold, a
+  # nationality gate, a visa you cannot get.
+  #
+  # Hardness is deliberately NOT a weight threshold. A weight and a wall
+  # change on completely different timescales, and one number cannot honestly
+  # encode both: a term here keeps whatever weight `blockers` gives it, and
+  # costs nothing at all if `blockers` does not mention it.
+  #
+  # Matched on word boundaries, case-insensitively, so `crypto` does not hit
+  # "cryptographic". Keep the list short and specific: everything on it can
+  # delete a real role you would otherwise have read.
+  hard_blockers:
+    - security clearance
 
   min_keyword_score: 18   # below this, a posting never reaches the LLM
   min_report_score: 55    # below this, a posting never reaches the digest
@@ -67,9 +94,12 @@ llm:
   #              and the digest says so rather than pretending.
   #   ollama     A local model. Free, offline, no key. Set model to something
   #              you have pulled, e.g. qwen2.5:7b or llama3.1:8b.
-  #              NOT YET VERIFIED against a live Ollama server: written to the
-  #              documented API and tested against a mock, so the first real
-  #              run is the real test. Check the first digest before trusting it.
+  #              Measured against a live server over a 25-posting benchmark
+  #              and one 34-posting scan: 72% verdict accuracy, 0%
+  #              score/verdict violations, and 50% blocker recall from the
+  #              model itself. hard_blockers below do not depend on the model,
+  #              so keep the structural bars there rather than trusting it to
+  #              spot them.
   backend: anthropic
   model: claude-sonnet-5
 

@@ -23,7 +23,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
-from typing import Self
+from typing import ClassVar, Self
 
 import aiosqlite
 from pydantic import ValidationError
@@ -63,11 +63,24 @@ _MIGRATIONS: tuple[str, ...] = (
         fetched  TEXT NOT NULL
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS applications (
+        url     TEXT PRIMARY KEY,
+        state   TEXT NOT NULL CHECK (state IN ('shortlist','applied','dismissed')),
+        company TEXT NOT NULL DEFAULT '',
+        title   TEXT NOT NULL DEFAULT '',
+        updated TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS applications_state ON applications(state);
+    """,
 )
 
 
 class Store:
     """Async SQLite store. Use as an async context manager."""
+
+    #: The only states an application row may hold.
+    STATES: ClassVar[tuple[str, ...]] = ("shortlist", "applied", "dismissed")
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -120,6 +133,11 @@ class Store:
         if not scored:
             return []
         uids = [s.job.uid for s in scored]
+        # The only thing interpolated is a run of `?` placeholders, whose
+        # length comes from len(uids) and nothing else. Every value is bound.
+        # Checked because bandit's S608 flags this shape on sight and the
+        # answer should be written down rather than rediscovered: there is no
+        # SQL builder here and no posting text anywhere near the statement.
         placeholders = ",".join("?" * len(uids))
         cur = await self.db.execute(
             f"SELECT uid FROM seen WHERE uid IN ({placeholders})",
@@ -246,6 +264,60 @@ class Store:
             ),
         )
         await self.db.commit()
+
+    # -- application state ---------------------------------------------------
+
+    async def mark(
+        self, url: str, state: str, company: str = "", title: str = ""
+    ) -> None:
+        """Record what the user did with a posting.
+
+        The newest `state` always wins. `company` and `title` do not:
+        a blank one leaves whatever is already stored in place, so
+        re-marking a posting from a context that has no metadata (the
+        digest prints a bare url) cannot erase the labels an earlier
+        mark captured.
+        """
+        if state not in self.STATES:
+            msg = f"state must be one of {self.STATES}, got {state!r}"
+            raise ValueError(msg)
+        await self.db.execute(
+            """
+            INSERT INTO applications (url, state, company, title, updated)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(url) DO UPDATE SET
+                state = excluded.state,
+                company = CASE WHEN excluded.company != '' THEN excluded.company
+                               ELSE applications.company END,
+                title = CASE WHEN excluded.title != '' THEN excluded.title
+                             ELSE applications.title END,
+                updated = excluded.updated
+            """,
+            (url, state, company, title),
+        )
+        await self.db.commit()
+
+    async def application_state(self, url: str) -> str | None:
+        async with self.db.execute(
+            "SELECT state FROM applications WHERE url = ?", (url,)
+        ) as cur:
+            row = await cur.fetchone()
+        return str(row[0]) if row else None
+
+    async def shortlist(self) -> list[tuple[str, str, str]]:
+        async with self.db.execute(
+            "SELECT url, company, title FROM applications "
+            "WHERE state = 'shortlist' ORDER BY updated DESC"
+        ) as cur:
+            rows = await cur.fetchall()
+        return [(str(r[0]), str(r[1]), str(r[2])) for r in rows]
+
+    async def dismissed_urls(self) -> set[str]:
+        async with self.db.execute(
+            "SELECT url FROM applications WHERE state = 'dismissed'"
+        ) as cur:
+            rows = await cur.fetchall()
+        return {str(r[0]) for r in rows}
 
     async def prune(self, days: int = 180) -> int:
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat(

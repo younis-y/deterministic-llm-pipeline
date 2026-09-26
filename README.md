@@ -14,7 +14,7 @@ reproducible and free to re-run.
 
 Both the sources and the scoring backends load through **entry points**, so
 adding an ATS adapter or swapping Claude for a local Ollama model is a plugin,
-not a fork. **164 tests run offline** against `respx`-mocked transport: the real
+not a fork. **264 tests run offline** against `respx`-mocked transport: the real
 HTTP clients and real parsers are exercised against recorded response shapes
 rather than stubbed out. `mypy` runs strict across `src` and `tests`.
 
@@ -23,7 +23,7 @@ rather than stubbed out. `mypy` runs strict across `src` and `tests`.
 
 ```bash
 pip install -e ".[dev]"
-pytest                                    # 164 tests, no network
+pytest                                    # 264 tests, no network
 cp config.example.yaml config.yaml        # then edit sources and profile
 rolescan discover                          # probe the sources you configured
 rolescan scan --no-llm                     # keyword-only run, no API key needed
@@ -77,6 +77,42 @@ The hard part is not fetching. It is knowing that Octopus Energy's board is
 can stop here: `--no-llm` still gives a ranked, deduplicated, seen-tracked
 digest.
 
+**Blockers, and which of them are walls.** Two separate fields, because they
+answer different questions:
+
+```yaml
+blockers:            # a severity gradient. Points off the keyword score.
+  security clearance: 60
+  matlab: 15
+hard_blockers:       # structural bars. Nothing you can apply your way past.
+  - security clearance
+  - uae national
+```
+
+`blockers` says what a term *costs*. However heavy, it only moves a posting
+down the ranking, and the LLM can still say apply — until the deduction takes
+it under `min_keyword_score`, at which point it is prefiltered, recorded as
+seen, and gone. That is why the two fields are matched identically rather than
+the weights being matched loosely.
+
+`hard_blockers` says what no application can get past. A term here forces
+`blocked` whatever the model decides, so the posting is pushed to the bottom of
+the digest — or, with `output.show_blocked: false`, removed from it entirely
+and recorded as seen, which means you never see that role again. **That is a
+real deletion, on a term you typed into a YAML file**, so keep the list short
+and specific. Terms in both fields are normalised at load and matched
+case-insensitively on word boundaries (`crypto` does not match
+"cryptographic", `head of` does not match "head office"), a term in both
+lists keeps its weight, and a term in `hard_blockers` alone blocks and costs
+nothing. Whenever
+a posting is deleted this way the digest's stats line says how many, so a
+blocker matching the wrong thing shows up as a number rather than as silence.
+
+Hardness is deliberately not a weight threshold. A weight is retuned whenever
+you calibrate the prefilter; whether a clearance is a wall is a fact about you
+that changes once a decade. One number could not encode both without one of
+them silently changing the other.
+
 **2. An LLM,** optionally. It picks which of your CV variants to send, scores
 fit, flags hard eligibility bars, and names concrete edits to make. Verdicts
 are cached on a content hash of the posting text, so re-running costs nothing
@@ -87,18 +123,27 @@ The backend is a plugin. `rolescan backends` lists what is registered:
 | Name | Needs a key | What it is |
 |---|---|---|
 | `anthropic` | `ANTHROPIC_API_KEY` | Claude API. Best quality. Needs ANTHROPIC_API_KEY. |
-| `ollama` | no | Local model via Ollama. Free, offline, no key. NOT YET VERIFIED against a live server. |
+| `ollama` | no | Local model via Ollama. Free, offline, no key. Run against a live server: 72% verdict accuracy over 25 postings, 50% blocker recall. |
 
-The Anthropic backend has run against the live API: the 25 August 2026 run in
-`examples/run-summary.md` scored 36 postings through it, with no failures
-reported. That key has since been revoked, so the run is a record rather than
-something you can re-execute. The Ollama backend has never run against a live
-instance. Both are written to
-their documented contracts and covered by tests against a mocked server, which
-proves the request shape, the schema validation and the error handling, but not
-the contracts themselves. The Ollama path sends a JSON Schema in `format`, so
-`FitVerdict` still arrives validated either way. Treat the first real run of
-either as the test.
+Both backends have now run against a live server.
+
+The Anthropic backend scored 36 postings in the 25 August 2026 run recorded in
+`examples/run-summary.md`, with no failures. That key has since been revoked,
+so the run is a record rather than something you can re-execute.
+
+The Ollama backend has been measured rather than merely exercised: a
+25-posting benchmark against hand-labelled expectations, plus one live
+34-posting scan. **Verdict accuracy 72%. Score/verdict violations 0%** — the
+band table in the scoring prompt and the verdict returned never disagreed.
+**Model-level blocker recall 50%:** it named half the structural bars in the
+benchmark set.
+
+That last number is the one worth reading. The tool does not rely on the model
+to catch structural bars — `hard_blockers` are matched in Python before the
+model is called and force `blocked` whatever it says, and `min_report_score`
+gates the rest — but a bar that appears only in the posting text, and that no
+configured term names, is one this backend will miss about half the time. The
+hosted backend is materially better at it. Choose accordingly.
 
 With `llm.enabled: false`, or with no key and no local model, you get stage one
 alone. If a configured backend fails, the digest says so rather than quietly
@@ -151,14 +196,25 @@ rolescan sources      every registered source kind and its slug format
 rolescan backends     every registered LLM backend, and which need a key
 rolescan cvs          which CV variants were found and how they parse
 rolescan scan         fetch, score, write the digest   (--dry, --no-llm, --no-email)
+rolescan mark URL S   record what you did with a posting: shortlist, applied, dismissed
 rolescan show         reprint the latest digest
 rolescan stats        how many postings the store has seen
 rolescan prune        drop stale cached verdicts
 ```
 
+`mark` takes one of three states. `shortlist` keeps a posting in the digest's
+**Shortlist** section, which is repeated under the new roles on every run so an
+open application stays in front of you rather than scrolling away with
+yesterday's email. `applied` clears it from that section. `dismissed` clears it
+too, and additionally stops the posting ever being reported again, however many
+boards go on listing it. Every shortlist row in the digest carries the exact
+`mark` command to clear it, with the config path already filled in.
+
 `discover` distinguishes five outcomes on purpose. `EMPTY` means a real board
 with no openings; `UNKNOWN` means an API that cannot tell an empty board from a
-wrong slug. Collapsing those into a single "OK" hides which of them actually returned postings. ## Finding slugs
+wrong slug. Collapsing those into a single "OK" hides which of them actually returned postings.
+
+## Finding slugs
 
 `rolescan slugs` searches a harvested ATS directory you download yourself. It
 matches on `difflib.SequenceMatcher` with a length-aware cap and a directional
@@ -175,7 +231,9 @@ confirms or refutes it.
 
 What this does not claim:
 
-- **Neither LLM backend has been run against a live server.** See above.
+- **The local backend catches about half the structural bars the hosted one
+  does.** Measured, not estimated: see above. Configured `hard_blockers` do not
+  depend on the model, so put anything you cannot apply your way past there.
 - **Public endpoints only.** Nothing behind a login, no session cookies, no
   captcha solving, no scraping of anything a careers page does not serve to an
   anonymous browser.
@@ -210,7 +268,29 @@ pip install -e ".[dev]"
 pytest && mypy src tests && ruff check .
 ```
 
-The suite is 164 tests and runs in about two seconds with no network: `respx`
+`ruff check` is the quality gate, not just a formatter: alongside the usual
+rules it enforces `max-complexity = 12` (mccabe), naive-datetime detection,
+unused arguments and exception-message hygiene. `pyproject.toml` records which
+rule families are deliberately **not** selected, and why, so the next person
+does not re-add bandit to read 477 "assert used" findings out of a test suite.
+
+Three more checks are not worth a pre-commit hook but are worth running when
+the dependency list, the module layout or a hot function changes:
+
+```bash
+uvx deptry .                                       # unused/missing/transitive deps
+uvx radon cc src -n C -s                           # complexity regressions
+uvx vulture src --min-confidence 80 \
+    --ignore-names exc_type,exc,tb,attrs           # dead code
+```
+
+All three are clean. The `--ignore-names` are parameters a protocol requires
+and the implementation does not use: `__aexit__`'s three, and `attrs` on
+`HTMLParser.handle_starttag`. `radon` is advisory - the enforced ceiling is
+ruff's `C901`, which counts differently and more conservatively than radon
+does, so expect radon to report grade C on functions ruff passes.
+
+The suite is 264 tests and runs in about five seconds with no network: `respx`
 mocks the transport, so the real HTTP clients and the real parsers are exercised
 against recorded response shapes rather than being stubbed out. `mypy` runs
 strict over `src` and `tests`.

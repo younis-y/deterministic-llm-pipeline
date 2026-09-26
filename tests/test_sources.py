@@ -393,3 +393,50 @@ async def test_workday_enrichment_keeps_posted_a_real_date() -> None:
     assert posted is not None
     assert hasattr(posted, "isoformat"), f"posted is a {type(posted).__name__}"
     assert posted.isoformat() == "2026-08-23"
+
+
+@respx.mock
+async def test_lever_falls_back_to_the_eu_host() -> None:
+    """A board on Lever's EU domain 404s on the default host.
+
+    Without the fallback the source fails with a bare 404, which is
+    indistinguishable from a mistyped slug and tells the reader nothing.
+    """
+    respx.get("https://api.lever.co/v0/postings/prima").mock(
+        return_value=httpx.Response(404)
+    )
+    respx.get("https://api.eu.lever.co/v0/postings/prima").mock(
+        return_value=httpx.Response(
+            200,
+            json=[{"id": "1", "text": "Data Engineer", "hostedUrl": "https://e/1"}],
+        )
+    )
+    async with Fetcher() as f:
+        jobs = await get_source(SourceEntry(kind="lever", slug="prima"), f).fetch()
+    assert [j.title for j in jobs] == ["Data Engineer"]
+
+
+@respx.mock
+async def test_lever_non_eu_board_never_touches_the_eu_host() -> None:
+    respx.get("https://api.lever.co/v0/postings/vitol").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    eu = respx.get("https://api.eu.lever.co/v0/postings/vitol")
+    async with Fetcher() as f:
+        jobs = await get_source(SourceEntry(kind="lever", slug="vitol"), f).fetch()
+    assert jobs == []
+    assert not eu.called, "an empty board must not be retried on the EU host"
+
+
+@respx.mock
+async def test_lever_wrong_slug_still_fails_loudly() -> None:
+    """404 on both hosts is a bad slug, and must not read as an empty board."""
+    respx.get("https://api.lever.co/v0/postings/nope").mock(
+        return_value=httpx.Response(404)
+    )
+    respx.get("https://api.eu.lever.co/v0/postings/nope").mock(
+        return_value=httpx.Response(404)
+    )
+    async with Fetcher() as f:
+        with pytest.raises(FetchError):
+            await get_source(SourceEntry(kind="lever", slug="nope"), f).fetch()

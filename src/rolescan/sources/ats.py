@@ -9,12 +9,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from rolescan.http import FetchError
 from rolescan.models import Job
 from rolescan.sources.base import Source, first_str, register, strip_html
 
 __all__ = ["Ashby", "Greenhouse", "Lever", "SmartRecruiters", "Workable"]
 
 _REMOTE_HINTS = ("remote", "anywhere", "work from home")
+
+#: Lever hosts EU customers on a separate domain, and a board on the wrong
+#: one answers 404 - indistinguishable from a mistyped slug. Trying both
+#: costs one extra request only when the first misses, and keeps a genuinely
+#: wrong slug failing loudly: it 404s on both hosts and the error propagates.
+_LEVER_HOSTS = ("api.lever.co", "api.eu.lever.co")
 
 
 def _is_remote(*fields: str) -> bool:
@@ -47,8 +54,7 @@ class SmartRecruiters(Source):
                 url, params={"limit": 100, "offset": offset}
             )
             content = data.get("content") or []
-            for p in content:
-                jobs.append(self._parse(p))
+            jobs.extend(self._parse(p) for p in content)
             offset += len(content)
             if not content or offset >= int(data.get("totalFound") or 0):
                 break
@@ -110,15 +116,23 @@ class Greenhouse(Source):
 
 @register
 class Lever(Source):
-    """https://api.lever.co/v0/postings/{slug}?mode=json"""
+    """https://api.lever.co/v0/postings/{slug}?mode=json (or the EU host)"""
 
     name = "lever"
     slug_hint = "jobs.lever.co/<slug> -> slug: <slug>"
 
     async def fetch(self) -> list[Job]:
-        data = await self.fetcher.fetch_json(
-            f"https://api.lever.co/v0/postings/{self.slug}", params={"mode": "json"}
-        )
+        data: Any = None
+        for host in _LEVER_HOSTS:
+            try:
+                data = await self.fetcher.fetch_json(
+                    f"https://{host}/v0/postings/{self.slug}", params={"mode": "json"}
+                )
+            except FetchError:
+                if host == _LEVER_HOSTS[-1]:
+                    raise
+                continue
+            break
         out: list[Job] = []
         for p in data or []:
             cats = p.get("categories") or {}
@@ -154,24 +168,22 @@ class Ashby(Source):
             f"https://api.ashbyhq.com/posting-api/job-board/{self.slug}",
             params={"includeCompensation": "true"},
         )
-        out: list[Job] = []
-        for p in data.get("jobs") or []:
-            out.append(
-                Job(
-                    source=self.name,
-                    company=self.label,
-                    title=p.get("title", ""),
-                    location=p.get("location", ""),
-                    url=first_str(p, "jobUrl", "applyUrl"),
-                    description=strip_html(
-                        p.get("descriptionHtml") or p.get("descriptionPlain", "")
-                    ),
-                    posted=p.get("publishedAt"),
-                    remote=bool(p.get("isRemote")) or _is_remote(p.get("location", "")),
-                    raw_id=str(p.get("id") or ""),
-                )
+        return [
+            Job(
+                source=self.name,
+                company=self.label,
+                title=p.get("title", ""),
+                location=p.get("location", ""),
+                url=first_str(p, "jobUrl", "applyUrl"),
+                description=strip_html(
+                    p.get("descriptionHtml") or p.get("descriptionPlain", "")
+                ),
+                posted=p.get("publishedAt"),
+                remote=bool(p.get("isRemote")) or _is_remote(p.get("location", "")),
+                raw_id=str(p.get("id") or ""),
             )
-        return out
+            for p in data.get("jobs") or []
+        ]
 
 
 @register

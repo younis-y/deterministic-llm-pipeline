@@ -31,3 +31,8 @@ __pycache__/
 
 # Local handoff notes, not project documentation.
 NEXT.md
+
+# Lockfile: this is a library, not an application. Consumers resolve their own
+# dependency tree; pinning ours here would be noise in every downstream diff.
+# (rolescan-extra, which runs unattended twice daily, does commit its lock.)
+uv.lock

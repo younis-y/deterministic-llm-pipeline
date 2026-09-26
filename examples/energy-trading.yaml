@@ -30,12 +30,22 @@ profile:
     data scientist: 7
     python: 4
     graduate: 4
+  # `blockers` costs points; `hard_blockers` is the list of walls. The three
+  # structural ones appear in both: they are heavy AND fatal. A
+  # nationality-gated programme or a clearance is not something a better
+  # application can fix, so the LLM does not get a vote on them. "10+ years"
+  # and "director" are heavy preferences and stay off the hard list - a
+  # graduate can still be worth a look at a role advertised above their level.
   blockers:
-    uae national: 40
-    emiratisation: 30
-    security clearance: 25
+    uae national: 60
+    emiratisation: 60
+    security clearance: 60
     "10+ years": 20
     director: 15
+  hard_blockers:
+    - uae national
+    - emiratisation
+    - security clearance
   location_penalty: 25
   min_keyword_score: 18
   min_report_score: 55

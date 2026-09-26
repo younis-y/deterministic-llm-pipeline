@@ -24,14 +24,19 @@ _KEY = re.compile(r"[^a-z0-9]+")
 def _fold(name: str) -> str:
     """Compare CV filenames loosely.
 
-    The enum spells the ML variant CV_MLAI; the file on disk is CV_ML-AI.tex.
-    Matching exactly dropped it without a word, so five of six variants loaded
-    and the LLM silently lost one option. Hyphens, underscores and case are not
-    worth a bug.
+    The enum may differ in punctuation from actual filenames: CV_AI-LLM-Engineering
+    in the enum matches cv_ai_llm_engineering.tex on disk. Hyphens, underscores
+    and case are not worth a bug.
     """
     return _KEY.sub("", name.casefold())
 
 
+#: Per-variant prompt budget, deliberately below what the files hold. The
+#: stripped variants run 3,746-3,879 characters, so roughly the last third of
+#: each CV never reaches the model. That is the intended trade: six variants in
+#: one system prompt, on every scored posting, several times a day. The tail of
+#: a CV is education and interests, which is the part the fit score needs
+#: least. Raise it only against a measured token bill.
 _PER_VARIANT_CHARS = 2600
 
 _COMMENT = re.compile(r"(?<!\\)%.*$", re.MULTILINE)

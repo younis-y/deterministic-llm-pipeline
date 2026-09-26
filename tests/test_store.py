@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+import rolescan.store as store_module
 from rolescan.models import (
     Confidence,
     CVVariant,
@@ -173,3 +176,123 @@ async def test_posting_cache_survives_reopening_the_file(tmp_path: Path) -> None
         )
     async with Store(path) as store:
         assert await store.get_posting("https://x/job/1") is not None
+
+
+# --- application state -------------------------------------------------
+
+
+async def test_mark_and_read_application_state(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/1", "applied", company="Glencore", title="Analytics")
+        assert await store.application_state("https://x/1") == "applied"
+        assert await store.application_state("https://x/2") is None
+
+
+async def test_mark_is_idempotent_and_updates_state(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/1", "shortlist", company="C", title="T")
+        await store.mark("https://x/1", "applied", company="C", title="T")
+        assert await store.application_state("https://x/1") == "applied"
+        assert len(await store.shortlist()) == 0
+
+
+async def test_shortlist_returns_only_shortlisted(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/1", "shortlist", company="A", title="One")
+        await store.mark("https://x/2", "applied", company="B", title="Two")
+        rows = await store.shortlist()
+        assert rows == [("https://x/1", "A", "One")]
+
+
+async def test_dismissed_urls(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/9", "dismissed", company="C", title="T")
+        assert await store.dismissed_urls() == {"https://x/9"}
+
+
+async def test_invalid_state_is_rejected(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.sqlite3") as store:
+        with pytest.raises(ValueError):
+            await store.mark("https://x/1", "maybe")
+
+
+async def test_mark_does_not_wipe_company_or_title_with_blanks(
+    tmp_path: Path,
+) -> None:
+    """A later mark() with default empty company/title must not clobber
+    values an earlier call already stored."""
+    async with Store(tmp_path / "s.sqlite3") as store:
+        await store.mark("https://x/1", "shortlist", company="C", title="T")
+        await store.mark("https://x/1", "applied")
+        rows = list(
+            await store.db.execute_fetchall(
+                "SELECT company, title FROM applications WHERE url = ?",
+                ("https://x/1",),
+            )
+        )
+        assert rows[0] == ("C", "T")
+
+
+async def test_applications_table_is_created_on_a_fresh_store(
+    tmp_path: Path,
+) -> None:
+    """A brand-new store (current code, all migrations applied together)
+    ends up with a working applications table. This does NOT exercise the
+    upgrade path of an old, already-populated store — see
+    test_applications_table_migrates_onto_a_pre_existing_store for that."""
+    path = tmp_path / "s.db"
+    job = _job("https://x/job/1")
+    scored = ScoredJob(job=job)
+    async with Store(path) as store:
+        await store.record_all([scored])
+
+    async with Store(path) as store:
+        assert await store.count() == 1
+        assert not await store.is_new(job)
+        await store.mark("https://x/2", "shortlist", company="A", title="One")
+        assert await store.shortlist() == [("https://x/2", "A", "One")]
+
+
+async def test_applications_table_migrates_onto_a_pre_existing_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, energy_job: Job
+) -> None:
+    """The real scenario: a store created before the `applications` table
+    existed, sitting at PRAGMA user_version=2, meeting the new migration
+    for the first time on open. Data written under the old schema (the
+    `seen` row that drives deduplication) must survive the upgrade."""
+    path = tmp_path / "s.db"
+
+    with monkeypatch.context() as m:
+        # Pin the module to only the first two migrations, so this open
+        # genuinely stops at user_version=2 — the pre-applications state a
+        # real user's rolescan.sqlite3 would be in.
+        m.setattr(store_module, "_MIGRATIONS", store_module._MIGRATIONS[:2])
+        async with Store(path) as store:
+            await store.record_all([ScoredJob(job=energy_job)])
+            cur = await store.db.execute("PRAGMA user_version")
+            row = await cur.fetchone()
+            assert row is not None
+            assert int(row[0]) == 2, "fixture must start below the new migration"
+
+    # Reopen with the real, unpatched Store: this is the actual upgrade path.
+    async with Store(path) as store:
+        cur = await store.db.execute("PRAGMA user_version")
+        row = await cur.fetchone()
+        assert row is not None
+        assert int(row[0]) == 3, "the new migration must have run"
+
+        tables = list(
+            await store.db.execute_fetchall(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='applications'"
+            )
+        )
+        assert tables, "applications table must exist after the upgrade"
+
+        assert await store.count() == 1
+        assert not await store.is_new(
+            energy_job
+        ), "seen data written under the old schema must survive the upgrade"
+
+        await store.mark("https://x/2", "shortlist", company="A", title="One")
+        assert await store.shortlist() == [("https://x/2", "A", "One")]
