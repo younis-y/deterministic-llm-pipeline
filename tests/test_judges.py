@@ -133,6 +133,36 @@ async def test_ollama_base_url_is_configurable() -> None:
     assert (await get_judge("ollama", cfg).verdict("s", "u")).fit_score == 72
 
 
+
+
+@respx.mock
+async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
+    """Temperature reaches the server, and defaults to zero.
+
+    It was absent from the request entirely, so the local backend inherited
+    Ollama's default of 0.8 while every accuracy benchmark this project ran
+    used 0 - the measured numbers described a configuration that never
+    shipped, and the same posting could score differently on a re-run.
+    """
+    seen: dict[str, object] = {}
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        seen.update(__import__("json").loads(request.content))
+        return httpx.Response(
+            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
+        )
+
+    respx.post("http://localhost:11434/api/chat").mock(side_effect=capture)
+
+    cfg = LLMConfig(enabled=True, backend="ollama")
+    await get_judge("ollama", cfg).verdict("s", "u")
+    assert seen["options"] == {"num_predict": cfg.max_tokens, "temperature": 0.0}
+
+    seen.clear()
+    cfg = LLMConfig(enabled=True, backend="ollama", temperature=0.7)
+    await get_judge("ollama", cfg).verdict("s", "u")
+    assert seen["options"]["temperature"] == 0.7
+
 # --- the scorer uses whichever backend is configured -----------------------
 
 

@@ -282,7 +282,10 @@ class OllamaJudge(Judge):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "options": {"num_predict": self.cfg.max_tokens},
+            "options": {
+                "num_predict": self.cfg.max_tokens,
+                "temperature": self.cfg.temperature,
+            },
         }
         try:
             async with httpx.AsyncClient(timeout=self.cfg.timeout) as client:

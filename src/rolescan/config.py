@@ -193,6 +193,12 @@ class LLMConfig(BaseModel):
     max_concurrent: Annotated[int, Field(ge=1, le=32)] = 5
     max_calls_per_run: Annotated[int, Field(ge=0)] = 60
     """Hard ceiling. Stops a badly tuned prefilter turning into a big bill."""
+    temperature: Annotated[float, Field(ge=0.0, le=2.0)] = 0.0
+    """Sampling temperature. Zero by default: this is a classification task
+    with a fixed rubric, and every benchmark this project has run measured
+    accuracy at zero. Leaving it unset meant the local backend inherited
+    Ollama's default of 0.8, so the same posting could score differently on
+    a re-run and the measured accuracy never described what shipped."""
     description_chars: Annotated[int, Field(ge=500)] = 6000
     cache_days: Annotated[int, Field(ge=0)] = 30
 
