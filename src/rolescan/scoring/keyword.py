@@ -54,6 +54,10 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
     # can never disagree about whether a term is present.
     blockers = [t for t in profile.hard_blockers if _term_hit(t, blob)]
 
+    if profile.agency_penalty and _agency_hit(job.company, profile.agencies):
+        total -= profile.agency_penalty
+        penalties.append("posted by an agency")
+
     if not _location_ok(job, profile):
         total -= profile.location_penalty
         # Not a hard bar: the candidate allows remote and has several target
@@ -68,6 +72,30 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
         keyword_penalties=penalties,
         blocker_hits=blockers,
     )
+
+
+_NON_WORD = re.compile(r"[^a-z0-9]+")
+
+
+def _normalise_company(name: str) -> str:
+    """Casefold, reduce runs of punctuation to single spaces, pad with spaces.
+
+    The padding is what makes a plain `in` test a whole-word-run test, so
+    "Owen Thomas" matches "Owen Thomas | B Corp(tm)" without "Data Idols"
+    matching a company called "Data Idolsmith".
+    """
+    return f" {_NON_WORD.sub(' ', name.casefold()).strip()} "
+
+
+def _agency_hit(company: str, agencies: list[str]) -> bool:
+    """Whether this company is one of the configured agencies.
+
+    Company only. Matching the whole posting instead would fire on any advert
+    that names a recruiter in its text, including an employer explaining that
+    it does not use them.
+    """
+    haystack = _normalise_company(company)
+    return any(_normalise_company(a) in haystack for a in agencies)
 
 
 def _term_hit(term: str, blob: str) -> bool:

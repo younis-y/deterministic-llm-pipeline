@@ -480,3 +480,73 @@ def test_cv_loading_is_case_and_separator_insensitive(tmp_path: Path) -> None:
         "\\begin{document}Data\\end{document}", encoding="utf-8"
     )
     assert CVVariant.DATA_SCIENCE in CVLibrary.load(d).variants
+
+
+# --- agency listings ------------------------------------------------------
+
+
+def _at(company: str) -> Job:
+    return Job(
+        source="adzuna:gb",
+        company=company,
+        title="Data Engineer",
+        location="London",
+        url=f"https://example.com/{company}",
+        description="Build ETL pipelines in Python and SQL.",
+        posted=None,
+        remote=False,
+    )
+
+
+def test_an_agency_listing_is_down_ranked_not_removed() -> None:
+    """A penalty, not a bar: plenty of good work is found through an agency,
+    and the same role is often posted by both the employer and its recruiter."""
+    profile = ProfileConfig(
+        keywords={"data engineer": 12},
+        agencies=["Harnham"],
+        agency_penalty=20,
+    )
+    direct = score_keywords(_at("Vitol"), profile)
+    agency = score_keywords(_at("Harnham"), profile)
+
+    assert agency.keyword_score == direct.keyword_score - 20
+    assert agency.keyword_score > 0, "down-ranked, still visible"
+    assert "posted by an agency" in agency.keyword_penalties
+    assert agency.blocker_hits == [], "never a hard bar"
+
+
+def test_an_agency_matches_as_a_whole_word_run_inside_a_longer_name() -> None:
+    """Posted names carry suffixes: 'Understanding Recruitment NFP',
+    'Owen Thomas | B Corp(tm)'."""
+    profile = ProfileConfig(
+        keywords={"data engineer": 12},
+        agencies=["Understanding Recruitment", "Owen Thomas"],
+        agency_penalty=20,
+    )
+    for posted in ("Understanding Recruitment NFP", "Owen Thomas | B Corp(tm)"):
+        assert "posted by an agency" in score_keywords(_at(posted), profile).keyword_penalties
+
+
+def test_an_agency_named_only_in_the_description_does_not_count() -> None:
+    """Company only. An employer explaining it does not use recruiters must
+    not be penalised for naming one."""
+    profile = ProfileConfig(
+        keywords={"data engineer": 12}, agencies=["Harnham"], agency_penalty=20
+    )
+    job = _at("Vitol").model_copy(
+        update={"description": "We hire directly and do not work with Harnham."}
+    )
+    assert score_keywords(job, profile).keyword_penalties == []
+
+
+def test_a_substring_that_is_not_a_whole_word_run_does_not_match() -> None:
+    profile = ProfileConfig(
+        keywords={"data engineer": 12}, agencies=["Data Idols"], agency_penalty=20
+    )
+    assert score_keywords(_at("Data Idolsmith"), profile).keyword_penalties == []
+
+
+def test_agencies_cost_nothing_until_a_penalty_is_configured() -> None:
+    """The default is off, so core stays neutral about who posts a role."""
+    profile = ProfileConfig(keywords={"data engineer": 12}, agencies=["Harnham"])
+    assert score_keywords(_at("Harnham"), profile).keyword_penalties == []

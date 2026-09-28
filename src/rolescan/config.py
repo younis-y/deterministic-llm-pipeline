@@ -88,6 +88,18 @@ class ProfileConfig(BaseModel):
     min_keyword_score: Annotated[int, Field(ge=0)] = 18
     """Prefilter gate. Postings below this never reach the LLM, which is the
     single biggest lever on cost."""
+    agencies: list[str] = Field(default_factory=list)
+    """Company names that post roles they are not themselves hiring for:
+    recruiters, staffing firms, job boards. Matched against the COMPANY name
+    only, never the description, so a posting that merely mentions a recruiter
+    is unaffected."""
+    agency_penalty: Annotated[int, Field(ge=0)] = 0
+    """What an agency listing costs in keyword score. 0 disables it.
+
+    A penalty rather than a bar, deliberately: plenty of good work is found
+    through an agency, and the same role is often posted by both the employer
+    and its recruiter. Ranking them below a direct listing lets the better
+    version win a contested digest while an agency-only role still appears."""
     max_age_days: Annotated[int, Field(ge=0)] = 90
     """Drop postings older than this, whatever the source. 0 disables it.
 
