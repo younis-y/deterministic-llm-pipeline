@@ -88,6 +88,14 @@ class ProfileConfig(BaseModel):
     min_keyword_score: Annotated[int, Field(ge=0)] = 18
     """Prefilter gate. Postings below this never reach the LLM, which is the
     single biggest lever on cost."""
+    max_age_days: Annotated[int, Field(ge=0)] = 90
+    """Drop postings older than this, whatever the source. 0 disables it.
+
+    LinkedIn takes an age parameter in the search itself, so this never bit
+    while it was the only source returning rows. ATS boards do not: Greenhouse
+    and Ashby serve whatever is on the board, evergreen requisitions included,
+    and a real digest carried a Jane Street posting dated 2024-02-15. A
+    posting with no date at all is kept - unknown is not the same as old."""
     min_report_score: Annotated[int, Field(ge=0, le=100)] = 55
     """Final gate. Postings below this never reach the digest."""
 

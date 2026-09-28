@@ -17,7 +17,15 @@ from rolescan.models import (
     ScoredJob,
     Verdict,
 )
-from rolescan.pipeline import ScanResult, SourceReport, deduplicate, run_scan
+from rolescan.pipeline import (
+    ScanResult,
+    SourceReport,
+    _check_coverage,
+    _drop_stale,
+    deduplicate,
+    run_scan,
+)
+from rolescan.store import Store
 
 
 def _payload(title: str, content: str, jid: int = 1) -> dict[str, object]:
@@ -758,3 +766,91 @@ async def test_no_llm_suppresses_the_unusable_backend_note(
     )
     result = await run_scan(cfg, check_llm=False)
     assert result.llm_unusable == ""
+
+
+# --- stale postings and coverage alarms ----------------------------------
+
+
+def _job_posted(days_ago: int | None, title: str = "Data Engineer") -> Job:
+    from datetime import UTC, datetime, timedelta
+
+    return Job(
+        source="greenhouse",
+        company="Acme",
+        title=title,
+        location="London",
+        url=f"https://example.com/{title}-{days_ago}",
+        description="Build pipelines.",
+        posted=None
+        if days_ago is None
+        else datetime.now(UTC).date() - timedelta(days=days_ago),
+        remote=False,
+    )
+
+
+def test_stale_postings_are_dropped_but_undated_ones_are_kept() -> None:
+    """An unknown date is not an old one.
+
+    ATS boards serve evergreen requisitions - a real digest carried a posting
+    dated 2024-02-15 - but a handful of feeds give no date at all, and treating
+    those as stale would delete a whole source rather than its old rows.
+    """
+    jobs = [_job_posted(5, "fresh"), _job_posted(400, "ancient"), _job_posted(None, "undated")]
+    kept, dropped = _drop_stale(jobs, 90)
+    assert dropped == 1
+    assert {j.title for j in kept} == {"fresh", "undated"}
+
+
+def test_a_zero_max_age_keeps_everything() -> None:
+    jobs = [_job_posted(5), _job_posted(4000)]
+    kept, dropped = _drop_stale(jobs, 0)
+    assert dropped == 0
+    assert len(kept) == 2
+
+
+async def test_a_source_that_goes_quiet_is_reported(tmp_path: Path) -> None:
+    """The alarm for this project's one recurring defect: a source that stops
+    returning rows without raising, leaving a run that still exits 0."""
+    worked = SourceReport(kind="greenhouse", slug="janestreet", label="Jane Street", count=228)
+    async with Store(tmp_path / "s.db") as store:
+        assert await _check_coverage([worked], store) == []
+
+        silent = SourceReport(kind="greenhouse", slug="janestreet", label="Jane Street", count=0)
+        quiet = await _check_coverage([silent], store)
+    assert quiet == [("Jane Street", 228)]
+
+
+async def test_a_source_that_never_worked_is_not_called_quiet(tmp_path: Path) -> None:
+    """Otherwise the alarm fires every morning for an unconfigured board and
+    trains the reader to ignore the line that matters."""
+    never = SourceReport(kind="adzuna", slug="gb", label="Adzuna", count=0)
+    async with Store(tmp_path / "s.db") as store:
+        assert await _check_coverage([never], store) == []
+        assert await _check_coverage([never], store) == []
+
+
+async def test_a_failed_source_is_not_also_called_quiet(tmp_path: Path) -> None:
+    """It already has its own line in the digest; reporting it twice buries
+    the silent case among the loud ones."""
+    ok = SourceReport(kind="lever", slug="prima", label="Prima", count=97)
+    async with Store(tmp_path / "s.db") as store:
+        await _check_coverage([ok], store)
+        broke = SourceReport(kind="lever", slug="prima", label="Prima", count=0, error="HTTP 500")
+        assert await _check_coverage([broke], store) == []
+
+
+async def test_two_entries_sharing_a_slug_keep_separate_histories(tmp_path: Path) -> None:
+    """The Adzuna config has one entry per location, so kind and slug alone
+    would make the two overwrite each other and hide a real outage."""
+    london = SourceReport(kind="adzuna", slug="gb", label="Adzuna London", count=203)
+    wide = SourceReport(kind="adzuna", slug="gb", label="Adzuna UK-wide", count=12)
+    async with Store(tmp_path / "s.db") as store:
+        await _check_coverage([london, wide], store)
+        quiet = await _check_coverage(
+            [
+                SourceReport(kind="adzuna", slug="gb", label="Adzuna London", count=0),
+                SourceReport(kind="adzuna", slug="gb", label="Adzuna UK-wide", count=12),
+            ],
+            store,
+        )
+    assert quiet == [("Adzuna London", 203)]

@@ -265,6 +265,11 @@ def _stats(result: ScanResult) -> str:
         f"{result.already_seen} already seen",
         f"{result.prefiltered} filtered before scoring",
     ]
+    if result.stale:
+        # Only when it happened. ATS boards serve evergreen requisitions, so
+        # this number is how the reader learns their new sources carry old
+        # stock rather than wondering why a board of 228 yielded nothing.
+        bits.insert(1, f"{result.stale} too old")
     if result.llm_calls or result.llm_cached:
         bits.append(f"{result.llm_calls} scored, {result.llm_cached} from cache")
     if result.hidden_blocked:
@@ -375,6 +380,21 @@ def _failures(result: ScanResult) -> list[str]:
         # exists to prevent.
         if hint := _llm_error_hint(result):
             lines += [_md_frags(hint), ""]
+    if result.quiet_sources:
+        # Above the failures on purpose. A source that errors says so; a source
+        # that quietly returns nothing is the defect this project keeps
+        # producing, and until now the only sign was a thinner digest.
+        lines += ["**Sources that went quiet**", ""]
+        lines += [
+            f"- **{label}** returned nothing, having returned up to {n} recently"
+            for label, n in result.quiet_sources
+        ]
+        lines += [
+            "",
+            "That is not a quiet market: these worked before and returned "
+            "nothing now. Check the source before trusting this digest.",
+            "",
+        ]
     if failed:
         lines += ["**Sources that failed this run**", ""]
         lines += [f"- `{r.kind}/{r.slug}` {r.error}" for r in failed]
@@ -689,9 +709,33 @@ def _llm_notes_html(result: ScanResult) -> list[str]:
 def _failures_html(result: ScanResult) -> list[str]:
     failed = result.failed_sources
     skipped = result.skipped_sources
-    if not failed and not skipped and not result.llm_errors and not result.llm_unusable:
+    if (
+        not failed
+        and not skipped
+        and not result.quiet_sources
+        and not result.llm_errors
+        and not result.llm_unusable
+    ):
         return []
     out = [f'<hr style="{_RULE}">', *_llm_notes_html(result)]
+    if result.quiet_sources:
+        out.append(
+            _note_html(
+                "Sources that went quiet",
+                [
+                    "<ul>"
+                    + "".join(
+                        f"<li><strong>{_esc(label)}</strong> returned nothing, "
+                        f"having returned up to {n} recently</li>"
+                        for label, n in result.quiet_sources
+                    )
+                    + "</ul>",
+                    "<p>That is not a quiet market: these worked before and "
+                    "returned nothing now. Check the source before trusting "
+                    "this digest.</p>",
+                ],
+            )
+        )
     if failed:
         out.append(
             _note_html(

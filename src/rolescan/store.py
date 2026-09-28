@@ -73,6 +73,15 @@ _MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX IF NOT EXISTS applications_state ON applications(state);
     """,
+    """
+    CREATE TABLE IF NOT EXISTS source_counts (
+        source_key TEXT NOT NULL,
+        ran        TEXT NOT NULL,
+        count      INTEGER NOT NULL,
+        PRIMARY KEY (source_key, ran)
+    );
+    CREATE INDEX IF NOT EXISTS source_counts_key ON source_counts(source_key, ran);
+    """,
 )
 
 
@@ -318,6 +327,40 @@ class Store:
         ) as cur:
             rows = await cur.fetchall()
         return {str(r[0]) for r in rows}
+
+    async def record_source_counts(self, counts: dict[str, int]) -> None:
+        """Remember what each source returned, so a silent zero is detectable.
+
+        Every serious defect in this project has been a component that stopped
+        working while the run still exited 0 - a hardcoded first page, a
+        concurrency default, an empty query list, options nested one level too
+        deep. None of them raised. All of them were obvious the moment you
+        compared a source against what it returned yesterday, which is the one
+        thing nothing was keeping.
+        """
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        await self.db.executemany(
+            "INSERT OR REPLACE INTO source_counts (source_key, ran, count) "
+            "VALUES (?, ?, ?)",
+            [(key, now, n) for key, n in counts.items()],
+        )
+        await self.db.commit()
+
+    async def source_high_water(self, key: str, runs: int = 5) -> int:
+        """The most this source has returned in its last `runs` recorded runs.
+
+        A high-water mark rather than a mean or a median: the question is not
+        "is today typical" but "has this source ever worked", and one good run
+        is enough to prove it can. That makes a single fluke unable to raise
+        the bar permanently, while a source that has only ever returned zero
+        never trips the alarm.
+        """
+        rows = await self.db.execute_fetchall(
+            "SELECT count FROM source_counts WHERE source_key = ? "
+            "ORDER BY ran DESC LIMIT ?",
+            (key, runs),
+        )
+        return max((int(r[0]) for r in rows), default=0)
 
     async def prune(self, days: int = 180) -> int:
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat(

@@ -13,7 +13,7 @@ from rolescan.models import (
     ScoredJob,
     Verdict,
 )
-from rolescan.store import Store
+from rolescan.store import _MIGRATIONS, Store
 
 VERDICT = FitVerdict(
     fit_score=88,
@@ -279,7 +279,11 @@ async def test_applications_table_migrates_onto_a_pre_existing_store(
         cur = await store.db.execute("PRAGMA user_version")
         row = await cur.fetchone()
         assert row is not None
-        assert int(row[0]) == 3, "the new migration must have run"
+        assert int(row[0]) == len(_MIGRATIONS), (
+            "user_version must end at the migration count, not a literal - "
+            "hardcoding it means every new migration breaks this test"
+        )
+        assert int(row[0]) > 2, "the new migration must have run"
 
         tables = list(
             await store.db.execute_fetchall(

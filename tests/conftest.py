@@ -73,6 +73,30 @@ def mock_ollama(
     )
 
 
+#: Credentials the library reads straight from the environment. Cleared for
+#: every test, because a test that only passes on a machine with no keys is a
+#: test that passes in CI and fails for the one person actually using the tool.
+#: Found the hard way: the Adzuna "no credentials" tests went red the moment
+#: real credentials were added to a shell, having been green for weeks.
+_CREDENTIAL_VARS = (
+    "ADZUNA_APP_ID",
+    "ADZUNA_APP_KEY",
+    "ANTHROPIC_API_KEY",
+    "ROLESCAN_SMTP_PASS",
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every test as though the machine has no credentials configured.
+
+    A test that wants one sets it itself; monkeypatch.setenv inside the test
+    still wins, because this runs first.
+    """
+    for var in _CREDENTIAL_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
 @pytest.fixture
 def profile() -> ProfileConfig:
     return ProfileConfig(

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 from rolescan.config import Config, SourceEntry
 from rolescan.http import Fetcher
@@ -83,6 +84,16 @@ class ScanResult:
     asked for", which is a deliberate keyword-only run and records normally;
     non-empty means "a judge was asked for and could not start", which must
     not bury postings it never looked at."""
+    stale: int = 0
+    """Postings dropped for being older than `profile.max_age_days`."""
+    quiet_sources: list[tuple[str, int]] = field(default_factory=list)
+    """Sources that returned nothing this run but have returned rows before,
+    as (label, the most they have returned in their last five runs).
+
+    This is the alarm for the one defect this project keeps producing: a
+    source that stops working without raising, leaving a run that exits 0 and
+    delivers less than it should. Nothing else notices - the digest still has
+    content from the sources that do work."""
     hidden_blocked: int = 0
     """Postings that scored high enough for the digest and were removed from
     it solely because they were blocked, with `output.show_blocked` false.
@@ -200,6 +211,28 @@ async def _drop_already_handled(
     return fresh
 
 
+def _source_key(report: SourceReport) -> str:
+    """Identity for count history. Includes the label because two entries can
+    share a kind and slug - the Adzuna config has one per location - and would
+    otherwise overwrite each other's history."""
+    return f"{report.kind}:{report.slug}:{report.label}"
+
+
+def _drop_stale(jobs: list[Job], max_age_days: int) -> tuple[list[Job], int]:
+    """Remove postings older than the cutoff, keeping any with no date.
+
+    An unknown date is not an old one. Most ATS boards give a real created-at;
+    LinkedIn gives a relative age the source has already resolved; a handful
+    of feeds give nothing, and dropping those would silently delete a whole
+    source rather than its stale rows.
+    """
+    if max_age_days <= 0:
+        return jobs, 0
+    cutoff = datetime.now(UTC).date() - timedelta(days=max_age_days)
+    kept = [j for j in jobs if j.posted is None or j.posted >= cutoff]
+    return kept, len(jobs) - len(kept)
+
+
 def _prefilter(
     fresh: list[ScoredJob], gate: int
 ) -> tuple[list[ScoredJob], list[ScoredJob]]:
@@ -291,6 +324,39 @@ def _rank(judged: list[ScoredJob], cfg: Config) -> tuple[list[ScoredJob], int]:
     return keep[: cfg.output.max_roles], hidden
 
 
+async def _check_coverage(
+    reports: list[SourceReport], store: Store
+) -> list[tuple[str, int]]:
+    """Record what each source returned, and name the ones that went quiet.
+
+    Quiet means: returned nothing this run, raised nothing, and has returned
+    rows within its last five runs. A source that has never worked is not
+    quiet, it is unconfigured, and saying so every morning would train the
+    reader to ignore the line that matters.
+
+    Sources that errored or skipped are excluded - those already have their
+    own line in the digest, and reporting them twice buries the silent case
+    among the loud ones.
+    """
+    quiet: list[tuple[str, int]] = []
+    for report in reports:
+        if not report.ok:
+            continue
+        if report.count == 0:
+            previous = await store.source_high_water(_source_key(report))
+            if previous > 0:
+                quiet.append((report.label or report.slug, previous))
+                log.warning(
+                    "source %s returned nothing; it returned up to %d recently",
+                    report.label or report.slug,
+                    previous,
+                )
+    await store.record_source_counts(
+        {_source_key(r): r.count for r in reports if r.ok}
+    )
+    return quiet
+
+
 async def run_scan(
     cfg: Config, *, dry_run: bool = False, check_llm: bool = True
 ) -> ScanResult:
@@ -311,7 +377,10 @@ async def run_scan(
         result.fetched = len(raw)
 
         unique = deduplicate(raw)
+        unique, result.stale = _drop_stale(unique, cfg.profile.max_age_days)
         result.unique = len(unique)
+
+        result.quiet_sources = await _check_coverage(result.reports, store)
 
         scored = [score_keywords(j, cfg.profile) for j in unique]
 
