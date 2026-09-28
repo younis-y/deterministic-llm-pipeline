@@ -42,6 +42,7 @@ class SmartRecruiters(Source):
     """
 
     name = "smartrecruiters"
+    dates_are_freshness = False
     slug_hint = "jobs.smartrecruiters.com/<Slug> -> slug: <Slug> (case sensitive)"
     ambiguous_when_empty = True
 
@@ -88,6 +89,7 @@ class Greenhouse(Source):
     """https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"""
 
     name = "greenhouse"
+    dates_are_freshness = False
     slug_hint = "boards.greenhouse.io/<slug> -> slug: <slug>"
 
     async def fetch(self) -> list[Job]:
@@ -119,6 +121,7 @@ class Lever(Source):
     """https://api.lever.co/v0/postings/{slug}?mode=json (or the EU host)"""
 
     name = "lever"
+    dates_are_freshness = False
     slug_hint = "jobs.lever.co/<slug> -> slug: <slug>"
 
     async def fetch(self) -> list[Job]:
@@ -161,6 +164,7 @@ class Ashby(Source):
     """https://api.ashbyhq.com/posting-api/job-board/{slug}"""
 
     name = "ashby"
+    dates_are_freshness = False
     slug_hint = "jobs.ashbyhq.com/<slug> -> slug: <slug>"
 
     async def fetch(self) -> list[Job]:
@@ -191,6 +195,7 @@ class Workable(Source):
     """https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true"""
 
     name = "workable"
+    dates_are_freshness = False
     slug_hint = "apply.workable.com/<slug> -> slug: <slug>"
 
     async def fetch(self) -> list[Job]:

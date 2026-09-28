@@ -104,6 +104,14 @@ class Source(ABC):
     name: ClassVar[str] = ""
     #: Human-readable hint shown by `rolescan discover` when a slug fails.
     slug_hint: ClassVar[str] = ""
+    #: Whether this source's `posted` date means "this advert went up", which
+    #: is what an age cutoff assumes. True for aggregators. False for an
+    #: employer's own ATS board, where the date is when the requisition was
+    #: opened and the listing's presence is itself the freshness signal: Jane
+    #: Street's board carries a live req dated 2019, and a 90-day cutoff threw
+    #: away 145 of its 228 openings on the grounds that they were old rather
+    #: than filled.
+    dates_are_freshness: ClassVar[bool] = True
     #: Set True when the API returns 200 with an empty collection for a slug
     #: that does not exist, so a zero count cannot be trusted as verification.
     ambiguous_when_empty: ClassVar[bool] = False

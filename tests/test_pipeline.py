@@ -775,7 +775,10 @@ def _job_posted(days_ago: int | None, title: str = "Data Engineer") -> Job:
     from datetime import UTC, datetime, timedelta
 
     return Job(
-        source="greenhouse",
+        # An aggregator, deliberately: greenhouse and the other ATS readers are
+        # exempt from ageing, so using one here would make these tests pass for
+        # the wrong reason.
+        source="linkedin",
         company="Acme",
         title=title,
         location="London",
@@ -854,3 +857,37 @@ async def test_two_entries_sharing_a_slug_keep_separate_histories(tmp_path: Path
             store,
         )
     assert quiet == [("Adzuna London", 203)]
+
+
+def test_an_ats_boards_dates_are_not_treated_as_freshness() -> None:
+    """A requisition opened in 2019 and still on the board is still open.
+
+    A uniform cutoff removed 145 of Jane Street's 228 live openings, and the
+    digest filled the gap with agency reposts from aggregators, which are
+    always dated yesterday. The date means different things on the two kinds
+    of source, so only one of them can be aged out.
+    """
+    ancient = _job_posted(2000, "Ancient Req")
+    board_job = ancient.model_copy(update={"source": "greenhouse"})
+    feed_job = ancient.model_copy(
+        update={"source": "linkedin", "url": "https://example.com/feed"}
+    )
+
+    kept, dropped = _drop_stale([board_job, feed_job], 90)
+    assert dropped == 1
+    assert [j.source for j in kept] == ["greenhouse"]
+
+
+def test_a_suffixed_source_name_still_resolves_its_kind() -> None:
+    """Adzuna reports itself as `adzuna:gb`; the kind is before the colon."""
+    old_advert = _job_posted(400).model_copy(update={"source": "adzuna:gb"})
+    _, dropped = _drop_stale([old_advert], 90)
+    assert dropped == 1
+
+
+def test_an_unknown_source_is_aged_out_rather_than_trusted() -> None:
+    """A plugin that has not declared itself is likelier to be a job board
+    than an employer's own careers page, and the safe default is to filter."""
+    old_advert = _job_posted(400).model_copy(update={"source": "some-plugin"})
+    _, dropped = _drop_stale([old_advert], 90)
+    assert dropped == 1

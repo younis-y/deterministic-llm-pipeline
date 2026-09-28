@@ -29,7 +29,7 @@ from rolescan.scoring import (
     unusable_backend_reason,
 )
 from rolescan.sources import get_source
-from rolescan.sources.base import PostingCache, SourceSkipped
+from rolescan.sources.base import _REGISTRY, PostingCache, SourceSkipped
 from rolescan.store import Store
 
 __all__ = ["ScanResult", "SourceReport", "run_scan"]
@@ -218,18 +218,40 @@ def _source_key(report: SourceReport) -> str:
     return f"{report.kind}:{report.slug}:{report.label}"
 
 
-def _drop_stale(jobs: list[Job], max_age_days: int) -> tuple[list[Job], int]:
-    """Remove postings older than the cutoff, keeping any with no date.
+def _ages_meaningfully(source: str) -> bool:
+    """Whether an age cutoff means anything for the source that produced a job.
 
-    An unknown date is not an old one. Most ATS boards give a real created-at;
-    LinkedIn gives a relative age the source has already resolved; a handful
-    of feeds give nothing, and dropping those would silently delete a whole
-    source rather than its stale rows.
+    `Job.source` is the source name, sometimes with a suffix ("adzuna:gb"), so
+    the kind is everything before the first colon. An unknown kind is treated
+    as an aggregator: a plugin that has not declared otherwise is far more
+    likely to be a job board than an employer's own careers page.
+    """
+    cls = _REGISTRY.get(source.split(":", 1)[0])
+    return cls is None or cls.dates_are_freshness
+
+
+def _drop_stale(jobs: list[Job], max_age_days: int) -> tuple[list[Job], int]:
+    """Remove stale postings from sources whose dates mean freshness.
+
+    Two things are deliberately kept. A posting with no date, because unknown
+    is not old and dropping undated rows deletes whole feeds rather than their
+    stale entries. And everything from an employer's own ATS board, because
+    there `posted` is when the requisition was opened, not when the advert went
+    up - the listing's presence on the board is the freshness signal. Measured:
+    a uniform 90-day cutoff removed 145 of Jane Street's 228 live openings and
+    74 of IMC's 174, and replaced them in the digest with recruitment-agency
+    reposts from the aggregators, which are always dated yesterday.
     """
     if max_age_days <= 0:
         return jobs, 0
     cutoff = datetime.now(UTC).date() - timedelta(days=max_age_days)
-    kept = [j for j in jobs if j.posted is None or j.posted >= cutoff]
+    kept = [
+        j
+        for j in jobs
+        if j.posted is None
+        or j.posted >= cutoff
+        or not _ages_meaningfully(j.source)
+    ]
     return kept, len(jobs) - len(kept)
 
 
