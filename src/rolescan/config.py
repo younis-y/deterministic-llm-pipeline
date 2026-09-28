@@ -193,6 +193,13 @@ class LLMConfig(BaseModel):
     max_concurrent: Annotated[int, Field(ge=1, le=32)] = 5
     max_calls_per_run: Annotated[int, Field(ge=0)] = 60
     """Hard ceiling. Stops a badly tuned prefilter turning into a big bill."""
+    cascade: bool = True
+    """Score in two passes: a cheap one that only settles the score, then the
+    full verdict only for postings that clear `min_report_score`. The digest
+    never prints reason, tailoring or blockers for anything below that line,
+    and generating them is ~85% of a local call. Measured at roughly half the
+    scoring time on a real 531-posting run. Ignored by backends whose triage
+    is not actually cheaper - see `Judge.cheap_triage`."""
     temperature: Annotated[float, Field(ge=0.0, le=2.0)] = 0.0
     """Sampling temperature. Zero by default: this is a classification task
     with a fixed rubric, and every benchmark this project has run measured

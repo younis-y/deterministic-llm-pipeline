@@ -17,8 +17,10 @@ from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob
 from rolescan.scoring import CVLibrary, FitScorer
 from rolescan.scoring.judges import (
+    TRIAGE_REASON,
     available_judges,
     get_judge,
+    triage_schema,
     unusable_backend_reason,
 )
 
@@ -605,3 +607,147 @@ async def test_a_third_party_judge_without_its_key_still_self_disables(
         assert "OTHER_PROVIDER_KEY_2" in await unusable_backend_reason(cfg)
     finally:
         _unregister("otherhosted2")
+
+
+# --- the two-pass cascade ------------------------------------------------
+
+
+def test_triage_asks_only_for_what_the_gate_needs() -> None:
+    schema = triage_schema()
+    assert set(schema["properties"]) == {
+        "fit_score",
+        "verdict",
+        "confidence",
+        "cv_variant",
+    }
+    # the three generated fields are the whole point of not asking
+    for generated in ("reason", "tailoring", "blockers", "keywords_missing"):
+        assert generated not in schema["properties"]
+
+
+def _cascade_scorer(store: object | None = None, min_report: int = 50) -> FitScorer:
+    return FitScorer(
+        LLMConfig(enabled=True, backend="ollama"),
+        ProfileConfig(min_report_score=min_report),
+        CVLibrary({}),
+        store,  # type: ignore[arg-type]
+    )
+
+
+@respx.mock
+async def test_a_posting_below_the_gate_costs_one_call_not_two() -> None:
+    """The whole point: no second call for a role the digest will never print."""
+    schemas: list[object] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        schemas.append(sorted(body["format"]["properties"]))
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "content": __import__("json").dumps({**VERDICT_JSON, "fit_score": 20})
+                }
+            },
+        )
+
+    respx.post("http://localhost:11434/api/chat").mock(side_effect=capture)
+    scored = await _cascade_scorer().score_all([_job()])
+
+    assert len(schemas) == 1, "a below-threshold posting must not be asked twice"
+    assert schemas[0] == ["confidence", "cv_variant", "fit_score", "verdict"]
+    assert scored[0].fit is not None
+    assert scored[0].fit.fit_score == 20
+    assert scored[0].fit.reason == TRIAGE_REASON
+
+
+@respx.mock
+async def test_a_posting_above_the_gate_gets_its_full_verdict() -> None:
+    schemas: list[list[str]] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        schemas.append(sorted(body["format"]["properties"]))
+        return httpx.Response(
+            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
+        )
+
+    respx.post("http://localhost:11434/api/chat").mock(side_effect=capture)
+    scored = await _cascade_scorer().score_all([_job()])
+
+    assert len(schemas) == 2, "triage, then the full verdict"
+    assert "reason" in schemas[1]
+    assert scored[0].fit is not None
+    assert scored[0].fit.reason != TRIAGE_REASON
+
+
+@respx.mock
+async def test_cascade_is_skipped_when_triage_is_not_actually_cheaper() -> None:
+    """A backend whose triage IS the full call must not be made to pay twice.
+
+    `Judge.triage` defaults to `verdict`, so cascading against a hosted backend
+    would double the bill and buy nothing. `cheap_triage` is what stops it.
+    """
+    calls = 0
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
+        )
+
+    respx.post("http://localhost:11434/api/chat").mock(side_effect=capture)
+    scorer = _cascade_scorer()
+    monkey = scorer._get_judge()
+    type(monkey).cheap_triage = False  # type: ignore[misc]
+    try:
+        await scorer.score_all([_job()])
+    finally:
+        type(monkey).cheap_triage = True  # type: ignore[misc]
+    assert calls == 1
+
+
+@respx.mock
+async def test_a_cached_triage_stub_is_refetched_once_the_gate_drops() -> None:
+    """Lowering min_report_score brings stubs into scope, and a stub has no reason.
+
+    Without this the digest prints a role whose justification is a sentinel
+    string - which reads as a broken tool rather than a stale cache.
+    """
+    stub = FitVerdict(
+        fit_score=60,
+        verdict="consider",
+        confidence="low",
+        cv_variant=VERDICT_JSON["cv_variant"],
+        reason=TRIAGE_REASON,
+    )
+
+    class _Store:
+        def __init__(self) -> None:
+            self.written: list[FitVerdict] = []
+
+        async def get_verdict(self, content_hash: str, days: int) -> FitVerdict:
+            return stub
+
+        async def put_verdict(self, content_hash: str, verdict: FitVerdict) -> None:
+            self.written.append(verdict)
+
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
+        )
+    )
+
+    # gate above the stub's score: still out of scope, cache stands
+    store = _Store()
+    scored = await _cascade_scorer(store, min_report=70).score_all([_job()])
+    assert scored[0].llm_cached is True
+    assert store.written == []
+
+    # gate below it: the stub now qualifies, so its detail must be fetched
+    store = _Store()
+    scored = await _cascade_scorer(store, min_report=50).score_all([_job()])
+    assert scored[0].llm_cached is False
+    assert scored[0].fit is not None
+    assert scored[0].fit.reason != TRIAGE_REASON

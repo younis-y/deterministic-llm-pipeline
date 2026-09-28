@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, ScoredJob
 from rolescan.scoring.cv import CVLibrary
-from rolescan.scoring.judges import Judge, get_judge
+from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
 
 if TYPE_CHECKING:
     from rolescan.store import Store
@@ -197,7 +197,7 @@ class FitScorer:
 
         if self.store is not None:
             cached = await self.store.get_verdict(job.content_hash, self.cfg.cache_days)
-            if cached is not None:
+            if cached is not None and not self._stale_triage(cached):
                 return scored.model_copy(update={"fit": cached, "llm_cached": True})
 
         async with self._sem:
@@ -225,4 +225,23 @@ class FitScorer:
                 or "(no description provided by the source)"
             ),
         )
-        return await self._get_judge().verdict(self._system(), user)
+        judge = self._get_judge()
+        system = self._system()
+        if self.cfg.cascade and judge.cheap_triage:
+            first = await judge.triage(system, user)
+            if first.fit_score < self.profile.min_report_score:
+                return first
+        return await judge.verdict(system, user)
+
+    def _stale_triage(self, verdict: FitVerdict) -> bool:
+        """Whether a cached triage stub has been brought into scope.
+
+        A stub is only ever valid while it still scores below the gate. Lower
+        `min_report_score` between runs and the stubs that now clear it have no
+        reason, no tailoring and no blockers - so the digest would print a role
+        with an empty justification and look broken. Cheaper to re-ask.
+        """
+        return (
+            verdict.reason == TRIAGE_REASON
+            and verdict.fit_score >= self.profile.min_report_score
+        )

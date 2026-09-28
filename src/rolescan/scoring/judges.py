@@ -19,12 +19,14 @@ ship one from another package under the `rolescan.judges` entry-point group.
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 from abc import ABC, abstractmethod
 from importlib.metadata import entry_points
 from typing import Any, ClassVar
 
 import httpx
+from pydantic import ValidationError
 
 from rolescan.config import LLMConfig
 from rolescan.models import FitVerdict
@@ -70,9 +72,28 @@ class Judge(ABC):
     def __init__(self, cfg: LLMConfig) -> None:
         self.cfg = cfg
 
+    #: True when `triage` is genuinely cheaper than `verdict`. False by
+    #: default, and FitScorer will not run the cascade against a backend that
+    #: leaves it False - the default `triage` is a full call, so cascading on
+    #: one would buy nothing and bill twice.
+    cheap_triage: ClassVar[bool] = False
+
     @abstractmethod
     async def verdict(self, system: str, user: str) -> FitVerdict:
         """One posting, one judgement. Raise on failure; FitScorer counts it."""
+
+    async def triage(self, system: str, user: str) -> FitVerdict:
+        """A first pass that only has to be right about the score.
+
+        The digest prints `reason`, `tailoring` and `blockers` only for roles
+        that clear `min_report_score`; everything below it pays to generate
+        prose no one reads. Generating that prose is ~85% of a local call.
+
+        The default is the full call, which is correct and no cheaper - hence
+        `cheap_triage`. A backend that can constrain output to a subset of the
+        schema overrides both.
+        """
+        return await self.verdict(system, user)
 
     async def preflight(self) -> str:
         """Why this backend cannot be reached right now, or "" if it can.
@@ -240,6 +261,31 @@ class AnthropicJudge(Judge):
         return parsed
 
 
+#: Marks a verdict produced by the triage pass, which was never asked for a
+#: reason. It is a sentinel, not prose for a reader: FitScorer matches on it to
+#: spot a cached stub that a lowered threshold has brought into scope.
+TRIAGE_REASON = "(triage pass: below the reporting threshold, no detail requested)"
+
+#: Everything needed to build a valid FitVerdict and decide the gate, minus the
+#: three generated fields. `confidence` and `cv_variant` are enums costing a
+#: handful of tokens and carrying real information, so they are asked for
+#: rather than invented.
+_TRIAGE_FIELDS = ("fit_score", "verdict", "confidence", "cv_variant")
+
+
+def triage_schema() -> dict[str, Any]:
+    """FitVerdict's schema cut down to the fields the gate needs."""
+    full = FitVerdict.model_json_schema()
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {name: full["properties"][name] for name in _TRIAGE_FIELDS},
+        "required": list(_TRIAGE_FIELDS),
+    }
+    if "$defs" in full:
+        schema["$defs"] = full["$defs"]
+    return schema
+
+
 @register
 class OllamaJudge(Judge):
     """A model running locally under Ollama. No key, no network egress, no bill.
@@ -272,12 +318,19 @@ class OllamaJudge(Judge):
         "server: 72% verdict accuracy over 25 postings, 50% blocker recall."
     )
 
-    async def verdict(self, system: str, user: str) -> FitVerdict:
+    cheap_triage = True
+
+    async def _chat(self, system: str, user: str, schema: dict[str, Any]) -> str:
+        """One /api/chat round trip under `schema`, returning the raw content.
+
+        Shared by `verdict` and `triage` so the two passes cannot drift apart
+        in how they talk to the server - only in what they ask it for.
+        """
         url = f"{self.cfg.base_url.rstrip('/')}/api/chat"
         payload = {
             "model": self.cfg.model,
             "stream": False,
-            "format": FitVerdict.model_json_schema(),
+            "format": schema,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -316,17 +369,57 @@ class OllamaJudge(Judge):
         # {"message": "hello"} is JSON, is a dict, and raises AttributeError
         # on .get - which is exactly the raw exception in the digest that
         # guarding the outer layer exists to prevent. Anything that is not a
-        # string falls through to the empty content below, where
-        # model_validate_json turns it into the message a reader can act on.
+        # string falls through to the empty content below, where the caller
+        # turns it into the message a reader can act on.
         message = body.get("message") if isinstance(body, dict) else None
         raw = message.get("content") if isinstance(message, dict) else None
-        content = raw if isinstance(raw, str) else ""
+        return raw if isinstance(raw, str) else ""
+
+    async def verdict(self, system: str, user: str) -> FitVerdict:
+        content = await self._chat(system, user, FitVerdict.model_json_schema())
         try:
             return FitVerdict.model_validate_json(content)
         except ValueError as e:
             # Schema-constrained sampling should make this unreachable, but a
             # small model on an old Ollama can still return prose.
             msg = f"ollama did not return a usable verdict: {e}"
+            raise RuntimeError(msg) from e
+
+    async def triage(self, system: str, user: str) -> FitVerdict:
+        """Score and route without paying for prose the digest will not print.
+
+        Measured on 25 real postings: 18 decode tokens against 137, and 1.38s
+        against 7.45s. The obvious worry is that `reason` acts as reasoning
+        scaffolding, so that removing it moves the score and the gate routes on
+        a different number than it reports. Tested over two independent
+        25-posting slices, one long-description and one short: identical score
+        AND verdict in all 50 cases, and no posting crossed the threshold.
+        """
+        content = await self._chat(system, user, triage_schema())
+        try:
+            fields = json.loads(content)
+        except ValueError as e:
+            msg = f"ollama did not return a usable triage verdict: {e}"
+            raise RuntimeError(msg) from e
+        if not isinstance(fields, dict):
+            msg = (
+                "ollama returned a triage body that was not an object: "
+                f"{content[:120]}"
+            )
+            raise RuntimeError(msg)
+        # Named explicitly rather than splatted: a server that answers with the
+        # full schema (or any extra key) would otherwise pass `reason` twice
+        # and raise TypeError from a call that actually succeeded.
+        try:
+            return FitVerdict(
+                fit_score=fields["fit_score"],
+                verdict=fields["verdict"],
+                confidence=fields["confidence"],
+                cv_variant=fields["cv_variant"],
+                reason=TRIAGE_REASON,
+            )
+        except (KeyError, TypeError, ValidationError) as e:
+            msg = f"ollama did not return a usable triage verdict: {e}"
             raise RuntimeError(msg) from e
 
     async def preflight(self) -> str:
