@@ -550,3 +550,54 @@ def test_agencies_cost_nothing_until_a_penalty_is_configured() -> None:
     """The default is off, so core stays neutral about who posts a role."""
     profile = ProfileConfig(keywords={"data engineer": 12}, agencies=["Harnham"])
     assert score_keywords(_at("Harnham"), profile).keyword_penalties == []
+
+
+def _somewhere(location: str, description: str = "Build ETL pipelines.") -> Job:
+    return Job(
+        source="linkedin",
+        company="Acme",
+        title="Data Engineer",
+        location=location,
+        url=f"https://example.com/{location}",
+        description=description,
+        posted=None,
+        remote=False,
+    )
+
+
+def test_an_excluded_location_is_a_hard_bar() -> None:
+    profile = ProfileConfig(
+        keywords={"data engineer": 12}, excluded_locations=["United States"]
+    )
+    blocked = score_keywords(_somewhere("New York, NY, United States"), profile)
+    assert blocked.blocker_hits == ["location: United States"]
+    assert blocked.verdict == Verdict.BLOCKED
+
+
+def test_a_location_bar_never_reads_the_description() -> None:
+    """The measurement that decided this.
+
+    Putting "united states" in `blockers`, which match the whole posting,
+    would have deleted 133 real London and Dubai roles whose descriptions
+    merely mention a US parent, and blocked zero actually-US ones. A global
+    employer names its headquarters in every advert it writes.
+    """
+    profile = ProfileConfig(
+        keywords={"data engineer": 12}, excluded_locations=["United States"]
+    )
+    london = _somewhere(
+        "London, England, United Kingdom",
+        "Join our team. Our headquarters are in the United States.",
+    )
+    assert score_keywords(london, profile).blocker_hits == []
+
+
+def test_a_location_bar_matches_whole_words_only() -> None:
+    profile = ProfileConfig(keywords={"data engineer": 12}, excluded_locations=["US"])
+    assert score_keywords(_somewhere("Houston, US"), profile).blocker_hits
+    assert score_keywords(_somewhere("Ustaritz, France"), profile).blocker_hits == []
+
+
+def test_no_excluded_locations_bars_nothing() -> None:
+    profile = ProfileConfig(keywords={"data engineer": 12})
+    assert score_keywords(_somewhere("New York, NY"), profile).blocker_hits == []

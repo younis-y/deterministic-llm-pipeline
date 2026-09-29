@@ -88,6 +88,16 @@ class ProfileConfig(BaseModel):
     min_keyword_score: Annotated[int, Field(ge=0)] = 18
     """Prefilter gate. Postings below this never reach the LLM, which is the
     single biggest lever on cost."""
+    excluded_locations: list[str] = Field(default_factory=list)
+    """Places the candidate cannot or will not work, matched against the
+    posting's LOCATION and nothing else.
+
+    A hard bar, so a match hides the role the way a clearance requirement does.
+    Location-only on measured grounds: putting "united states" in `blockers`,
+    which match the whole posting, would have deleted 133 real London and Dubai
+    roles whose descriptions merely mention a US parent or office, and blocked
+    zero actually-US ones. A global employer names its headquarters in every
+    advert it writes."""
     agencies: list[str] = Field(default_factory=list)
     """Company names that post roles they are not themselves hiring for:
     recruiters, staffing firms, job boards. Matched against the COMPANY name

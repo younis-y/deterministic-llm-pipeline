@@ -53,6 +53,11 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
     # Both fields are normalised at load and matched identically, so the two
     # can never disagree about whether a term is present.
     blockers = [t for t in profile.hard_blockers if _term_hit(t, blob)]
+    blockers += [
+        f"location: {t}"
+        for t in profile.excluded_locations
+        if _agency_hit(job.location, [t])
+    ]
 
     if profile.agency_penalty and _agency_hit(job.company, profile.agencies):
         total -= profile.agency_penalty
