@@ -196,8 +196,19 @@ class Store:
     # -- verdict cache ------------------------------------------------------
 
     async def get_verdict(
-        self, content_hash: str, max_age_days: int
+        self,
+        content_hash: str,
+        max_age_days: int,
+        model: type[FitVerdict] = FitVerdict,
     ) -> FitVerdict | None:
+        """The cached judgement for this posting, or None.
+
+        `model` is how a caller reads back its OWN verdict shape. FitVerdict
+        forbids extra keys, so a subclass carrying private fields writes a
+        payload the base model refuses - and refusing it here silently deletes
+        the row and re-scores, which costs a whole cache for a schema that was
+        never wrong. A caller that stored a subclass passes it back.
+        """
         cur = await self.db.execute(
             "SELECT payload, created FROM verdicts WHERE content_hash=?",
             (content_hash,),
@@ -213,7 +224,7 @@ class Store:
             if datetime.now(UTC) - created > timedelta(days=max_age_days):
                 return None
         try:
-            return FitVerdict.model_validate_json(row[0])
+            return model.model_validate_json(row[0])
         except ValidationError:
             # A schema change invalidates old rows. Drop and re-score rather
             # than crashing on a cache the current code cannot read.

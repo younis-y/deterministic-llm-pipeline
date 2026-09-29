@@ -722,7 +722,9 @@ async def test_a_cached_triage_stub_is_refetched_once_the_gate_drops() -> None:
         def __init__(self) -> None:
             self.written: list[FitVerdict] = []
 
-        async def get_verdict(self, content_hash: str, days: int) -> FitVerdict:
+        async def get_verdict(
+            self, content_hash: str, days: int, model: object = None
+        ) -> FitVerdict:
             return stub
 
         async def put_verdict(self, content_hash: str, verdict: FitVerdict) -> None:

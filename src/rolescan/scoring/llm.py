@@ -116,6 +116,10 @@ class FitScorer:
         #: supplies it here rather than teaching the public prompt its
         #: vocabulary. Empty by default, and an empty extra changes nothing.
         self.extra_prompt = extra_prompt
+        #: The model the cache is read back with. A judge returning a subclass
+        #: writes a payload FitVerdict refuses, and refusing it deletes the row
+        #: and re-scores - a whole cache lost to a schema that was never wrong.
+        self.verdict_model: type[FitVerdict] = FitVerdict
         self._sem = asyncio.Semaphore(cfg.max_concurrent)
         self._calls = 0
         self._errors = 0
@@ -188,7 +192,9 @@ class FitScorer:
         job = scored.job
 
         if self.store is not None:
-            cached = await self.store.get_verdict(job.content_hash, self.cfg.cache_days)
+            cached = await self.store.get_verdict(
+                job.content_hash, self.cfg.cache_days, self.verdict_model
+            )
             if cached is not None and not self._stale_triage(cached):
                 return scored.model_copy(update={"fit": cached, "llm_cached": True})
 
