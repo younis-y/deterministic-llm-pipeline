@@ -59,10 +59,6 @@ class ProfileConfig(BaseModel):
         default="",
         description="Free text handed to the LLM as the candidate background.",
     )
-    cv_dir: Path | None = Field(
-        default=None,
-        description="Directory of CV variant files, used for tailoring advice.",
-    )
     locations: list[str] = Field(default_factory=list)
     allow_remote: bool = True
     keywords: dict[str, int] = Field(default_factory=dict)
@@ -226,10 +222,18 @@ class LLMConfig(BaseModel):
     cascade: bool = True
     """Score in two passes: a cheap one that only settles the score, then the
     full verdict only for postings that clear `min_report_score`. The digest
-    never prints reason, tailoring or blockers for anything below that line,
+    never prints reason or blockers for anything below that line,
     and generating them is ~85% of a local call. Measured at roughly half the
     scoring time on a real 531-posting run. Ignored by backends whose triage
     is not actually cheaper - see `Judge.cheap_triage`."""
+    extra_prompt: str = ""
+    """Appended to the system prompt verbatim, for context this library has no
+    business knowing about.
+
+    The seam exists so a private caller can add its own vocabulary - a set of
+    documents to choose between, a house style, a client's constraints -
+    without teaching the public prompt what any of it means. Empty by default,
+    and an empty value changes the prompt not at all."""
     temperature: Annotated[float, Field(ge=0.0, le=2.0)] = 0.0
     """Sampling temperature. Zero by default: this is a classification task
     with a fixed rubric, and every benchmark this project has run measured

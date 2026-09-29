@@ -7,7 +7,6 @@ import pytest
 import rolescan.store as store_module
 from rolescan.models import (
     Confidence,
-    CVVariant,
     FitVerdict,
     Job,
     ScoredJob,
@@ -20,8 +19,6 @@ VERDICT = FitVerdict(
     verdict=Verdict.APPLY,
     confidence=Confidence.HIGH,
     reason="Strong overlap with the day-ahead forecasting project.",
-    cv_variant=CVVariant.ENERGY,
-    tailoring=["Lead with the LP battery dispatch result."],
 )
 
 
@@ -62,8 +59,6 @@ async def test_verdict_cache_roundtrip(tmp_path: Path, energy_job: Job) -> None:
         got = await store.get_verdict(energy_job.content_hash, 30)
         assert got is not None
         assert got.fit_score == 88
-        assert got.cv_variant is CVVariant.ENERGY
-        assert got.tailoring == VERDICT.tailoring
 
 
 async def test_edited_posting_misses_the_cache(tmp_path: Path, energy_job: Job) -> None:

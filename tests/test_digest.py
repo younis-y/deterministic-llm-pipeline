@@ -15,7 +15,6 @@ from pathlib import Path
 from rolescan.digest import render_html, render_markdown
 from rolescan.models import (
     Confidence,
-    CVVariant,
     FitVerdict,
     Job,
     ScoredJob,
@@ -60,8 +59,6 @@ def _fit(**kw: object) -> FitVerdict:
         "verdict": Verdict.APPLY,
         "confidence": Confidence.HIGH,
         "reason": "Strong analytics overlap.",
-        "cv_variant": CVVariant.DATA_SCIENCE,
-        "tailoring": ["Lead with the forecasting project."],
         "blockers": [],
         "keywords_missing": [],
     }
@@ -88,7 +85,6 @@ def test_a_blocked_role_names_the_configured_term_the_llm_missed() -> None:
     assert "`BLOCKED`" in text
     assert "**Blocked by:** uae national" in text
     assert "**Send:**" not in text, "no CV advice for a role you cannot be given"
-    assert "**Tailor it:**" not in text
 
 
 def test_a_blocked_role_shows_a_reason_on_the_keyword_only_path() -> None:
@@ -323,7 +319,6 @@ def test_a_blocked_role_is_not_invited_to_apply_in_html() -> None:
     assert ">Apply<" not in html, "no invitation to a role you cannot be given"
     assert ">View posting<" in html, "the posting is still reachable"
     assert "Send:" not in html
-    assert "Tailor it" not in html
 
 
 def test_the_keyword_only_path_renders_in_html() -> None:
@@ -342,15 +337,6 @@ def test_the_keyword_only_path_renders_in_html() -> None:
     assert "energy, python" in html
     assert "principal" in html
     assert ">44<" in html
-
-
-def test_the_tailoring_advice_renders_but_subordinate() -> None:
-    html = render_html(_one())
-    assert "CV_DataScience-Gulf" in html
-    assert "Lead with the forecasting project." in html
-    assert html.index("Strong analytics overlap.") < html.index("Tailor it"), (
-        "the reason comes before the tailoring the reader may never open"
-    )
 
 
 def test_html_keeps_the_stats_line_and_the_hidden_blocked_count() -> None:

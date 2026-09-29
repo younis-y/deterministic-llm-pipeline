@@ -91,18 +91,11 @@ def _role(item: ScoredJob) -> list[str]:
         if blocked_by:
             lines.append("**Blocked by:** " + "; ".join(blocked_by))
             lines.append("")
-        # No CV advice for a role you cannot be considered for. Suggesting one
-        # reads as an invitation to waste an afternoon on it.
-        if not item.is_blocked:
-            lines.append(f"**Send:** {fit.cv_variant.value}")
+        # No gap advice for a role you cannot be considered for: it reads as
+        # an invitation to waste an afternoon on it.
+        if not item.is_blocked and fit.keywords_missing:
+            lines.append("**Gaps:** " + ", ".join(fit.keywords_missing))
             lines.append("")
-            if fit.tailoring:
-                lines.append("**Tailor it:**")
-                lines.extend(f"- {t}" for t in fit.tailoring)
-                lines.append("")
-            if fit.keywords_missing:
-                lines.append("**Gaps:** " + ", ".join(fit.keywords_missing))
-                lines.append("")
     else:
         # Same rule as the LLM branch, for the keyword-only path: a BLOCKED
         # badge must never appear without the term that caused it. A hard
@@ -582,13 +575,7 @@ def _fit_html(item: ScoredJob, fit: FitVerdict) -> list[str]:
         out.append(_tags_html("Blocked by", blocked_by, sep="; "))
     if item.is_blocked:
         return out
-    sub = [f'<div style="{_SUB_LINE}">Send: {_code(fit.cv_variant.value)}</div>']
-    if fit.tailoring:
-        bullets = "".join(f'<li style="{_LI}">{_esc(t)}</li>' for t in fit.tailoring)
-        sub.append(
-            f'<div style="{_SUB_LABEL}">Tailor it</div>'
-            f'<ul style="{_UL}">{bullets}</ul>'
-        )
+    sub: list[str] = []
     if fit.keywords_missing:
         sub.append(
             f'<div style="{_SUB_LINE}">Gaps: '
@@ -620,7 +607,7 @@ def _apply_html(item: ScoredJob) -> str:
             f"not http(s). {_esc(item.job.url)}</div>"
         )
     # A blocked role is listed so the reader knows the market moved, not as an
-    # option - the same reason the tailoring advice above is withheld for one.
+    # option - the same reason CV advice was withheld for one.
     # A button saying "Apply" invites exactly the wasted afternoon the block
     # exists to prevent, so the link stays and the invitation does not.
     label = "View posting" if item.is_blocked else "Apply"

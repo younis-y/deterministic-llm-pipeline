@@ -23,7 +23,6 @@ from rolescan.config import Config, SourceEntry
 from rolescan.http import Fetcher
 from rolescan.models import Job, ScoredJob
 from rolescan.scoring import (
-    CVLibrary,
     FitScorer,
     score_keywords,
     unusable_backend_reason,
@@ -272,10 +271,10 @@ def _prefilter(
 async def _judge(
     candidates: list[ScoredJob], cfg: Config, store: Store
 ) -> tuple[list[ScoredJob], FitScorer]:
-    """LLM fit score and CV match, cached on the posting's content hash."""
-    cv_dir = cfg.resolve(cfg.profile.cv_dir) if cfg.profile.cv_dir else None
-    cvs = CVLibrary.load(cv_dir)
-    scorer = FitScorer(cfg.llm, cfg.profile, cvs, store)
+    """LLM fit score, cached on the posting's content hash."""
+    scorer = FitScorer(
+        cfg.llm, cfg.profile, store, extra_prompt=cfg.llm.extra_prompt
+    )
     judged = await scorer.score_all(candidates)
     return judged, scorer
 

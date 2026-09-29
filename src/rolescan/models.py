@@ -16,7 +16,6 @@ from typing import Annotated, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
-    "CVVariant",
     "Confidence",
     "FitVerdict",
     "Job",
@@ -68,17 +67,6 @@ class Confidence(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
-
-
-class CVVariant(StrEnum):
-    """The tailored CV variants that exist in the user's project."""
-
-    AI_LLM = "CV_AI-LLM-Engineering"
-    QUANT = "CV_Quant-Trading"
-    DATA_SCIENCE = "CV_DataScience-Gulf"
-    ENERGY = "CV_EnergySystems-Modelling"
-    RESEARCH = "CV_Research-DeepLearning"
-    CONSULTING = "CV_Consulting-Analytics"
 
 
 class Job(BaseModel):
@@ -205,23 +193,6 @@ class FitVerdict(BaseModel):
             "and specific to this role, never a summary of the posting."
         ),
     )
-    cv_variant: CVVariant = Field(
-        description="Which of the candidate's CV variants to submit."
-    )
-    tailoring: list[str] = Field(
-        default_factory=list,
-        max_length=2,
-        description=(
-            "At most two specific edits to that CV for this role. Each names "
-            "what to change and why. Empty if the CV already fits as-is."
-        ),
-    )
-    """Capped at two rather than five on measured grounds: generating these is
-    pure decode, which is what a local run spends its time on, and dropping the
-    cap took 7.9% off a 25-posting benchmark. The notes that were being
-    generated did not justify the cost - before the prompt's exemplar was
-    removed, 12 of 25 were the example copied verbatim, and the ones that
-    replaced it are broadly phrased. One or two grounded notes beat five."""
     blockers: list[str] = Field(
         default_factory=list,
         max_length=5,

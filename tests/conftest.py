@@ -41,8 +41,6 @@ LLM_VERDICT = {
     "verdict": "consider",
     "confidence": "medium",
     "reason": "Strong power-market overlap, but the role wants five years.",
-    "cv_variant": "CV_EnergySystems-Modelling",
-    "tailoring": ["Lead with the day-ahead forecasting project."],
     "blockers": [],
     "keywords_missing": ["Kubernetes"],
 }

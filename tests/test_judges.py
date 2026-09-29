@@ -15,7 +15,7 @@ import respx
 from conftest import plain
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob
-from rolescan.scoring import CVLibrary, FitScorer
+from rolescan.scoring import FitScorer
 from rolescan.scoring.judges import (
     TRIAGE_REASON,
     available_judges,
@@ -29,8 +29,6 @@ VERDICT_JSON = {
     "verdict": "consider",
     "confidence": "medium",
     "reason": "Strong power-market overlap, but the role wants five years.",
-    "cv_variant": "CV_EnergySystems-Modelling",
-    "tailoring": ["Lead with the day-ahead forecasting project."],
     "blockers": [],
     "keywords_missing": ["Kubernetes"],
 }
@@ -176,7 +174,7 @@ async def test_fit_scorer_routes_through_the_configured_backend() -> None:
         )
     )
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
-    scorer = FitScorer(cfg, ProfileConfig(), CVLibrary({}), None)
+    scorer = FitScorer(cfg, ProfileConfig(), None)
     scored = await scorer.score_all([_job()])
     assert scored[0].fit is not None
     assert scored[0].fit.fit_score == 72
@@ -199,7 +197,7 @@ async def test_scorer_is_enabled_for_a_local_backend_with_no_key_anywhere(
     )
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
     assert cfg.api_key == "", "no key on this machine"
-    scorer = FitScorer(cfg, ProfileConfig(), CVLibrary({}), None)
+    scorer = FitScorer(cfg, ProfileConfig(), None)
     assert scorer.enabled is True, "a local backend needs no key"
     scored = await scorer.score_all([_job()])
     assert scored[0].fit is not None and scored[0].fit.fit_score == 72
@@ -618,7 +616,6 @@ def test_triage_asks_only_for_what_the_gate_needs() -> None:
         "fit_score",
         "verdict",
         "confidence",
-        "cv_variant",
     }
     # the three generated fields are the whole point of not asking
     for generated in ("reason", "tailoring", "blockers", "keywords_missing"):
@@ -629,7 +626,6 @@ def _cascade_scorer(store: object | None = None, min_report: int = 50) -> FitSco
     return FitScorer(
         LLMConfig(enabled=True, backend="ollama"),
         ProfileConfig(min_report_score=min_report),
-        CVLibrary({}),
         store,  # type: ignore[arg-type]
     )
 
@@ -655,7 +651,7 @@ async def test_a_posting_below_the_gate_costs_one_call_not_two() -> None:
     scored = await _cascade_scorer().score_all([_job()])
 
     assert len(schemas) == 1, "a below-threshold posting must not be asked twice"
-    assert schemas[0] == ["confidence", "cv_variant", "fit_score", "verdict"]
+    assert schemas[0] == ["confidence", "fit_score", "verdict"]
     assert scored[0].fit is not None
     assert scored[0].fit.fit_score == 20
     assert scored[0].fit.reason == TRIAGE_REASON
@@ -719,7 +715,6 @@ async def test_a_cached_triage_stub_is_refetched_once_the_gate_drops() -> None:
         fit_score=60,
         verdict="consider",
         confidence="low",
-        cv_variant=VERDICT_JSON["cv_variant"],
         reason=TRIAGE_REASON,
     )
 

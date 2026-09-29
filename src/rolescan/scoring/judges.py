@@ -85,7 +85,7 @@ class Judge(ABC):
     async def triage(self, system: str, user: str) -> FitVerdict:
         """A first pass that only has to be right about the score.
 
-        The digest prints `reason`, `tailoring` and `blockers` only for roles
+        The digest prints `reason` and `blockers` only for roles
         that clear `min_report_score`; everything below it pays to generate
         prose no one reads. Generating that prose is ~85% of a local call.
 
@@ -267,10 +267,9 @@ class AnthropicJudge(Judge):
 TRIAGE_REASON = "(triage pass: below the reporting threshold, no detail requested)"
 
 #: Everything needed to build a valid FitVerdict and decide the gate, minus the
-#: three generated fields. `confidence` and `cv_variant` are enums costing a
-#: handful of tokens and carrying real information, so they are asked for
-#: rather than invented.
-_TRIAGE_FIELDS = ("fit_score", "verdict", "confidence", "cv_variant")
+#: two generated fields. `confidence` is an enum costing a handful of tokens
+#: and carrying real information, so it is asked for rather than invented.
+_TRIAGE_FIELDS = ("fit_score", "verdict", "confidence")
 
 
 def triage_schema() -> dict[str, Any]:
@@ -415,7 +414,6 @@ class OllamaJudge(Judge):
                 fit_score=fields["fit_score"],
                 verdict=fields["verdict"],
                 confidence=fields["confidence"],
-                cv_variant=fields["cv_variant"],
                 reason=TRIAGE_REASON,
             )
         except (KeyError, TypeError, ValidationError) as e:

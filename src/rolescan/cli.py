@@ -18,7 +18,6 @@ from rolescan.digest import render_html, render_markdown, send_email, write_dige
 from rolescan.http import Fetcher
 from rolescan.models import Verdict
 from rolescan.pipeline import ScanResult, run_scan
-from rolescan.scoring import CVLibrary
 from rolescan.slugs import SlugIndex
 from rolescan.sources import available, get_source
 from rolescan.sources.base import ProbeResult, ProbeStatus
@@ -135,7 +134,6 @@ def _ranked_table(result: ScanResult) -> Table:
             str(item.score),
             f"[{_VERDICT_STYLE[item.verdict]}]{item.verdict.value}[/]",
             f"{item.job.title} — {item.job.company}",
-            item.fit.cv_variant.value if item.fit else "-",
         )
     return table
 
@@ -388,24 +386,6 @@ def sources() -> None:
     table.add_column("Slug format")
     for name, cls in sorted(available().items()):
         table.add_row(name, cls.__name__, cls.slug_hint or "-")
-    console.print(table)
-
-
-@app.command()
-def cvs(config: ConfigOpt = Path("config.yaml")) -> None:
-    """Show which CV variants were found and how they parse."""
-    cfg = _load(config)
-    directory = cfg.resolve(cfg.profile.cv_dir) if cfg.profile.cv_dir else None
-    library = CVLibrary.load(directory)
-    if not library:
-        console.print(f"[yellow]No CV variants found in {directory}[/]")
-        raise typer.Exit(1)
-    table = Table(title=f"CV variants in {directory}", show_edge=False)
-    table.add_column("Variant")
-    table.add_column("Chars", justify="right")
-    table.add_column("Opens with")
-    for variant, text in library.variants.items():
-        table.add_row(variant.value, str(len(text)), text[:70].replace("\n", " "))
     console.print(table)
 
 

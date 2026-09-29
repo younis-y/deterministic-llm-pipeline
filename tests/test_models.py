@@ -8,7 +8,6 @@ from pydantic import ValidationError
 
 from rolescan.models import (
     Confidence,
-    CVVariant,
     FitVerdict,
     Job,
     ScoredJob,
@@ -97,7 +96,6 @@ def _verdict(**kw: object) -> FitVerdict:
         "verdict": Verdict.APPLY,
         "confidence": Confidence.HIGH,
         "reason": "Good match.",
-        "cv_variant": CVVariant.ENERGY,
     }
     return FitVerdict.model_validate(base | kw)
 
@@ -188,20 +186,6 @@ def test_location_mismatch_never_blocks_even_with_a_high_llm_score(
     )
     assert without_llm.verdict is Verdict.CONSIDER
     assert not without_llm.is_blocked
-
-
-def test_cv_variants_match_the_files_that_exist() -> None:
-    assert {v.value for v in CVVariant} == {
-        "CV_AI-LLM-Engineering",
-        "CV_Quant-Trading",
-        "CV_DataScience-Gulf",
-        "CV_EnergySystems-Modelling",
-        "CV_Research-DeepLearning",
-        "CV_Consulting-Analytics",
-    }
-
-
-# --- reason is one sentence, and an old cached one still loads -------------
 
 
 def _long_reason(n: int) -> str:

@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from rolescan.config import ProfileConfig
-from rolescan.models import CVVariant, Job, Verdict
-from rolescan.scoring import score_keywords
-from rolescan.scoring.cv import CVLibrary, strip_latex
+from rolescan.config import LLMConfig, ProfileConfig
+from rolescan.models import Job, Verdict
+from rolescan.scoring import FitScorer, score_keywords
 from rolescan.scoring.keyword import TITLE_MULTIPLIER
 
 TEX = r"""
@@ -417,187 +415,30 @@ def test_a_hard_blocker_absent_from_blockers_is_allowed() -> None:
     assert profile.hard_blockers == ["uae national"]
 
 
-# --- CV library ------------------------------------------------------------
+def test_extra_prompt_is_appended_verbatim_and_empty_by_default() -> None:
+    """The seam for context this library has no business knowing about.
 
-
-def test_strip_latex_keeps_words_drops_markup() -> None:
-    out = strip_latex(TEX)
-    assert "Ada Lovelace" in out
-    assert "Built production Python pipelines" in out
-    assert "comment that must not survive" not in out
-    assert "\\documentclass" not in out
-    assert "\\begin" not in out
-    assert "{" not in out and "}" not in out
-    assert "charter" not in out, "preamble should be dropped"
-
-
-def test_cv_library_loads_variants(tmp_path: Path) -> None:
-    (tmp_path / "CV_EnergySystems-Modelling.tex").write_text(TEX)
-    (tmp_path / "CV_Quant-Trading.md").write_text("# Quant CV\nVECM, futures.")
-    library = CVLibrary.load(tmp_path)
-    assert len(library) == 2
-    assert CVVariant.ENERGY in library.variants
-    assert "VECM" in library.variants[CVVariant.QUANT]
-    block = library.prompt_block()
-    assert '<cv name="CV_EnergySystems-Modelling">' in block
-
-
-def test_missing_cv_dir_degrades_gracefully(tmp_path: Path) -> None:
-    library = CVLibrary.load(tmp_path / "nope")
-    assert not library
-    assert "not available" in library.prompt_block()
-    assert CVVariant.ENERGY.value in library.prompt_block()
-
-
-def test_cv_library_handles_none() -> None:
-    assert not CVLibrary.load(None)
-
-
-# --- CV filenames do not always match the enum spelling --------------------
-
-
-def test_cv_variant_matches_a_punctuated_filename(tmp_path: Path) -> None:
-    """The enum value may differ in punctuation from the filename; folding
-    normalizes both. cv_ai_llm_engineering.tex matches CV_AI-LLM-Engineering."""
-    d = tmp_path / "cvs"
-    d.mkdir()
-    (d / "cv_ai_llm_engineering.tex").write_text(
-        "\\begin{document}Machine learning and AI CV\\end{document}", encoding="utf-8"
-    )
-    (d / "CV_Energy_Systems_Modelling.tex").write_text(
-        "\\begin{document}Energy markets CV\\end{document}", encoding="utf-8"
-    )
-    library = CVLibrary.load(d)
-    assert CVVariant.AI_LLM in library.variants, "cv_ai_llm_engineering.tex must map to CV_AI-LLM-Engineering"
-    assert CVVariant.ENERGY in library.variants
-    assert len(library) == 2
-
-
-def test_cv_loading_is_case_and_separator_insensitive(tmp_path: Path) -> None:
-    d = tmp_path / "cvs"
-    d.mkdir()
-    (d / "cv_data_science_gulf.tex").write_text(
-        "\\begin{document}Data\\end{document}", encoding="utf-8"
-    )
-    assert CVVariant.DATA_SCIENCE in CVLibrary.load(d).variants
-
-
-# --- agency listings ------------------------------------------------------
-
-
-def _at(company: str) -> Job:
-    return Job(
-        source="adzuna:gb",
-        company=company,
-        title="Data Engineer",
-        location="London",
-        url=f"https://example.com/{company}",
-        description="Build ETL pipelines in Python and SQL.",
-        posted=None,
-        remote=False,
-    )
-
-
-def test_an_agency_listing_is_down_ranked_not_removed() -> None:
-    """A penalty, not a bar: plenty of good work is found through an agency,
-    and the same role is often posted by both the employer and its recruiter."""
-    profile = ProfileConfig(
-        keywords={"data engineer": 12},
-        agencies=["Harnham"],
-        agency_penalty=20,
-    )
-    direct = score_keywords(_at("Vitol"), profile)
-    agency = score_keywords(_at("Harnham"), profile)
-
-    assert agency.keyword_score == direct.keyword_score - 20
-    assert agency.keyword_score > 0, "down-ranked, still visible"
-    assert "posted by an agency" in agency.keyword_penalties
-    assert agency.blocker_hits == [], "never a hard bar"
-
-
-def test_an_agency_matches_as_a_whole_word_run_inside_a_longer_name() -> None:
-    """Posted names carry suffixes: 'Understanding Recruitment NFP',
-    'Owen Thomas | B Corp(tm)'."""
-    profile = ProfileConfig(
-        keywords={"data engineer": 12},
-        agencies=["Understanding Recruitment", "Owen Thomas"],
-        agency_penalty=20,
-    )
-    for posted in ("Understanding Recruitment NFP", "Owen Thomas | B Corp(tm)"):
-        assert "posted by an agency" in score_keywords(_at(posted), profile).keyword_penalties
-
-
-def test_an_agency_named_only_in_the_description_does_not_count() -> None:
-    """Company only. An employer explaining it does not use recruiters must
-    not be penalised for naming one."""
-    profile = ProfileConfig(
-        keywords={"data engineer": 12}, agencies=["Harnham"], agency_penalty=20
-    )
-    job = _at("Vitol").model_copy(
-        update={"description": "We hire directly and do not work with Harnham."}
-    )
-    assert score_keywords(job, profile).keyword_penalties == []
-
-
-def test_a_substring_that_is_not_a_whole_word_run_does_not_match() -> None:
-    profile = ProfileConfig(
-        keywords={"data engineer": 12}, agencies=["Data Idols"], agency_penalty=20
-    )
-    assert score_keywords(_at("Data Idolsmith"), profile).keyword_penalties == []
-
-
-def test_agencies_cost_nothing_until_a_penalty_is_configured() -> None:
-    """The default is off, so core stays neutral about who posts a role."""
-    profile = ProfileConfig(keywords={"data engineer": 12}, agencies=["Harnham"])
-    assert score_keywords(_at("Harnham"), profile).keyword_penalties == []
-
-
-def _somewhere(location: str, description: str = "Build ETL pipelines.") -> Job:
-    return Job(
-        source="linkedin",
-        company="Acme",
-        title="Data Engineer",
-        location=location,
-        url=f"https://example.com/{location}",
-        description=description,
-        posted=None,
-        remote=False,
-    )
-
-
-def test_an_excluded_location_is_a_hard_bar() -> None:
-    profile = ProfileConfig(
-        keywords={"data engineer": 12}, excluded_locations=["United States"]
-    )
-    blocked = score_keywords(_somewhere("New York, NY, United States"), profile)
-    assert blocked.blocker_hits == ["location: United States"]
-    assert blocked.verdict == Verdict.BLOCKED
-
-
-def test_a_location_bar_never_reads_the_description() -> None:
-    """The measurement that decided this.
-
-    Putting "united states" in `blockers`, which match the whole posting,
-    would have deleted 133 real London and Dubai roles whose descriptions
-    merely mention a US parent, and blocked zero actually-US ones. A global
-    employer names its headquarters in every advert it writes.
+    A private caller adds its own vocabulary - documents to choose between, a
+    house style - without the public prompt learning what any of it means.
     """
-    profile = ProfileConfig(
-        keywords={"data engineer": 12}, excluded_locations=["United States"]
+    plain = FitScorer(LLMConfig(), ProfileConfig(summary="A candidate."))
+    assert "{extra}" not in plain._system()
+
+    private = FitScorer(
+        LLMConfig(),
+        ProfileConfig(summary="A candidate."),
+        extra_prompt="Pick one of: alpha, beta.",
     )
-    london = _somewhere(
-        "London, England, United Kingdom",
-        "Join our team. Our headquarters are in the United States.",
-    )
-    assert score_keywords(london, profile).blocker_hits == []
+    assert "Pick one of: alpha, beta." in private._system()
+    assert len(private._system()) > len(plain._system())
 
 
-def test_a_location_bar_matches_whole_words_only() -> None:
-    profile = ProfileConfig(keywords={"data engineer": 12}, excluded_locations=["US"])
-    assert score_keywords(_somewhere("Houston, US"), profile).blocker_hits
-    assert score_keywords(_somewhere("Ustaritz, France"), profile).blocker_hits == []
+def test_the_public_prompt_names_no_documents() -> None:
+    """The judgement is score, verdict, confidence, one sentence and the bars.
+    Which CV to send and what to change in it is private, and this asserts the
+    public half stays that way."""
+    from rolescan.scoring.llm import SYSTEM
 
-
-def test_no_excluded_locations_bars_nothing() -> None:
-    profile = ProfileConfig(keywords={"data engineer": 12})
-    assert score_keywords(_somewhere("New York, NY"), profile).blocker_hits == []
+    lowered = SYSTEM.lower()
+    for word in ("cv", "resume", "tailor", "variant"):
+        assert word not in lowered, f"{word!r} leaked back into the public prompt"

@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, ScoredJob
-from rolescan.scoring.cv import CVLibrary
 from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
 
 if TYPE_CHECKING:
@@ -52,11 +51,7 @@ not encouraging. A generous score wastes their week.
 <candidate>
 {summary}
 </candidate>
-
-Their tailored CV variants:
-
-{cvs}
-
+{extra}
 Scoring guidance:
 - 85-100: strong match, apply today. Verdict: apply.
 - 65-84: worth applying, some gaps. Verdict: apply or consider.
@@ -84,15 +79,7 @@ should also get a low fit_score. Being underqualified or overqualified is \
 
 Write "reason" as ONE sentence under 220 characters: the single fact that \
 decides this match, not a summary of the posting. Twelve of these are read on \
-a phone before work, so a second sentence costs more than it adds.
-
-For tailoring, name concrete edits to the chosen CV: which bullet to change, \
-what to change it to, and the words in THIS posting that motivate the change. \
-"Tailor your CV" is useless. Every tailoring note must name something that \
-appears in the posting in front of you. If nothing in the posting justifies a \
-specific edit, return no tailoring notes at all - an empty list is correct and \
-useful, a generic note is neither.
-"""
+a phone before work, so a second sentence costs more than it adds."""
 
 USER = """\
 <posting>
@@ -117,13 +104,18 @@ class FitScorer:
         self,
         cfg: LLMConfig,
         profile: ProfileConfig,
-        cvs: CVLibrary,
         store: Store | None = None,
+        *,
+        extra_prompt: str = "",
     ) -> None:
         self.cfg = cfg
         self.profile = profile
-        self.cvs = cvs
         self.store = store
+        #: Appended to SYSTEM verbatim. The seam for anything this library has
+        #: no business knowing about - a caller with private context to add
+        #: supplies it here rather than teaching the public prompt its
+        #: vocabulary. Empty by default, and an empty extra changes nothing.
+        self.extra_prompt = extra_prompt
         self._sem = asyncio.Semaphore(cfg.max_concurrent)
         self._calls = 0
         self._errors = 0
@@ -165,7 +157,7 @@ class FitScorer:
     def _system(self) -> str:
         return SYSTEM.format(
             summary=self.profile.summary or "(no summary configured)",
-            cvs=self.cvs.prompt_block(),
+            extra=f"\n{self.extra_prompt}\n" if self.extra_prompt else "",
         )
 
     async def score_all(self, jobs: list[ScoredJob]) -> list[ScoredJob]:
@@ -238,7 +230,7 @@ class FitScorer:
 
         A stub is only ever valid while it still scores below the gate. Lower
         `min_report_score` between runs and the stubs that now clear it have no
-        reason, no tailoring and no blockers - so the digest would print a role
+        reason and no blockers - so the digest would print a role
         with an empty justification and look broken. Cheaper to re-ask.
         """
         return (

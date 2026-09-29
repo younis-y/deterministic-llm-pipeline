@@ -11,7 +11,6 @@ from rolescan.config import Config
 from rolescan.digest import render_markdown
 from rolescan.models import (
     Confidence,
-    CVVariant,
     FitVerdict,
     Job,
     ScoredJob,
@@ -177,8 +176,6 @@ def _scored(job: Job, **kw: object) -> ScoredJob:
         "verdict": Verdict.APPLY,
         "confidence": Confidence.HIGH,
         "reason": "Overlaps the day-ahead forecasting work.",
-        "cv_variant": CVVariant.ENERGY,
-        "tailoring": ["Lead with the battery dispatch LP result."],
     }
     return ScoredJob(job=job, fit=FitVerdict.model_validate(base | kw))
 
@@ -191,8 +188,6 @@ def test_digest_renders_llm_detail(energy_job: Job) -> None:
     )
     out = render_markdown(result)
     assert "EDF Trading" in out
-    assert "CV_EnergySystems-Modelling" in out
-    assert "battery dispatch" in out
     assert "82/100" in out
     assert "[Apply](https://example.com/1)" in out
 
@@ -246,12 +241,10 @@ def test_blocked_roles_get_no_cv_advice(gated_job: Job) -> None:
         verdict=Verdict.BLOCKED,
         fit_score=70,
         blockers=["UAE National only"],
-        tailoring=["Lead with the forecasting work."],
     )
     out = render_markdown(ScanResult(unique=1, reportable=[item]))
     assert "UAE National only" in out
     assert "**Send:**" not in out
-    assert "Tailor it" not in out
 
 
 def test_stats_line_pluralises() -> None:

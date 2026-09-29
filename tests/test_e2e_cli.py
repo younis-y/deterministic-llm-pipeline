@@ -25,7 +25,6 @@ CONFIG = """
 profile:
   name: Test
   summary: An energy data candidate.
-  cv_dir: cvs
   locations: [london]
   keywords: {energy: 6, data scientist: 7, python: 4, trading: 6, graduate: 4}
   blockers: {uae national: 40}
@@ -65,18 +64,13 @@ BOARD = {
 def _project(tmp_path: Path, config_text: str = CONFIG) -> Path:
     cfg = tmp_path / "config.yaml"
     cfg.write_text(config_text)
-    cvs = tmp_path / "cvs"
-    cvs.mkdir()
-    (cvs / "CV_EnergySystems-Modelling.tex").write_text(
-        r"\begin{document}\section{Skills} Python, forecasting.\end{document}"
-    )
     return cfg
 
 
 def test_help_lists_every_command() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for command in ("scan", "discover", "sources", "cvs", "show", "stats", "prune"):
+    for command in ("scan", "discover", "sources", "show", "stats", "prune"):
         assert command in plain(result.output)
 
 
@@ -132,14 +126,6 @@ def test_paths_resolve_against_the_config_not_the_cwd(
     assert not (elsewhere / "seen.db").exists()
     assert not (elsewhere / "digests").exists()
     assert (tmp_path / "seen.db").is_file()
-
-
-def test_cvs_command_reads_variants(tmp_path: Path) -> None:
-    cfg = _project(tmp_path)
-    result = runner.invoke(app, ["cvs", "-c", str(cfg)])
-    assert result.exit_code == 0
-    assert "CV_EnergySystems-Modelling" in plain(result.output)
-
 
 def test_stats_reports_zero_on_a_fresh_store(tmp_path: Path) -> None:
     cfg = _project(tmp_path)
