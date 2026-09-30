@@ -30,29 +30,43 @@ log = logging.getLogger(__name__)
 
 
 class RulesConfig(BaseModel):
-    """Rules for filtering and evaluating job postings per candidate."""
+    """Rules for filtering and evaluating job postings per candidate.
+
+    Rules live in config, not in the prompt, because multi-part rules are
+    unreliable when left to the model's inference. Code applies them the same
+    way every time. Each user's rules differ, so they belong here, not in a
+    one-size-fits-all system prompt."""
 
     model_config = ConfigDict(extra="forbid")
 
     max_years_required: int | None = Field(
         default=None,
         ge=0,
-        description="Maximum years required. None disables this check.",
+        description=(
+            "Skip postings that state a minimum experience above this. None "
+            "disables the check. A posting that states no years is never "
+            "skipped by this rule."
+        ),
     )
     allowed_levels: list[Level] = Field(
         default=[Level.graduate_entry, Level.junior, Level.mid, Level.not_stated],
         description=(
-            "Allowed career levels. Graduate, junior, mid, "
-            "not stated by default."
+            "Career levels that pass the filter. `not_stated` is in the default "
+            "because an advert that does not state a level must not be skipped "
+            "for failing to state it."
         ),
     )
     student_only: Literal["skip", "allow"] = Field(
         default="allow",
-        description="Skip or allow student-marked roles. Allow by default.",
+        description=(
+            "Skip or allow roles marked for students. Allow by default because "
+            "the library cannot know whether the user is a student; a graduate "
+            "sets this to 'skip'."
+        ),
     )
     allowed_fields: list[JobField] | None = Field(
         default=None,
-        description="Allowed job fields. None means any field.",
+        description="Job fields that pass the filter. None means any field.",
     )
 
 
@@ -152,7 +166,10 @@ class ProfileConfig(BaseModel):
     """Final gate. Postings below this never reach the digest."""
     rules: RulesConfig | None = Field(
         default=None,
-        description="Rules for filtering postings. None disables rule filtering.",
+        description=(
+            "Rules for filtering postings. None means no rule fires and "
+            "verdicts come from fit score alone."
+        ),
     )
 
     @model_validator(mode="after")
@@ -283,13 +300,17 @@ class LLMConfig(BaseModel):
     mode: Literal["facts", "judge"] = Field(
         default="facts",
         description=(
-            "Scoring mode: facts extracts facts and applies rules; "
-            "judge is single call."
+            "Scoring mode. facts: the model extracts quoted facts and code "
+            "applies profile.rules. judge: the old single-call judge, kept for "
+            "ONE release so the evaluation can compare the two, then removed."
         ),
     )
     enricher: str = Field(
         default="",
-        description="Optional enricher identifier for context processing.",
+        description=(
+            "Name of a registered enricher that runs extra work only for "
+            "postings that clear min_report_score. Empty means none."
+        ),
     )
 
     _auto_disabled: bool = PrivateAttr(default=False)
