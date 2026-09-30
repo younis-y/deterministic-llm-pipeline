@@ -23,6 +23,7 @@ from rolescan.scoring.judges import (
     TRIAGE_MAX_TOKENS,
     TRIAGE_REASON,
     AnthropicJudge,
+    _TriageOutput,
     available_judges,
     get_judge,
     triage_schema,
@@ -826,3 +827,12 @@ async def test_cascade_still_fetches_the_full_verdict_above_the_gate() -> None:
     [out] = await scorer.score_all([_job()])
     assert [c["output_format"] is FitVerdict for c in fake.calls] == [False, True]
     assert out.fit is not None and out.fit.reason == VERDICT_JSON["reason"]
+
+
+def test_triage_fit_score_bounds_match_fitverdict() -> None:
+    """The triage model copies FitVerdict's fit_score bounds by hand; pin them
+    together so a change to one cannot silently leave the other behind."""
+    triage = _TriageOutput.model_json_schema()["properties"]["fit_score"]
+    full = FitVerdict.model_json_schema()["properties"]["fit_score"]
+    assert triage["minimum"] == full["minimum"]
+    assert triage["maximum"] == full["maximum"]

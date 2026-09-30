@@ -316,8 +316,8 @@ def triage_schema() -> dict[str, Any]:
 TRIAGE_MAX_TOKENS = 64
 
 
-#: FitVerdict cut down to the gate fields, reusing its field definitions so
-#: the bounds and descriptions cannot drift apart.
+#: FitVerdict cut down to the gate fields. The fit_score bounds are copied
+#: by hand; tests/test_judges.py pins them to FitVerdict's.
 class _TriageOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
