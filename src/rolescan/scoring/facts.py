@@ -8,6 +8,21 @@ read from, and `verify_facts` is the one place that checks the quote is
 actually in the posting before the value is allowed to survive. A fact that
 fails that check is downgraded to "not stated" rather than trusted, because
 an unverifiable fact must never be allowed to decide a verdict.
+
+Two rules keep that check honest rather than merely convenient:
+
+- Title and description are checked as two separate haystacks, never joined
+  with a separator first. A joined string lets a quote splice the title's
+  tail onto the description's head (e.g. "Engineer Must relocate" from title
+  "Senior Engineer" plus description "Must relocate immediately.") and
+  wrongly verify, because the separator collapses under whitespace
+  normalisation and the two fields read as one contiguous string.
+- Typographic look-alikes fold to their plain-ASCII form before comparison
+  (curly quotes to straight, en/em dash and minus sign to hyphen, non-breaking
+  space to space) on both the quote and the haystack, so a real quote is not
+  rejected only because the posting or the model used a "smart" character
+  where the other used a plain one. This folds equivalent characters only -
+  it cannot make invented text verify.
 """
 
 from __future__ import annotations
@@ -15,6 +30,19 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from rolescan.models import _REASON_CHARS, BarKind, Job, JobField, Level, _norm
+
+_TYPO_FOLD = str.maketrans(
+    {
+        chr(0x2018): "'",  # left single quotation mark
+        chr(0x2019): "'",  # right single quotation mark
+        chr(0x201C): '"',  # left double quotation mark
+        chr(0x201D): '"',  # right double quotation mark
+        chr(0x2013): "-",  # en dash
+        chr(0x2014): "-",  # em dash
+        chr(0x2212): "-",  # minus sign
+        chr(0x00A0): " ",  # non-breaking space
+    }
+)
 
 __all__ = [
     "FieldFact",
@@ -28,7 +56,7 @@ __all__ = [
 
 
 def _normalise(text: str) -> str:
-    return " ".join(text.split()).casefold()
+    return " ".join(text.translate(_TYPO_FOLD).split()).casefold()
 
 
 class LevelFact(BaseModel):
@@ -221,16 +249,29 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
 
     Never mutates `facts`. A fact keeps its value only when its quote is
     non-empty and its normalised text is a substring of the normalised
-    posting; otherwise the value is cleared (`Level` falls back to
-    `not_stated`, everything else to `None`) and the quote is cleared to
-    `""`. Hard bars that fail the check are dropped outright rather than
-    kept with a blanked value, since a bar has no meaningful "unstated"
-    form - it either is or is not a structural block.
+    title OR of the normalised description - checked separately, never
+    joined into one string, because joining lets a quote splice the title's
+    tail onto the description's head and wrongly verify. A quote that fails
+    both checks clears the value (`Level` falls back to `not_stated`,
+    everything else to `None`) and clears the quote to `""`. Hard bars that
+    fail the check are dropped outright rather than kept with a blanked
+    value, since a bar has no meaningful "unstated" form - it either is or
+    is not a structural block.
+
+    Normalisation also folds typographic look-alikes (curly quotes, en/em
+    dash, non-breaking space) to their plain form on both sides before
+    comparing, so a real quote does not fail only because the posting and
+    the model disagree on which quote character to use; it cannot make an
+    invented quote verify.
     """
-    haystack = _normalise(f"{job.title}\n{job.description}")
+    title = _normalise(job.title)
+    description = _normalise(job.description)
 
     def _verified(quote: str) -> bool:
-        return bool(quote) and _normalise(quote) in haystack
+        if not quote:
+            return False
+        q = _normalise(quote)
+        return q in title or q in description
 
     level = facts.level
     if not _verified(level.quote):

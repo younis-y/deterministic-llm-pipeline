@@ -61,3 +61,39 @@ def test_a_fact_with_a_value_but_no_quote_is_not_stated() -> None:
 def test_overlong_lists_and_reason_are_trimmed_not_rejected() -> None:
     f = _facts(keywords_missing=[f"k{i}" for i in range(12)], reason="x" * 400)
     assert len(f.keywords_missing) == 8 and len(f.reason) <= 220
+
+
+SPLICE_JOB = Job(source="t", company="Acme", title="Senior Engineer", url="https://x/2",
+                  description="Must relocate immediately.")
+
+
+def test_a_quote_spanning_title_and_description_does_not_verify() -> None:
+    f = verify_facts(
+        _facts(level=LevelFact(value=Level.senior, quote="Engineer Must relocate")),
+        SPLICE_JOB,
+    )
+    assert f.level.value == Level.not_stated
+
+
+def test_a_quote_wholly_inside_the_title_still_verifies() -> None:
+    f = verify_facts(
+        _facts(level=LevelFact(value=Level.senior, quote="Senior Engineer")),
+        SPLICE_JOB,
+    )
+    assert f.level.value == Level.senior
+
+
+_EN_DASH = chr(0x2013)
+_RIGHT_SINGLE_QUOTE = chr(0x2019)
+TYPO_JOB = Job(
+    source="t", company="Acme", title="Data Engineer", url="https://x/4",
+    description=f"3{_EN_DASH}5 years{_RIGHT_SINGLE_QUOTE} experience required.",
+)
+
+
+def test_typographic_lookalikes_fold_before_verification() -> None:
+    f = verify_facts(
+        _facts(years_required=YearsFact(value=3, quote="3-5 years' experience")),
+        TYPO_JOB,
+    )
+    assert f.years_required.value == 3
