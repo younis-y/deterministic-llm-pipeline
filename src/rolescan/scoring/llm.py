@@ -19,7 +19,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from rolescan.config import LLMConfig, ProfileConfig
-from rolescan.models import FitVerdict, Job, ScoredJob
+from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
+from rolescan.scoring.enrich import Enricher, get_enricher
 from rolescan.scoring.facts import PostingFacts, verify_facts
 from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
 from rolescan.scoring.rules import decide
@@ -27,7 +28,15 @@ from rolescan.scoring.rules import decide
 if TYPE_CHECKING:
     from rolescan.store import Store
 
-__all__ = ["SYSTEM_FACTS", "FitScorer", "cache_key"]
+__all__ = ["SYSTEM_FACTS", "FitScorer", "cache_key", "final_key"]
+
+#: A verdict worth doing extra work for. `skip` and `blocked` never reach an
+#: enricher, whatever their score - and `decide` always caps their score just
+#: under `min_report_score` anyway (see `rules.decide`), so the gate below
+#: would exclude them regardless. Checked explicitly all the same: enrichment
+#: is for postings the reader will act on, not an artifact of how the cap
+#: happens to land.
+_ENRICHABLE_VERDICTS = frozenset({Verdict.APPLY, Verdict.CONSIDER})
 
 log = logging.getLogger(__name__)
 
@@ -208,6 +217,26 @@ def cache_key(job: Job, mode: str) -> str:
     return job.content_hash
 
 
+def final_key(job: Job) -> str:
+    """The cache key for the FINISHED verdict: after `decide`, and after any
+    enricher.
+
+    `cache_key` in facts mode deliberately holds the verified `PostingFacts`,
+    not a verdict, so that a `rules` or `min_report_score` change is applied
+    to every cached posting for free on the next run rather than replaying a
+    verdict frozen under whatever was configured when the row was written
+    (see `cache_key`'s docstring). That is the right cache for FitScorer's own
+    re-decision, but it is the wrong shape for a consumer OUTSIDE scoring -
+    application prep, or anything else that wants "what should be done about
+    this posting" - which wants the decision itself, enriched subclass and
+    all, not the facts it was made from. `final_key` is that separate row: a
+    plain, mode-independent key written whenever a store exists, including on
+    a cache hit, so it always reflects the most recently decided (and
+    enriched) verdict regardless of whether the model was called this run.
+    """
+    return f"{job.content_hash}:final"
+
+
 class FitScorer:
     """Scores postings through the configured judge, with caching and a spend
     ceiling. Everything expensive and easy to get wrong lives here rather than
@@ -239,6 +268,12 @@ class FitScorer:
         self._errors = 0
         self._first_error = ""
         self._judge: Judge | None = None
+        self._enricher: Enricher | None = None
+        #: Whether `_get_enricher` has already resolved `cfg.enricher`. Built
+        #: lazily and once, same reasoning as `_judge`: importing rolescan
+        #: must not cost a plugin import, and `None` alone cannot distinguish
+        #: "not built yet" from "no enricher configured".
+        self._enricher_built = False
         #: The facts extracted for each posting scored in facts mode, keyed
         #: by job.url. Empty in judge mode. Kept for the evaluation, which
         #: reports per-field extraction accuracy against an answer key - a
@@ -277,6 +312,42 @@ class FitScorer:
         if self._judge is None:
             self._judge = get_judge(self.cfg.backend, self.cfg)
         return self._judge
+
+    def _get_enricher(self) -> Enricher | None:
+        """The configured enricher, built at most once per scorer.
+
+        Sets `self.verdict_model` to the enricher's `verdict_model` the
+        moment one is configured, so a cache read of the FINAL verdict (see
+        `final_key`) validates as the enriched subclass rather than refusing
+        its extra fields.
+        """
+        if not self._enricher_built:
+            self._enricher = get_enricher(self.cfg)
+            if self._enricher is not None:
+                self.verdict_model = self._enricher.verdict_model
+            self._enricher_built = True
+        return self._enricher
+
+    async def _maybe_enrich(self, job: Job, verdict: FitVerdict) -> FitVerdict:
+        """Run the configured enricher, if any, for a verdict worth it.
+
+        Any failure keeps the plain verdict and is logged - never counted
+        against `self.errors`, and never a reason to drop the posting.
+        Enrichment is additive, not load-bearing for whether a posting is
+        reported at all.
+        """
+        enricher = self._get_enricher()
+        if enricher is None:
+            return verdict
+        if verdict.verdict not in _ENRICHABLE_VERDICTS:
+            return verdict
+        if verdict.fit_score < self.profile.min_report_score:
+            return verdict
+        try:
+            return await enricher.enrich(job, verdict)
+        except Exception as e:
+            log.warning("enrichment failed for %r: %s", job.title, e)
+            return verdict
 
     def _system(self) -> str:
         return SYSTEM.format(
@@ -363,6 +434,8 @@ class FitScorer:
                 verdict = decide(
                     cached_facts, self.profile.rules, self.profile.min_report_score
                 )
+                verdict = await self._maybe_enrich(job, verdict)
+                await self.store.put_verdict(final_key(job), verdict)
                 return scored.model_copy(update={"fit": verdict, "llm_cached": True})
 
         async with self._sem:
@@ -378,6 +451,9 @@ class FitScorer:
         if self.store is not None:
             await self.store.put_verdict(key, facts)
         verdict = decide(facts, self.profile.rules, self.profile.min_report_score)
+        verdict = await self._maybe_enrich(job, verdict)
+        if self.store is not None:
+            await self.store.put_verdict(final_key(job), verdict)
         return scored.model_copy(update={"fit": verdict})
 
     async def _call_facts(self, scored: ScoredJob) -> PostingFacts:
