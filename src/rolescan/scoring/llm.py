@@ -19,13 +19,15 @@ import logging
 from typing import TYPE_CHECKING
 
 from rolescan.config import LLMConfig, ProfileConfig
-from rolescan.models import FitVerdict, ScoredJob
+from rolescan.models import FitVerdict, Job, ScoredJob
+from rolescan.scoring.facts import PostingFacts, verify_facts
 from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
+from rolescan.scoring.rules import decide
 
 if TYPE_CHECKING:
     from rolescan.store import Store
 
-__all__ = ["FitScorer"]
+__all__ = ["SYSTEM_FACTS", "FitScorer", "cache_key"]
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +95,70 @@ Posted: {posted}
 
 Score this posting for the candidate."""
 
+# Facts mode's prompt. This is the only instruction the model reads for that
+# mode, on both backends: Ollama takes PostingFacts.model_json_schema() as a
+# grammar and enforces only the shape, ignoring every field description, so a
+# rule that lives only in the schema reaches the hosted backend alone.
+# Anything the model must know belongs here - see SYSTEM's comment above for
+# the history behind that split.
+#
+# No extra_prompt and no CV vocabulary: unlike SYSTEM, this prompt has no seam
+# for private context. The judgement it makes is skills and domain fit only;
+# level, years, student status and eligibility are decided afterwards by
+# `rolescan.scoring.rules.decide`, from the quoted facts extracted here, not
+# by the model.
+SYSTEM_FACTS = """\
+You extract facts from a job posting for one specific candidate. You do not \
+decide seniority fit, years fit, or eligibility - those are decided by code \
+from the facts you extract below, not by you.
+
+<candidate>
+{summary}
+</candidate>
+
+For level, years_required, student_only and field: copy the exact text from \
+the posting that states it, verbatim, into that fact's quote. If the posting \
+does not say, leave the value not stated - never guess or infer one:
+- level: the career level the posting targets.
+- years_required: the MINIMUM years of experience the advert requires (a \
+posting asking for "3+ years" means 3).
+- student_only: true only if the posting restricts the role to current \
+students; not stated otherwise.
+- field: the job's core work.
+
+List hard_bars only for structural bars the candidate cannot clear by being a \
+better applicant: a nationality-only requirement (e.g. "UAE Nationals only" \
+or a National Talent programme), a security clearance, or a work \
+authorisation the candidate does not hold. Give each bar its own verbatim \
+quote. Being underqualified, overqualified, or in the wrong field is never a \
+hard bar.
+
+fit_score is 0-100 for skills and domain match ONLY. Ignore seniority, years, \
+student status and eligibility completely when scoring - those are judged \
+elsewhere, by code, not by you. A senior role in the candidate's domain \
+scores on the domain overlap alone.
+
+Write "reason" as ONE sentence under 220 characters: the single fact that \
+most affects the skills/domain match.
+
+List up to 8 keywords_missing: skills or tools the posting asks for that are \
+not evidenced for this candidate."""
+
+
+def cache_key(job: Job, mode: str) -> str:
+    """The verdict-cache key for this posting under this scoring mode.
+
+    Facts mode and judge mode ask a different question of the same posting
+    and can reach different answers, so a cached judge-mode verdict must
+    never be handed back as a facts-mode result (or vice versa) just because
+    the description hash matches. `facts-v1` is the scorer version: bumping
+    it invalidates every facts-mode cache entry the next time the extraction
+    prompt or schema changes in a way that would change the answer.
+    """
+    if mode == "facts":
+        return f"{job.content_hash}:facts-v1"
+    return job.content_hash
+
 
 class FitScorer:
     """Scores postings through the configured judge, with caching and a spend
@@ -125,6 +191,12 @@ class FitScorer:
         self._errors = 0
         self._first_error = ""
         self._judge: Judge | None = None
+        #: The facts extracted for each posting scored in facts mode, keyed
+        #: by job.url. Empty in judge mode. Kept for the evaluation, which
+        #: reports per-field extraction accuracy against an answer key - a
+        #: question `FitVerdict` alone cannot answer once `decide` has turned
+        #: the facts into a verdict.
+        self.last_facts: dict[str, PostingFacts] = {}
 
     @property
     def enabled(self) -> bool:
@@ -190,10 +262,11 @@ class FitScorer:
 
     async def _score_one(self, scored: ScoredJob) -> ScoredJob:
         job = scored.job
+        key = cache_key(job, self.cfg.mode)
 
         if self.store is not None:
             cached = await self.store.get_verdict(
-                job.content_hash, self.cfg.cache_days, self.verdict_model
+                key, self.cfg.cache_days, self.verdict_model
             )
             if cached is not None and not self._stale_triage(cached):
                 return scored.model_copy(update={"fit": cached, "llm_cached": True})
@@ -208,7 +281,7 @@ class FitScorer:
             verdict = await self._call(scored)
 
         if self.store is not None:
-            await self.store.put_verdict(job.content_hash, verdict)
+            await self.store.put_verdict(key, verdict)
         return scored.model_copy(update={"fit": verdict})
 
     async def _call(self, scored: ScoredJob) -> FitVerdict:
@@ -224,6 +297,18 @@ class FitScorer:
             ),
         )
         judge = self._get_judge()
+
+        if self.cfg.mode == "facts":
+            # One call, always: Call 1 is already short, so the cascade -
+            # built to skip generating prose for a role that will not clear
+            # the gate - buys nothing here and facts mode never runs it.
+            system = SYSTEM_FACTS.format(
+                summary=self.profile.summary or "(no summary configured)"
+            )
+            facts = verify_facts(await judge.facts(system, user), job)
+            self.last_facts[job.url] = facts
+            return decide(facts, self.profile.rules, self.profile.min_report_score)
+
         system = self._system()
         if self.cfg.cascade and judge.cheap_triage:
             first = await judge.triage(system, user)

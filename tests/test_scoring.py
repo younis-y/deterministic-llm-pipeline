@@ -437,8 +437,9 @@ def test_the_public_prompt_names_no_documents() -> None:
     """The judgement is score, verdict, confidence, one sentence and the bars.
     Which CV to send and what to change in it is private, and this asserts the
     public half stays that way."""
-    from rolescan.scoring.llm import SYSTEM
+    from rolescan.scoring.llm import SYSTEM, SYSTEM_FACTS
 
-    lowered = SYSTEM.lower()
-    for word in ("cv", "resume", "tailor", "variant"):
-        assert word not in lowered, f"{word!r} leaked back into the public prompt"
+    for prompt in (SYSTEM, SYSTEM_FACTS.format(summary="A candidate.")):
+        lowered = prompt.lower()
+        for word in ("cv", "resume", "tailor", "variant"):
+            assert word not in lowered, f"{word!r} leaked back into the public prompt"

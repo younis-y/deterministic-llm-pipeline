@@ -506,7 +506,9 @@ async def test_a_healthy_run_still_records_what_it_judged(tmp_path: Path) -> Non
             ),
         )
     )
-    cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL})
+    cfg = _cfg(
+        tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"}
+    )
     result = await run_scan(cfg)
     assert len(result.reportable) == 1
     assert len(await _seen_uids(tmp_path / "seen.db")) == 1
@@ -645,7 +647,12 @@ async def test_a_weighted_term_alone_does_not_override_the_llm(
                 "min_keyword_score": 18,
                 "min_report_score": 55,
             },
-            "llm": {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL},
+            "llm": {
+                "enabled": True,
+                "backend": "ollama",
+                "model": OLLAMA_MODEL,
+                "mode": "judge",
+            },
             "output": {
                 "dir": str(tmp_path),
                 "db_path": str(tmp_path / "seen.db"),
@@ -702,7 +709,9 @@ async def test_a_dismissed_url_does_not_reappear(tmp_path: Path) -> None:
             ),
         )
     )
-    cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL})
+    cfg = _cfg(
+        tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"}
+    )
     first = await run_scan(cfg, dry_run=True)
     assert len(first.reportable) == 1
     url = first.reportable[0].job.url

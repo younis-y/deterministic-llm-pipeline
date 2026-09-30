@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from rolescan.config import LLMConfig
 from rolescan.models import Confidence, FitVerdict, Verdict
+from rolescan.scoring.facts import PostingFacts
 
 __all__ = [
     "Judge",
@@ -81,6 +82,17 @@ class Judge(ABC):
     @abstractmethod
     async def verdict(self, system: str, user: str) -> FitVerdict:
         """One posting, one judgement. Raise on failure; FitScorer counts it."""
+
+    async def facts(self, system: str, user: str) -> PostingFacts:
+        """Extract quoted facts from one posting, for `llm.mode: facts`.
+
+        The default raises: a judge that only speaks the old single-call
+        protocol - built-in or third-party - explains itself the moment
+        facts mode is selected, rather than failing with an AttributeError
+        deep inside FitScorer once a scan is already under way.
+        """
+        msg = f"{type(self).__name__} does not implement facts mode"
+        raise NotImplementedError(msg)
 
     async def triage(self, system: str, user: str) -> FitVerdict:
         """A first pass that only has to be right about the score.
@@ -247,17 +259,50 @@ class AnthropicJudge(Judge):
             self._client = AsyncAnthropic(api_key=self.cfg.api_key)
         return self._client
 
+    @staticmethod
+    def _cached_system(system: str) -> list[dict[str, Any]]:
+        """Wrap the system prompt as one cached block.
+
+        Every Anthropic call - verdict, triage, facts - reads the same
+        candidate summary, so caching it once buys a discount on every call
+        after the first. Haiku 4.5 only caches prefixes of >= 4,096 tokens
+        and silently ignores smaller ones, so a short prompt (facts mode's)
+        is expected not to cache - this is still correct to send, and the
+        eval reports whether it actually does.
+        """
+        return [
+            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+        ]
+
     async def verdict(self, system: str, user: str) -> FitVerdict:
         response = await self._get_client().messages.parse(
             model=self.cfg.model,
             max_tokens=self.cfg.max_tokens,
-            system=system,
+            system=self._cached_system(system),
             messages=[{"role": "user", "content": user}],
             output_format=FitVerdict,
         )
         parsed = response.parsed_output
         if not isinstance(parsed, FitVerdict):  # pragma: no cover - enforced upstream
             msg = f"model returned {type(parsed).__name__}, expected FitVerdict"
+            raise RuntimeError(msg)
+        return parsed
+
+    async def facts(self, system: str, user: str) -> PostingFacts:
+        response = await self._get_client().messages.parse(
+            model=self.cfg.model,
+            max_tokens=self.cfg.max_tokens,
+            system=self._cached_system(system),
+            messages=[{"role": "user", "content": user}],
+            output_format=PostingFacts,
+        )
+        parsed = response.parsed_output
+        if parsed is None:
+            stop = getattr(response, "stop_reason", None)
+            msg = f"claude returned no posting facts (stop_reason={stop!r})"
+            raise RuntimeError(msg)
+        if not isinstance(parsed, PostingFacts):  # pragma: no cover - enforced upstream
+            msg = f"model returned {type(parsed).__name__}, expected PostingFacts"
             raise RuntimeError(msg)
         return parsed
 
@@ -271,7 +316,7 @@ class AnthropicJudge(Judge):
         response = await self._get_client().messages.parse(
             model=self.cfg.model,
             max_tokens=TRIAGE_MAX_TOKENS,
-            system=system,
+            system=self._cached_system(system),
             messages=[{"role": "user", "content": user}],
             output_format=_TriageOutput,
         )
@@ -423,6 +468,17 @@ class OllamaJudge(Judge):
             # Schema-constrained sampling should make this unreachable, but a
             # small model on an old Ollama can still return prose.
             msg = f"ollama did not return a usable verdict: {e}"
+            raise RuntimeError(msg) from e
+
+    async def facts(self, system: str, user: str) -> PostingFacts:
+        content = await self._chat(system, user, PostingFacts.model_json_schema())
+        try:
+            return PostingFacts.model_validate_json(content)
+        except ValueError as e:
+            # Same defect class as `verdict`: schema-constrained sampling
+            # should make this unreachable, but a small model on an old
+            # Ollama can still return prose.
+            msg = f"ollama did not return usable posting facts: {e}"
             raise RuntimeError(msg) from e
 
     async def triage(self, system: str, user: str) -> FitVerdict:

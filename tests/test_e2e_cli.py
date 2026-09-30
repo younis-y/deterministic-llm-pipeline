@@ -426,7 +426,7 @@ def test_the_digest_prints_a_mark_command_that_works_from_anywhere(
 
 OLLAMA_CONFIG = CONFIG.replace(
     "llm:\n  enabled: false",
-    f"llm:\n  enabled: true\n  backend: ollama\n  model: {OLLAMA_MODEL}",
+    f"llm:\n  enabled: true\n  backend: ollama\n  model: {OLLAMA_MODEL}\n  mode: judge",
 )
 
 

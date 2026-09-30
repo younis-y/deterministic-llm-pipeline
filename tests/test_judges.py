@@ -19,10 +19,18 @@ from conftest import plain
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob
 from rolescan.scoring import FitScorer
+from rolescan.scoring.facts import (
+    FieldFact,
+    LevelFact,
+    PostingFacts,
+    StudentFact,
+    YearsFact,
+)
 from rolescan.scoring.judges import (
     TRIAGE_MAX_TOKENS,
     TRIAGE_REASON,
     AnthropicJudge,
+    Judge,
     _TriageOutput,
     available_judges,
     get_judge,
@@ -179,7 +187,7 @@ async def test_fit_scorer_routes_through_the_configured_backend() -> None:
             200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
         )
     )
-    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b", mode="judge")
     scorer = FitScorer(cfg, ProfileConfig(), None)
     scored = await scorer.score_all([_job()])
     assert scored[0].fit is not None
@@ -201,7 +209,7 @@ async def test_scorer_is_enabled_for_a_local_backend_with_no_key_anywhere(
             200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
         )
     )
-    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b", mode="judge")
     assert cfg.api_key == "", "no key on this machine"
     scorer = FitScorer(cfg, ProfileConfig(), None)
     assert scorer.enabled is True, "a local backend needs no key"
@@ -630,7 +638,7 @@ def test_triage_asks_only_for_what_the_gate_needs() -> None:
 
 def _cascade_scorer(store: object | None = None, min_report: int = 50) -> FitScorer:
     return FitScorer(
-        LLMConfig(enabled=True, backend="ollama"),
+        LLMConfig(enabled=True, backend="ollama", mode="judge"),
         ProfileConfig(min_report_score=min_report),
         store,  # type: ignore[arg-type]
     )
@@ -759,6 +767,19 @@ async def test_a_cached_triage_stub_is_refetched_once_the_gate_drops() -> None:
 # --- anthropic triage --------------------------------------------------------
 
 
+def _fake_facts() -> PostingFacts:
+    return PostingFacts(
+        level=LevelFact(),
+        years_required=YearsFact(),
+        student_only=StudentFact(),
+        hard_bars=[],
+        field=FieldFact(),
+        fit_score=70,
+        reason="Matches the core skills.",
+        keywords_missing=[],
+    )
+
+
 class _FakeMessages:
     """Stands in for `AsyncAnthropic().messages`; records every call."""
 
@@ -774,6 +795,8 @@ class _FakeMessages:
         fmt = kw["output_format"]
         if fmt is FitVerdict:
             return SimpleNamespace(parsed_output=FitVerdict(**VERDICT_JSON))
+        if fmt is PostingFacts:
+            return SimpleNamespace(parsed_output=_fake_facts())
         return SimpleNamespace(
             parsed_output=fmt(fit_score=self.score, verdict="skip", confidence="high")
         )
@@ -808,7 +831,7 @@ async def test_anthropic_triage_with_no_output_raises_runtime_error() -> None:
 async def test_cascade_now_runs_for_anthropic() -> None:
     fake = _FakeMessages(score=30)
     scorer = FitScorer(
-        LLMConfig(backend="anthropic", api_key="k"),
+        LLMConfig(backend="anthropic", api_key="k", mode="judge"),
         ProfileConfig(min_report_score=55),
     )
     scorer._judge = _anthropic(fake)
@@ -820,13 +843,100 @@ async def test_cascade_now_runs_for_anthropic() -> None:
 async def test_cascade_still_fetches_the_full_verdict_above_the_gate() -> None:
     fake = _FakeMessages(score=80)
     scorer = FitScorer(
-        LLMConfig(backend="anthropic", api_key="k"),
+        LLMConfig(backend="anthropic", api_key="k", mode="judge"),
         ProfileConfig(min_report_score=55),
     )
     scorer._judge = _anthropic(fake)
     [out] = await scorer.score_all([_job()])
     assert [c["output_format"] is FitVerdict for c in fake.calls] == [False, True]
     assert out.fit is not None and out.fit.reason == VERDICT_JSON["reason"]
+
+
+# --- prompt caching: every anthropic call sends one cached system block ----
+
+
+def _cached(system: str) -> list[dict[str, Any]]:
+    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
+
+async def test_anthropic_verdict_sends_a_cached_system_block() -> None:
+    fake = _FakeMessages()
+    await _anthropic(fake).verdict("sys", "user")
+    assert fake.calls[0]["system"] == _cached("sys")
+
+
+async def test_anthropic_triage_sends_a_cached_system_block() -> None:
+    fake = _FakeMessages()
+    await _anthropic(fake).triage("sys", "user")
+    assert fake.calls[0]["system"] == _cached("sys")
+
+
+async def test_anthropic_facts_sends_a_cached_system_block() -> None:
+    fake = _FakeMessages()
+    facts = await _anthropic(fake).facts("sys", "user")
+    assert fake.calls[0]["system"] == _cached("sys")
+    assert fake.calls[0]["output_format"] is PostingFacts
+    assert isinstance(facts, PostingFacts)
+
+
+async def test_anthropic_facts_with_no_output_raises_runtime_error() -> None:
+    with pytest.raises(RuntimeError, match="no posting facts"):
+        await _anthropic(_FakeMessages(empty=True)).facts("s", "u")
+
+
+def test_base_judge_facts_is_not_implemented() -> None:
+    """A backend that does not implement facts mode explains itself rather
+    than failing with an AttributeError deep inside the scorer."""
+
+    class _BareJudge(Judge):
+        name = "bare"
+        description = "test only"
+
+        async def verdict(self, system: str, user: str) -> FitVerdict:
+            raise NotImplementedError
+
+    import asyncio
+
+    judge = _BareJudge(LLMConfig())
+    with pytest.raises(NotImplementedError, match="facts"):
+        asyncio.run(judge.facts("s", "u"))
+
+
+@respx.mock
+async def test_ollama_judge_returns_validated_facts() -> None:
+    facts_json = {
+        "level": {"value": "junior", "quote": ""},
+        "years_required": {"value": None, "quote": ""},
+        "student_only": {"value": None, "quote": ""},
+        "hard_bars": [],
+        "field": {"value": None, "quote": ""},
+        "fit_score": 55,
+        "reason": "Solid Python overlap.",
+        "keywords_missing": ["Kubernetes"],
+    }
+    route = respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"content": __import__("json").dumps(facts_json)}}
+        )
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    judge = get_judge("ollama", cfg)
+    facts = await judge.facts("system text", "user text")
+    assert isinstance(facts, PostingFacts)
+    assert facts.fit_score == 55
+    assert route.called
+    body = __import__("json").loads(route.calls[0].request.content)
+    assert body["format"] == PostingFacts.model_json_schema()
+
+
+@respx.mock
+async def test_ollama_facts_survives_a_body_that_is_not_usable() -> None:
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"content": "not json"}})
+    )
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
+    with pytest.raises(RuntimeError):
+        await get_judge("ollama", cfg).facts("system text", "user text")
 
 
 def test_triage_fit_score_bounds_match_fitverdict() -> None:
