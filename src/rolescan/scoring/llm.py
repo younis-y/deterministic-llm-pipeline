@@ -95,12 +95,31 @@ Posted: {posted}
 
 Score this posting for the candidate."""
 
-# Facts mode's prompt. This is the only instruction the model reads for that
-# mode, on both backends: Ollama takes PostingFacts.model_json_schema() as a
-# grammar and enforces only the shape, ignoring every field description, so a
-# rule that lives only in the schema reaches the hosted backend alone.
+# Facts mode's user template. Ends by telling the model where its quotes come
+# from, because a small model asked for "the exact text" will otherwise quote
+# back a field label from this template itself (e.g. "Title:") rather than
+# the posting's own words - which would then verify (the label really is in
+# the rendered prompt) while saying nothing true about the posting.
+USER_FACTS = """\
+<posting>
+Title: {title}
+Company: {company}
+Location: {location}
+Posted: {posted}
+
+{description}
+</posting>
+
+Extract the facts. Quote the posting's own text, never the field labels such \
+as "Title:"."""
+
+# Facts mode's system prompt. This is the only instruction the model reads for
+# that mode, on both backends: Ollama takes PostingFacts.model_json_schema()
+# as a grammar and enforces only the shape, ignoring every field description,
+# so a rule that lives only in the schema reaches the hosted backend alone.
 # Anything the model must know belongs here - see SYSTEM's comment above for
-# the history behind that split.
+# the history behind that split. That is also why every enum value gets its
+# own line below rather than relying on the schema's description strings.
 #
 # No extra_prompt and no CV vocabulary: unlike SYSTEM, this prompt has no seam
 # for private context. The judgement it makes is skills and domain fit only;
@@ -118,20 +137,46 @@ from the facts you extract below, not by you.
 
 For level, years_required, student_only and field: copy the exact text from \
 the posting that states it, verbatim, into that fact's quote. If the posting \
-does not say, leave the value not stated - never guess or infer one:
-- level: the career level the posting targets.
-- years_required: the MINIMUM years of experience the advert requires (a \
-posting asking for "3+ years" means 3).
-- student_only: true only if the posting restricts the role to current \
-students; not stated otherwise.
-- field: the job's core work.
+does not say, leave it not stated - never guess or infer a value. Encode "not \
+stated" as: level = not_stated; years_required, student_only and field = \
+null; and an empty quote in every case.
 
-List hard_bars only for structural bars the candidate cannot clear by being a \
-better applicant: a nationality-only requirement (e.g. "UAE Nationals only" \
-or a National Talent programme), a security clearance, or a work \
-authorisation the candidate does not hold. Give each bar its own verbatim \
-quote. Being underqualified, overqualified, or in the wrong field is never a \
-hard bar.
+level - the career level the posting targets:
+- graduate_entry: graduate schemes, entry-level, 0-1 years, internships or \
+placements.
+- junior: 1-2 years.
+- mid: 3-5 years.
+- senior: senior, or 5+ years.
+- lead_principal: lead, principal, staff, head, or a manager of engineers.
+- not_stated: the posting gives no level.
+
+years_required - the MINIMUM years of experience the advert REQUIRES. For a \
+range such as "3-5 years" use the low end, 3. Years described as "ideally", \
+"preferred", or "nice to have" are NOT a requirement - leave years_required \
+not stated.
+
+student_only - true only if the posting restricts the role to current \
+students; not stated otherwise.
+
+field - the job's core work:
+- data_engineering: building data pipelines, platforms, or ETL.
+- ai_llm: building ML, LLM, or AI systems.
+- data_science: modelling, statistics, or analytics research.
+- analytics_bi: reporting, dashboards, or BI.
+- software: general software engineering not centred on data or AI.
+- other: anything else - sales, finance, consulting, operations, hospitality, \
+and so on.
+
+List hard_bars only for a bar the candidate cannot clear by being a better \
+applicant, each with its own verbatim quote:
+- nationality: a nationality-only requirement.
+- clearance: a security clearance requirement.
+- work_auth: a work authorisation the candidate lacks, per their summary \
+above - e.g. "no visa sponsorship" is a bar only when the job's country is \
+NOT one the candidate's summary says they can already work in.
+- other: any other explicit eligibility requirement stated as mandatory.
+Being underqualified, overqualified, or in the wrong field is never a hard \
+bar.
 
 fit_score is 0-100 for skills and domain match ONLY. Ignore seniority, years, \
 student status and eligibility completely when scoring - those are judged \
@@ -151,12 +196,15 @@ def cache_key(job: Job, mode: str) -> str:
     Facts mode and judge mode ask a different question of the same posting
     and can reach different answers, so a cached judge-mode verdict must
     never be handed back as a facts-mode result (or vice versa) just because
-    the description hash matches. `facts-v1` is the scorer version: bumping
-    it invalidates every facts-mode cache entry the next time the extraction
-    prompt or schema changes in a way that would change the answer.
+    the description hash matches. `facts-v2` is the scorer version: bumping
+    it invalidates every facts-mode cache entry whenever the extraction
+    prompt, schema, or cached PAYLOAD SHAPE changes in a way that would
+    change the answer - v2 itself is the move from caching the post-rules
+    FitVerdict to caching the verified PostingFacts underneath it, so a v1
+    row (a FitVerdict) is never misread as the v2 shape (a PostingFacts).
     """
     if mode == "facts":
-        return f"{job.content_hash}:facts-v1"
+        return f"{job.content_hash}:facts-v2"
     return job.content_hash
 
 
@@ -261,6 +309,11 @@ class FitScorer:
         return out
 
     async def _score_one(self, scored: ScoredJob) -> ScoredJob:
+        if self.cfg.mode == "facts":
+            return await self._score_one_facts(scored)
+        return await self._score_one_judge(scored)
+
+    async def _score_one_judge(self, scored: ScoredJob) -> ScoredJob:
         job = scored.job
         key = cache_key(job, self.cfg.mode)
 
@@ -278,13 +331,77 @@ class FitScorer:
                 )
                 return scored
             self._calls += 1
-            verdict = await self._call(scored)
+            verdict = await self._call_judge(scored)
 
         if self.store is not None:
             await self.store.put_verdict(key, verdict)
         return scored.model_copy(update={"fit": verdict})
 
-    async def _call(self, scored: ScoredJob) -> FitVerdict:
+    async def _score_one_facts(self, scored: ScoredJob) -> ScoredJob:
+        """Facts mode's cache holds the VERIFIED `PostingFacts`, not the
+        post-rules `FitVerdict` `decide()` makes from them.
+
+        `rules` and `min_report_score` live in `self.profile`, read fresh on
+        every call, so a cache hit is re-decided under whatever is configured
+        NOW rather than replaying a verdict frozen under whatever was
+        configured when the row was written. That is what lets a rules
+        change (or a `min_report_score` change) apply to every posting
+        already in cache at zero extra model calls, and what stops a rule
+        skip's score cap from going stale if the gate moves after the row was
+        written - caching the FitVerdict directly could do neither, since the
+        rule that produced it would already be baked into the stored payload.
+        """
+        job = scored.job
+        key = cache_key(job, self.cfg.mode)
+
+        if self.store is not None:
+            cached_facts = await self.store.get_verdict(
+                key, self.cfg.cache_days, PostingFacts
+            )
+            if cached_facts is not None:
+                self.last_facts[job.url] = cached_facts
+                verdict = decide(
+                    cached_facts, self.profile.rules, self.profile.min_report_score
+                )
+                return scored.model_copy(update={"fit": verdict, "llm_cached": True})
+
+        async with self._sem:
+            if self._calls >= self.cfg.max_calls_per_run:
+                log.info(
+                    "LLM call ceiling reached, leaving %r on keyword score", job.title
+                )
+                return scored
+            self._calls += 1
+            facts = await self._call_facts(scored)
+
+        self.last_facts[job.url] = facts
+        if self.store is not None:
+            await self.store.put_verdict(key, facts)
+        verdict = decide(facts, self.profile.rules, self.profile.min_report_score)
+        return scored.model_copy(update={"fit": verdict})
+
+    async def _call_facts(self, scored: ScoredJob) -> PostingFacts:
+        job = scored.job
+        user = USER_FACTS.format(
+            title=job.title,
+            company=job.company,
+            location=job.location or "not stated",
+            posted=job.posted.isoformat() if job.posted else "not stated",
+            description=(
+                job.description[: self.cfg.description_chars]
+                or "(no description provided by the source)"
+            ),
+        )
+        system = SYSTEM_FACTS.format(
+            summary=self.profile.summary or "(no summary configured)"
+        )
+        judge = self._get_judge()
+        # One call, always: Call 1 is already short, so the cascade - built to
+        # skip generating prose for a role that will not clear the gate - buys
+        # nothing here, and facts mode never runs it.
+        return verify_facts(await judge.facts(system, user), job)
+
+    async def _call_judge(self, scored: ScoredJob) -> FitVerdict:
         job = scored.job
         user = USER.format(
             title=job.title,
@@ -297,18 +414,6 @@ class FitScorer:
             ),
         )
         judge = self._get_judge()
-
-        if self.cfg.mode == "facts":
-            # One call, always: Call 1 is already short, so the cascade -
-            # built to skip generating prose for a role that will not clear
-            # the gate - buys nothing here and facts mode never runs it.
-            system = SYSTEM_FACTS.format(
-                summary=self.profile.summary or "(no summary configured)"
-            )
-            facts = verify_facts(await judge.facts(system, user), job)
-            self.last_facts[job.url] = facts
-            return decide(facts, self.profile.rules, self.profile.min_report_score)
-
         system = self._system()
         if self.cfg.cascade and judge.cheap_triage:
             first = await judge.triage(system, user)

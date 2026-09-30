@@ -80,12 +80,16 @@ def _facts_scorer(
     facts: PostingFacts,
     *,
     rules: RulesConfig | None = None,
+    min_report_score: int = 55,
     store: Store | None = None,
     extra_prompt: str = "",
 ) -> tuple[FitScorer, _FakeFactsJudge]:
     cfg = LLMConfig(enabled=True, backend="ollama", mode="facts")
     scorer = FitScorer(
-        cfg, ProfileConfig(rules=rules), store, extra_prompt=extra_prompt
+        cfg,
+        ProfileConfig(rules=rules, min_report_score=min_report_score),
+        store,
+        extra_prompt=extra_prompt,
     )
     judge = _FakeFactsJudge(cfg, facts)
     scorer._judge = judge
@@ -138,7 +142,7 @@ async def test_cache_key_is_mode_aware() -> None:
     job = _job().job
     assert cache_key(job, "facts") != cache_key(job, "judge")
     assert cache_key(job, "judge") == job.content_hash
-    assert cache_key(job, "facts") == f"{job.content_hash}:facts-v1"
+    assert cache_key(job, "facts") == f"{job.content_hash}:facts-v2"
 
 
 async def test_a_judge_mode_cache_entry_is_not_read_back_in_facts_mode(
@@ -191,3 +195,83 @@ async def test_judge_mode_still_routes_through_verdict_not_facts() -> None:
 
     assert out.fit is not None
     assert out.fit.fit_score == 70
+
+
+# --- the cache holds verified facts, not the post-rules verdict ------------
+#
+# Two configs can read the same cache row and reach different verdicts, since
+# `rules` and `min_report_score` are applied AFTER the cache lookup, not
+# baked into what is stored. Caching the final FitVerdict instead would freeze
+# whatever rules were active on the first run; caching the facts means a
+# rules or min_report_score change takes effect immediately, for every
+# posting already in cache, at zero extra model calls.
+
+
+async def test_a_cached_facts_hit_is_redecided_under_the_current_rules(
+    tmp_path: Path,
+) -> None:
+    job = _job("Senior role. Must have 5+ years of Python experience.")
+    facts = _facts(
+        fit_score=80,
+        years_required=YearsFact(value=5, quote="5+ years of Python experience"),
+    )
+
+    async with Store(tmp_path / "store.db") as store:
+        strict = RulesConfig(max_years_required=2)
+        scorer1, judge1 = _facts_scorer(facts, rules=strict, store=store)
+        [first] = await scorer1.score_all([job])
+        assert len(judge1.facts_calls) == 1
+        assert first.fit is not None and first.fit.verdict == Verdict.SKIP
+        assert scorer1.last_facts[job.job.url].years_required.value == 5
+
+        # A second, looser config sharing the same store and cache row.
+        loose = RulesConfig(max_years_required=10)
+        scorer2, judge2 = _facts_scorer(facts, rules=loose, store=store)
+        [second] = await scorer2.score_all([job])
+
+        assert len(judge2.facts_calls) == 0, (
+            "the cached facts must satisfy this without a new model call"
+        )
+        assert second.llm_cached is True
+        assert second.fit is not None
+        assert second.fit.verdict == Verdict.APPLY, (
+            "the years rule no longer fires under the looser config, so the "
+            "fit_score band decides: 80 -> apply"
+        )
+        assert scorer2.last_facts[job.job.url].years_required.value == 5, (
+            "a cache hit must still populate last_facts (Minor 1)"
+        )
+
+
+async def test_a_cached_rule_skip_never_reaches_the_digest_after_the_gate_drops(
+    tmp_path: Path,
+) -> None:
+    """A rule skip caps its score just under `min_report_score` so it can
+    never look better than a posting that reached the digest on fit alone.
+    That cap must be re-applied on every cache hit, using the CURRENT
+    min_report_score, or lowering the gate later would let a stale cached
+    verdict re-appear unnaturally high."""
+    job = _job("Senior role. Must have 5+ years of Python experience.")
+    facts = _facts(
+        fit_score=80,
+        years_required=YearsFact(value=5, quote="5+ years of Python experience"),
+    )
+    rules = RulesConfig(max_years_required=2)
+
+    async with Store(tmp_path / "store.db") as store:
+        scorer1, judge1 = _facts_scorer(facts, rules=rules, min_report_score=55, store=store)
+        [first] = await scorer1.score_all([job])
+        assert len(judge1.facts_calls) == 1
+        assert first.fit is not None
+        assert first.fit.verdict == Verdict.SKIP
+        assert first.fit.fit_score <= 54
+
+        # Drop the gate right down. The cached rule-skip must be re-capped
+        # under the NEW gate, not replayed with its old score.
+        scorer2, judge2 = _facts_scorer(facts, rules=rules, min_report_score=1, store=store)
+        [second] = await scorer2.score_all([job])
+
+        assert len(judge2.facts_calls) == 0
+        assert second.fit is not None
+        assert second.fit.verdict == Verdict.SKIP
+        assert second.fit.fit_score == 0, "capped under the new min_report_score of 1"

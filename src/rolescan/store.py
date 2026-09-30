@@ -26,13 +26,26 @@ from types import TracebackType
 from typing import ClassVar, Self
 
 import aiosqlite
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from typing_extensions import TypeVar
 
 from rolescan.models import FitVerdict, Job, ScoredJob
 
 __all__ = ["Store"]
 
 log = logging.getLogger(__name__)
+
+#: `get_verdict`/`put_verdict` hold whatever a caller's scoring mode decided
+#: to cache - a `FitVerdict` in judge mode, a `PostingFacts` in facts mode
+#: (see `rolescan.scoring.llm.cache_key`, which keeps the two out of each
+#: other's rows). Bound to `BaseModel` rather than `FitVerdict` because the
+#: row is opaque JSON to this module either way: it is validated back into
+#: whatever type the caller asks for, never inspected here. `default=` (PEP
+#: 696, via `typing_extensions` - already a transitive pydantic dependency)
+#: lets every existing `get_verdict(hash, days)` call, with no `model=`
+#: argument, keep inferring `FitVerdict` under mypy exactly as it did before
+#: this became generic.
+_CachedT = TypeVar("_CachedT", bound=BaseModel, default=FitVerdict)
 
 _MIGRATIONS: tuple[str, ...] = (
     """
@@ -199,15 +212,16 @@ class Store:
         self,
         content_hash: str,
         max_age_days: int,
-        model: type[FitVerdict] = FitVerdict,
-    ) -> FitVerdict | None:
-        """The cached judgement for this posting, or None.
+        model: type[_CachedT] = FitVerdict,  # type: ignore[assignment]
+    ) -> _CachedT | None:
+        """The cached payload for this key, validated as `model`, or None.
 
-        `model` is how a caller reads back its OWN verdict shape. FitVerdict
-        forbids extra keys, so a subclass carrying private fields writes a
-        payload the base model refuses - and refusing it here silently deletes
-        the row and re-scores, which costs a whole cache for a schema that was
-        never wrong. A caller that stored a subclass passes it back.
+        `model` is how a caller reads back its OWN cached shape - a
+        `FitVerdict` in judge mode, a `PostingFacts` in facts mode. A model
+        that forbids extra keys writes a payload an unrelated schema refuses,
+        and refusing it here silently deletes the row and re-scores - a whole
+        cache lost to a schema that was never wrong. A caller passes back
+        whatever type it stored.
         """
         cur = await self.db.execute(
             "SELECT payload, created FROM verdicts WHERE content_hash=?",
@@ -234,7 +248,9 @@ class Store:
             )
             return None
 
-    async def put_verdict(self, content_hash: str, verdict: FitVerdict) -> None:
+    async def put_verdict(self, content_hash: str, verdict: BaseModel) -> None:
+        """Cache any pydantic model under this key - a `FitVerdict` in judge
+        mode, a `PostingFacts` in facts mode. See `get_verdict`."""
         await self.db.execute(
             """
             INSERT INTO verdicts (content_hash, payload, created) VALUES (?,?,?)

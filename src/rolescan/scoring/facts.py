@@ -194,13 +194,14 @@ class PostingFacts(BaseModel):
         ge=0,
         le=100,
         description=(
-            "0-100 fit between this candidate and this role. 80+ means apply "
-            "today. Below 40 means it is a poor use of their time."
+            "0-100 match between the candidate's skills and domain and this "
+            "role's work. Level and eligibility are judged separately; do "
+            "not include them."
         ),
     )
     reason: str = Field(
         max_length=_REASON_CHARS,
-        description="ONE sentence: the single fact that decides this match.",
+        description="One sentence on the skills/domain match.",
     )
     keywords_missing: list[str] = Field(
         default_factory=list,

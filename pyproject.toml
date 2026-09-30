@@ -13,6 +13,7 @@ dependencies = [
     "rich>=13.9",
     "aiosqlite>=0.20",
     "extruct>=0.17",
+    "typing-extensions>=4.12",
 ]
 
 [project.optional-dependencies]

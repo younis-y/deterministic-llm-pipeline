@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -24,6 +26,8 @@ from rolescan.pipeline import (
     deduplicate,
     run_scan,
 )
+from rolescan.scoring import FitScorer
+from rolescan.scoring.facts import PostingFacts
 from rolescan.store import Store
 
 
@@ -929,3 +933,160 @@ async def test_a_fresh_copy_survives_when_its_longer_twin_is_stale(
     assert result.fetched == 2
     assert result.stale == 1
     assert result.unique == 1
+
+
+# --- default mode (facts) is exercised end to end, not just unit-tested ----
+
+
+@respx.mock
+async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
+    """`llm.mode` is left unset in this config, so this exercises the
+    default (facts), not an override.
+
+    One posting plainly requires more years than `profile.rules` allows and
+    must be skipped, quoting the advert; a second states no years and is
+    judged on fit_score alone. `FitScorer` is used directly for the first
+    assertion group, because a rule skip is capped below `min_report_score`
+    by design and so can never appear in `ScanResult.reportable` - there is
+    no other way to inspect its `FitVerdict`. `run_scan` is then used end to
+    end to confirm only the second posting reaches the digest.
+    """
+    years_quote = "5+ years of Python experience"
+    over_years_description = (
+        f"Python, trading, energy, day-ahead forecasting. Must have {years_quote}."
+    )
+    no_years_description = "Python, trading, energy, day-ahead forecasting."
+
+    facts_over_years = {
+        "level": {"value": "not_stated", "quote": ""},
+        "years_required": {"value": 5, "quote": years_quote},
+        "student_only": {"value": None, "quote": ""},
+        "hard_bars": [],
+        "field": {"value": None, "quote": ""},
+        "fit_score": 80,
+        "reason": "Strong Python and energy-market overlap.",
+        "keywords_missing": [],
+    }
+    facts_no_years = {
+        "level": {"value": "not_stated", "quote": ""},
+        "years_required": {"value": None, "quote": ""},
+        "student_only": {"value": None, "quote": ""},
+        "hard_bars": [],
+        "field": {"value": None, "quote": ""},
+        "fit_score": 70,
+        "reason": "Solid Python and trading overlap.",
+        "keywords_missing": [],
+    }
+
+    request_bodies: list[dict[str, Any]] = []
+
+    def _respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        request_bodies.append(body)
+        user = body["messages"][1]["content"]
+        facts = facts_over_years if years_quote in user else facts_no_years
+        return httpx.Response(200, json={"message": {"content": json.dumps(facts)}})
+
+    respx.post("http://localhost:11434/api/chat").mock(side_effect=_respond)
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
+    )
+
+    cfg = Config.model_validate(
+        {
+            "profile": {
+                "keywords": _KEYWORDS,
+                "min_keyword_score": 18,
+                "min_report_score": 55,
+                "rules": {"max_years_required": 2},
+            },
+            "llm": {
+                "enabled": True,
+                "backend": "ollama",
+                "model": OLLAMA_MODEL,
+                "extra_prompt": "SECRET-BLOCK",
+            },
+            "output": {"dir": str(tmp_path), "db_path": str(tmp_path / "seen.db")},
+            "sources": [{"kind": "greenhouse", "slug": "acme", "label": "Acme"}],
+        }
+    )
+    assert cfg.llm.mode == "facts", "the default, exercised here without an override"
+
+    over_years = ScoredJob(
+        job=Job(
+            source="greenhouse",
+            company="Acme",
+            title="Senior Energy Data Scientist",
+            location="London, UK",
+            url="https://boards.greenhouse.io/acme/jobs/1",
+            description=over_years_description,
+        ),
+        keyword_score=40,
+    )
+    no_years = ScoredJob(
+        job=Job(
+            source="greenhouse",
+            company="Acme",
+            title="Graduate Energy Data Scientist",
+            location="London, UK",
+            url="https://boards.greenhouse.io/acme/jobs/2",
+            description=no_years_description,
+        ),
+        keyword_score=40,
+    )
+
+    async with Store(tmp_path / "seen.db") as store:
+        scorer = FitScorer(
+            cfg.llm, cfg.profile, store, extra_prompt=cfg.llm.extra_prompt
+        )
+        scored = await scorer.score_all([over_years, no_years])
+
+    assert scorer.errors == 0
+    assert request_bodies, "the ollama chat endpoint must have been called"
+    for body in request_bodies:
+        assert body["format"] == PostingFacts.model_json_schema()
+        system_text = body["messages"][0]["content"]
+        assert "SECRET-BLOCK" not in system_text, "no extra_prompt seam in facts mode"
+        assert "Scoring guidance" not in system_text, "judge-mode SYSTEM wording leaked"
+
+    by_title = {s.job.title: s for s in scored}
+    skipped = by_title["Senior Energy Data Scientist"]
+    assert skipped.fit is not None
+    assert skipped.fit.verdict == Verdict.SKIP
+    assert years_quote in skipped.fit.reason
+    assert skipped.fit.fit_score <= cfg.profile.min_report_score - 1
+
+    reported = by_title["Graduate Energy Data Scientist"]
+    assert reported.fit is not None
+    assert reported.fit.fit_score == 70
+
+    # End to end: the rule-skipped posting never reaches the digest (its
+    # score is capped below min_report_score by design), only the posting
+    # judged on fit_score alone does.
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "id": 1,
+                        "title": "Senior Energy Data Scientist",
+                        "location": {"name": "London, UK"},
+                        "absolute_url": "https://boards.greenhouse.io/acme/jobs/1",
+                        "content": over_years_description,
+                        "updated_at": "2026-08-20T10:00:00Z",
+                    },
+                    {
+                        "id": 2,
+                        "title": "Graduate Energy Data Scientist",
+                        "location": {"name": "London, UK"},
+                        "absolute_url": "https://boards.greenhouse.io/acme/jobs/2",
+                        "content": no_years_description,
+                        "updated_at": "2026-08-20T10:00:00Z",
+                    },
+                ]
+            },
+        )
+    )
+    result = await run_scan(cfg, dry_run=True)
+    assert [s.job.title for s in result.reportable] == ["Graduate Energy Data Scientist"]
