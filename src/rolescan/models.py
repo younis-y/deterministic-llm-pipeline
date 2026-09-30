@@ -13,7 +13,14 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Annotated, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 __all__ = [
     "Confidence",
@@ -209,6 +216,19 @@ class FitVerdict(BaseModel):
             "not evidence. Drives what to learn next."
         ),
     )
+
+    @field_validator("blockers", "keywords_missing", mode="before")
+    @classmethod
+    def _cap_list(cls, v: object, info: ValidationInfo) -> object:
+        """Keep the first N items instead of rejecting the whole verdict.
+
+        Same reasoning as `_one_sentence`: hosted structured outputs do not
+        enforce `maxItems` either, and on 2026-09-30 Haiku returned nine
+        missing keywords for one posting, which lost a verdict already paid
+        for. The order the model gives is its own priority order.
+        """
+        limit = {"blockers": 5, "keywords_missing": 8}[info.field_name or ""]
+        return v[:limit] if isinstance(v, list) else v
 
     @field_validator("reason", mode="before")
     @classmethod

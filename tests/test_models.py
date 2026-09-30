@@ -231,3 +231,15 @@ def test_a_non_string_reason_is_still_a_type_error() -> None:
     """Trimming must not turn the field into "accepts anything"."""
     with pytest.raises(ValidationError):
         _verdict(reason=17)
+
+
+def test_overlong_lists_are_trimmed_not_rejected() -> None:
+    # Hosted structured outputs do not enforce maxItems: Haiku returned nine
+    # missing keywords on a real posting and the paid-for verdict was lost.
+    v = FitVerdict(
+        fit_score=70, verdict="consider", confidence="high", reason="Fits.",
+        blockers=[f"b{i}" for i in range(7)],
+        keywords_missing=[f"k{i}" for i in range(9)],
+    )
+    assert v.blockers == [f"b{i}" for i in range(5)]
+    assert v.keywords_missing == [f"k{i}" for i in range(8)]
