@@ -8,6 +8,9 @@ have a key, `ollama` for a local model, and neither when `llm.enabled` is off.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
 import httpx
 import pytest
 import respx
@@ -17,7 +20,9 @@ from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob
 from rolescan.scoring import FitScorer
 from rolescan.scoring.judges import (
+    TRIAGE_MAX_TOKENS,
     TRIAGE_REASON,
+    AnthropicJudge,
     available_judges,
     get_judge,
     triage_schema,
@@ -696,11 +701,11 @@ async def test_cascade_is_skipped_when_triage_is_not_actually_cheaper() -> None:
     respx.post("http://localhost:11434/api/chat").mock(side_effect=capture)
     scorer = _cascade_scorer()
     monkey = scorer._get_judge()
-    type(monkey).cheap_triage = False  # type: ignore[misc]
+    type(monkey).cheap_triage = False
     try:
         await scorer.score_all([_job()])
     finally:
-        type(monkey).cheap_triage = True  # type: ignore[misc]
+        type(monkey).cheap_triage = True
     assert calls == 1
 
 
@@ -748,3 +753,76 @@ async def test_a_cached_triage_stub_is_refetched_once_the_gate_drops() -> None:
     assert scored[0].llm_cached is False
     assert scored[0].fit is not None
     assert scored[0].fit.reason != TRIAGE_REASON
+
+
+# --- anthropic triage --------------------------------------------------------
+
+
+class _FakeMessages:
+    """Stands in for `AsyncAnthropic().messages`; records every call."""
+
+    def __init__(self, score: int = 30, *, empty: bool = False) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.score = score
+        self.empty = empty
+
+    async def parse(self, **kw: Any) -> SimpleNamespace:
+        self.calls.append(kw)
+        if self.empty:
+            return SimpleNamespace(parsed_output=None, stop_reason="max_tokens")
+        fmt = kw["output_format"]
+        if fmt is FitVerdict:
+            return SimpleNamespace(parsed_output=FitVerdict(**VERDICT_JSON))
+        return SimpleNamespace(
+            parsed_output=fmt(fit_score=self.score, verdict="skip", confidence="high")
+        )
+
+
+def _anthropic(fake: _FakeMessages) -> AnthropicJudge:
+    judge = AnthropicJudge(LLMConfig(backend="anthropic", api_key="k"))
+    judge._client = SimpleNamespace(messages=fake)
+    return judge
+
+
+async def test_anthropic_triage_asks_only_for_the_gate_fields() -> None:
+    fake = _FakeMessages()
+    v = await _anthropic(fake).triage("sys", "user")
+    call = fake.calls[0]
+    assert call["max_tokens"] == TRIAGE_MAX_TOKENS
+    schema = call["output_format"].model_json_schema()
+    assert set(schema["properties"]) == {"fit_score", "verdict", "confidence"}
+    assert schema["properties"]["fit_score"]["maximum"] == 100
+    assert v.reason == TRIAGE_REASON and v.fit_score == 30
+
+
+def test_anthropic_declares_a_cheap_triage() -> None:
+    assert AnthropicJudge.cheap_triage is True
+
+
+async def test_anthropic_triage_with_no_output_raises_runtime_error() -> None:
+    with pytest.raises(RuntimeError, match="no triage verdict"):
+        await _anthropic(_FakeMessages(empty=True)).triage("s", "u")
+
+
+async def test_cascade_now_runs_for_anthropic() -> None:
+    fake = _FakeMessages(score=30)
+    scorer = FitScorer(
+        LLMConfig(backend="anthropic", api_key="k"),
+        ProfileConfig(min_report_score=55),
+    )
+    scorer._judge = _anthropic(fake)
+    [out] = await scorer.score_all([_job()])
+    assert len(fake.calls) == 1, "below the gate: triage only, no full verdict"
+    assert out.fit is not None and out.fit.reason == TRIAGE_REASON
+
+
+async def test_cascade_still_fetches_the_full_verdict_above_the_gate() -> None:
+    fake = _FakeMessages(score=80)
+    scorer = FitScorer(
+        LLMConfig(backend="anthropic", api_key="k"),
+        ProfileConfig(min_report_score=55),
+    )
+    scorer._judge = _anthropic(fake)
+    [out] = await scorer.score_all([_job()])
+    assert [c["output_format"] is FitVerdict for c in fake.calls] == [False, True]
+    assert out.fit is not None and out.fit.reason == VERDICT_JSON["reason"]

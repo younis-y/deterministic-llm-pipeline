@@ -23,13 +23,13 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from importlib.metadata import entry_points
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar
 
 import httpx
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from rolescan.config import LLMConfig
-from rolescan.models import FitVerdict
+from rolescan.models import Confidence, FitVerdict, Verdict
 
 __all__ = [
     "Judge",
@@ -232,6 +232,7 @@ class AnthropicJudge(Judge):
     api_key_env = "ANTHROPIC_API_KEY"
     requires_module = "anthropic"
     description = "Claude API. Best quality. Needs ANTHROPIC_API_KEY."
+    cheap_triage = True
 
     def __init__(self, cfg: LLMConfig) -> None:
         super().__init__(cfg)
@@ -260,6 +261,32 @@ class AnthropicJudge(Judge):
             raise RuntimeError(msg)
         return parsed
 
+    async def triage(self, system: str, user: str) -> FitVerdict:
+        """Score and route without paying for prose the digest will not print.
+
+        Same contract as the Ollama triage: only the fields the gate needs,
+        under a small output cap, returned as a FitVerdict stub marked with
+        TRIAGE_REASON.
+        """
+        response = await self._get_client().messages.parse(
+            model=self.cfg.model,
+            max_tokens=TRIAGE_MAX_TOKENS,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            output_format=_TriageOutput,
+        )
+        parsed = response.parsed_output
+        if parsed is None:
+            stop = getattr(response, "stop_reason", None)
+            msg = f"claude returned no triage verdict (stop_reason={stop!r})"
+            raise RuntimeError(msg)
+        return FitVerdict(
+            fit_score=parsed.fit_score,
+            verdict=parsed.verdict,
+            confidence=parsed.confidence,
+            reason=TRIAGE_REASON,
+        )
+
 
 #: Marks a verdict produced by the triage pass, which was never asked for a
 #: reason. It is a sentinel, not prose for a reader: FitScorer matches on it to
@@ -283,6 +310,20 @@ def triage_schema() -> dict[str, Any]:
     if "$defs" in full:
         schema["$defs"] = full["$defs"]
     return schema
+
+
+#: Enough for the three gate fields as JSON (about 20 tokens) with headroom.
+TRIAGE_MAX_TOKENS = 64
+
+
+#: FitVerdict cut down to the gate fields, reusing its field definitions so
+#: the bounds and descriptions cannot drift apart.
+class _TriageOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fit_score: Annotated[int, Field(ge=0, le=100)]
+    verdict: Verdict
+    confidence: Confidence
 
 
 @register
