@@ -85,6 +85,17 @@ class ScanResult:
     asked for", which is a deliberate keyword-only run and records normally;
     non-empty means "a judge was asked for and could not start", which must
     not bury postings it never looked at."""
+    enricher_unusable: str = ""
+    """Why the configured enricher could not be used, or "".
+
+    Deliberately a SEPARATE field from `llm_unusable`, not folded into it. A
+    misspelt `llm.enricher` does not stop the judge from scoring - `FitScorer`
+    just runs without the extra step - so it must not trip anything that reads
+    `llm_unusable` as "the judge backend cannot run": `_record_assessed`'s
+    `backend_broke`, the digest's "did not run at all" / "pre-scan backend
+    check failed" notes, or the CLI's matching warnings. Those all behave
+    exactly as if no enricher had been configured. This field exists purely so
+    the digest and the CLI can print their own, distinct one-line note."""
     stale: int = 0
     """Postings dropped for being older than `profile.max_age_days`."""
     quiet_sources: list[tuple[str, int]] = field(default_factory=list)
@@ -174,27 +185,35 @@ def deduplicate(jobs: list[Job]) -> list[Job]:
     return list(best.values())
 
 
-async def _preflight(cfg: Config) -> str:
-    """Why the configured judge cannot be used at all, or "".
+async def _preflight(cfg: Config) -> tuple[str, str]:
+    """(why the configured judge cannot be used at all, why the configured
+    enricher cannot be used), each "" if it can.
 
-    Run before anything is fetched, so a backend that cannot start says so
-    instead of quietly degrading the whole digest to keyword scores. Checked
-    second, after the backend: a misspelled `llm.enricher` does not stop
-    scoring itself (`FitScorer` falls back to no enrichment), but it is the
-    same class of silent misconfiguration a bad backend is, so it is
-    surfaced the same way rather than only as a warning once a scan is
-    already under way.
+    Run before anything is fetched, so either kind of misconfiguration says
+    so up front instead of surfacing later as a silently degraded digest.
+    Returned as two SEPARATE strings on purpose (round 2 of this task's
+    review folded the enricher reason into the backend one, which then read
+    as a broken judge backend everywhere `llm_unusable` is consulted -
+    `_record_assessed`'s `backend_broke`, the digest's "did not run at all"
+    note, the CLI's matching warning - for a fault that does not stop
+    scoring at all, only the extra step an enricher adds on top of it).
     """
-    reason = await unusable_backend_reason(cfg.llm)
-    if not reason:
-        reason = unusable_enricher_reason(cfg.llm)
-    if reason:
+    backend_reason = await unusable_backend_reason(cfg.llm)
+    if backend_reason:
         log.warning(
             "LLM scoring is unavailable: %s. Postings will be ranked on "
             "keyword score alone.",
-            reason,
+            backend_reason,
         )
-    return reason
+    enricher_reason = unusable_enricher_reason(cfg.llm)
+    if enricher_reason:
+        log.warning(
+            "enricher %r is not available (%s); postings are scored normally "
+            "without the extra step",
+            cfg.llm.enricher,
+            enricher_reason,
+        )
+    return backend_reason, enricher_reason
 
 
 async def _drop_already_handled(
@@ -397,7 +416,7 @@ async def run_scan(
     """
     result = ScanResult(dry_run=dry_run, llm_backend=cfg.llm.backend)
     if check_llm:
-        result.llm_unusable = await _preflight(cfg)
+        result.llm_unusable, result.enricher_unusable = await _preflight(cfg)
 
     # The store opens BEFORE fetching, not after: the structured source needs
     # the posting cache during fetch to skip detail pages whose sitemap lastmod

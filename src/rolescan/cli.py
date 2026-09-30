@@ -97,6 +97,15 @@ def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
     that could not run, a run that reported success, and an empty digest with
     nothing in it saying why.
     """
+    if result.enricher_unusable:
+        # Its own note, printed regardless of `llm_unusable`: the judge is
+        # fine here, only the (optional) extra step an enricher adds is not,
+        # so this must never look like the backend warnings below.
+        console.print(
+            f"\n[yellow]{result.enricher_unusable}.[/] "
+            "[dim]Postings are scored normally, just without that extra "
+            "step.[/]\n"
+        )
     if not result.llm_unusable:
         return
     if not (result.llm_calls or result.llm_cached):

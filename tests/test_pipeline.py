@@ -10,7 +10,7 @@ import respx
 
 from conftest import OLLAMA_MODEL, mock_ollama
 from rolescan.config import Config
-from rolescan.digest import render_markdown
+from rolescan.digest import render_html, render_markdown
 from rolescan.models import (
     Confidence,
     FitVerdict,
@@ -470,7 +470,12 @@ async def test_preflight_reports_an_unknown_enricher_before_fetching(
     """A working backend does not hide a misspelled `llm.enricher`: the same
     "fail fast, before anything is fetched" contract a bad backend gets.
     `anthropic` with a (fake) key needs no network for its own preflight, so
-    this isolates the enricher check."""
+    this isolates the enricher check.
+
+    The two reasons are returned separately (round 2 of this task's review):
+    an unknown enricher must never be folded into the backend reason, since
+    every caller of `llm_unusable` - the digest, the CLI, `_record_assessed`
+    - treats a non-empty value as "the judge backend cannot run"."""
     cfg = _cfg(
         tmp_path,
         {
@@ -480,8 +485,9 @@ async def test_preflight_reports_an_unknown_enricher_before_fetching(
             "enricher": "not-a-real-enricher",
         },
     )
-    reason = await _preflight(cfg)
-    assert "not-a-real-enricher" in reason
+    backend_reason, enricher_reason = await _preflight(cfg)
+    assert backend_reason == "", "the backend itself is fine"
+    assert "not-a-real-enricher" in enricher_reason
 
 
 @respx.mock
@@ -538,6 +544,54 @@ async def test_a_healthy_run_still_records_what_it_judged(tmp_path: Path) -> Non
     assert len(result.reportable) == 1
     assert len(await _seen_uids(tmp_path / "seen.db")) == 1
     assert (await run_scan(cfg)).already_seen == 1
+
+
+@respx.mock
+async def test_a_healthy_run_with_an_unknown_enricher_scores_normally(
+    tmp_path: Path,
+) -> None:
+    """Round 2 of this task's review: a misspelt `llm.enricher` must not be
+    mistaken for a broken judge backend anywhere downstream. The backend here
+    is genuinely healthy (`mock_ollama`), so `llm_unusable` must stay empty,
+    `enricher_unusable` must carry the (separate) reason, and every normal
+    consequence of a healthy run - postings scored, recorded in `seen`, the
+    digest's ordinary content - must be unaffected."""
+    mock_ollama()
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json=_payload(
+                "Graduate Energy Data Scientist",
+                "Python, trading, energy, day-ahead forecasting.",
+            ),
+        )
+    )
+    cfg = _cfg(
+        tmp_path,
+        {
+            "enabled": True,
+            "backend": "ollama",
+            "model": OLLAMA_MODEL,
+            "mode": "judge",
+            "enricher": "not-a-real-enricher",
+        },
+    )
+    result = await run_scan(cfg)
+
+    assert result.llm_unusable == "", "the backend is healthy"
+    assert "not-a-real-enricher" in result.enricher_unusable
+    assert len(result.reportable) == 1
+    assert len(await _seen_uids(tmp_path / "seen.db")) == 1
+
+    md = render_markdown(result)
+    assert "not-a-real-enricher" in md
+    assert "did not run at all" not in md
+    assert "pre-scan backend check failed" not in md
+
+    html = render_html(result)
+    assert "not-a-real-enricher" in html
+    assert "did not run at all" not in html
+    assert "pre-scan backend check failed" not in html
 
 
 @respx.mock

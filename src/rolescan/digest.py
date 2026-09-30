@@ -326,7 +326,13 @@ def _llm_error_hint(result: ScanResult) -> _Frags:
 def _failures(result: ScanResult) -> list[str]:
     failed = result.failed_sources
     skipped = result.skipped_sources
-    if not failed and not skipped and not result.llm_errors and not result.llm_unusable:
+    if (
+        not failed
+        and not skipped
+        and not result.llm_errors
+        and not result.llm_unusable
+        and not result.enricher_unusable
+    ):
         return []
     lines = ["", "---", ""]
     if result.llm_unusable and not _llm_ran(result):
@@ -353,6 +359,16 @@ def _failures(result: ScanResult) -> list[str]:
             f"{result.llm_unusable}.",
             "",
             _PROBE_ONLY_BODY,
+            "",
+        ]
+    if result.enricher_unusable:
+        # Deliberately separate from the two branches above: the judge itself
+        # is fine, only the (optional) extra step an enricher adds is not, so
+        # this must never read like "scoring did not run" or "the backend
+        # check failed" - those are a different failure entirely.
+        lines += [
+            f"**{result.enricher_unusable}.** Postings are scored normally, "
+            "just without that extra step.",
             "",
         ]
     if result.llm_errors:
@@ -657,9 +673,10 @@ def _sources_html(reports: list[SourceReport]) -> str:
 def _llm_notes_html(result: ScanResult) -> list[str]:
     """The HTML counterpart of the LLM half of `_failures`.
 
-    The branches are the same three and must stay that way: scoring never ran,
-    the probe failed but scoring ran anyway, and some calls failed. The prose
-    itself is shared, so only these conditions can drift.
+    The branches are the same four and must stay that way: scoring never ran,
+    the probe failed but scoring ran anyway, the (optional) enricher could not
+    be used, and some calls failed. The prose itself is shared, so only these
+    conditions can drift.
     """
     out: list[str] = []
     if result.llm_unusable and not _llm_ran(result):
@@ -675,6 +692,15 @@ def _llm_notes_html(result: ScanResult) -> list[str]:
                 "The pre-scan backend check failed, but scoring ran anyway. "
                 f"{result.llm_unusable}.",
                 [_esc(_PROBE_ONLY_BODY)],
+            )
+        )
+    if result.enricher_unusable:
+        # Separate from the two branches above on purpose: the judge itself is
+        # fine here, only the (optional) extra step an enricher adds is not.
+        out.append(
+            _note_html(
+                f"{result.enricher_unusable}.",
+                ["Postings are scored normally, just without that extra step."],
             )
         )
     if result.llm_errors:
@@ -702,6 +728,7 @@ def _failures_html(result: ScanResult) -> list[str]:
         and not result.quiet_sources
         and not result.llm_errors
         and not result.llm_unusable
+        and not result.enricher_unusable
     ):
         return []
     out = [f'<hr style="{_RULE}">', *_llm_notes_html(result)]

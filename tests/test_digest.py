@@ -370,6 +370,48 @@ def test_html_keeps_the_unusable_backend_note() -> None:
     assert "It is not a quiet market." in html
 
 
+# --- an unusable enricher is a distinct note, never the backend one --------
+#
+# Round 2 of this task's review: `_preflight` used to fold the enricher
+# reason into `llm_unusable`, so every one of these consumers printed the
+# judge-backend failure text for a merely misspelt `llm.enricher`.
+
+_ENRICHER_REASON = (
+    "llm.enricher 'not-a-real-enricher' is not a registered enricher "
+    "(registered: none)"
+)
+
+
+def test_markdown_notes_an_unusable_enricher_distinctly() -> None:
+    text = render_markdown(
+        ScanResult(llm_backend="ollama", enricher_unusable=_ENRICHER_REASON)
+    )
+    assert "not-a-real-enricher" in text
+    assert "did not run at all" not in text
+    assert "pre-scan backend check failed" not in text
+
+
+def test_html_notes_an_unusable_enricher_distinctly() -> None:
+    html = render_html(
+        ScanResult(llm_backend="ollama", enricher_unusable=_ENRICHER_REASON)
+    )
+    assert "not-a-real-enricher" in html
+    assert "did not run at all" not in html
+    assert "pre-scan backend check failed" not in html
+
+
+def test_an_unusable_enricher_alone_does_not_trip_the_backend_branches() -> None:
+    """A healthy run (`llm_unusable == ""`) with only the enricher unusable
+    must not fall into either `llm_unusable` branch of `_failures` /
+    `_llm_notes_html` - those are gated on `llm_unusable`, not on this field,
+    and must stay silent when it alone is set."""
+    result = ScanResult(llm_backend="ollama", enricher_unusable=_ENRICHER_REASON)
+    assert "LLM scoring did not run at all" not in render_markdown(result)
+    assert "The pre-scan backend check failed" not in render_markdown(result)
+    assert "LLM scoring did not run at all" not in render_html(result)
+    assert "The pre-scan backend check failed" not in render_html(result)
+
+
 def test_html_keeps_the_backend_specific_error_hint() -> None:
     html = render_html(
         ScanResult(

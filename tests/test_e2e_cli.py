@@ -457,3 +457,33 @@ def test_a_failed_preflight_does_not_claim_nothing_was_scored(tmp_path: Path) ->
     assert "did not run at all" not in text
     assert "scoring ran anyway" in text
     assert "confidence" in text, "the postings really do carry LLM scores"
+
+
+ENRICHER_CONFIG = OLLAMA_CONFIG.replace(
+    f"model: {OLLAMA_MODEL}\n  mode: judge",
+    f"model: {OLLAMA_MODEL}\n  mode: judge\n  enricher: not-a-real-enricher",
+)
+
+
+@respx.mock
+def test_an_unknown_enricher_does_not_claim_the_backend_failed(tmp_path: Path) -> None:
+    """Round 2 of this task's review: a misspelt `llm.enricher` on an
+    otherwise healthy backend must print its own note, never the "backend
+    check failed" / "did not run at all" language those exist for."""
+    cfg = _project(tmp_path, ENRICHER_CONFIG)
+    mock_ollama(model=OLLAMA_MODEL)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+
+    result = runner.invoke(app, ["scan", "-c", str(cfg), "--no-email"])
+    assert result.exit_code == 0, result.output
+    out = plain(result.output)
+    assert "not-a-real-enricher" in out
+    assert "LLM scoring did not run" not in out
+    assert "backend check failed" not in out
+
+    text = (tmp_path / "digests" / "latest.md").read_text()
+    assert "not-a-real-enricher" in text
+    assert "did not run at all" not in text
+    assert "pre-scan backend check failed" not in text
