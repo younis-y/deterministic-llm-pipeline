@@ -1,6 +1,6 @@
 [project]
 name = "rolescan"
-version = "2.3.1"
+version = "2.4.0"
 description = "Typed, async, plugin-based job scanner with LLM fit scoring and CV variant matching"
 readme = "README.md"
 requires-python = ">=3.11"
