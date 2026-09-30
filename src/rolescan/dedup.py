@@ -5,7 +5,14 @@ location). That misses the same role written two ways: on 2026-09-30 one
 Sanderson "Data Engineer" arrived as "South East London, London" and again as
 "London, UK", and the digest listed it twice.
 
-This pass compares normalised company, normalised city and title similarity.
+This pass compares normalised company, normalised city and title. Two titles
+count as one role only when their word sets are equal after cleaning and
+singularising plurals, AND their character similarity reaches
+`TITLE_SIMILARITY`. Similarity alone merged different roles ("Data Engineer I"
+vs "Data Engineer II", "Senior Data Engineer" vs "Senior Data Engineer II"),
+and because the loser was then marked seen, it was hidden for good. The
+word-set rule still lets "Data Engineer" and "Data Engineers" merge.
+
 It never changes `Job.uid`, which is also the `seen` key: altering it would
 make every stored posting look new.
 
@@ -20,8 +27,9 @@ from difflib import SequenceMatcher
 
 from rolescan.models import Job
 
-#: Starting point, pinned by tests: "Data Engineer" vs "Senior Data Engineer"
-#: scores 0.79 and must stay separate.
+#: Second condition of the title rule, after word-set equality. Pinned by
+#: tests: "Data Engineer" vs "Senior Data Engineer" scores 0.79 and must stay
+#: separate.
 TITLE_SIMILARITY = 0.9
 
 _LEGAL_SUFFIXES = frozenset(
@@ -86,6 +94,28 @@ def title_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, _clean(a), _clean(b)).ratio()
 
 
+def _singular(word: str) -> str:
+    return word[:-1] if len(word) > 3 and word.endswith("s") else word
+
+
+def title_words(title: str) -> frozenset[str]:
+    """Cleaned title words, one trailing "s" stripped from words over 3 chars."""
+    return frozenset(_singular(w) for w in _clean(title).split())
+
+
+def same_title(a: str, b: str) -> bool:
+    """Whether two titles name the same role.
+
+    Both conditions are required: equal word sets (so a grade, a duration or a
+    specialism in one title and not the other keeps them apart) and character
+    similarity at or above `TITLE_SIMILARITY`.
+    """
+    return (
+        title_words(a) == title_words(b)
+        and title_similarity(a, b) >= TITLE_SIMILARITY
+    )
+
+
 def merge_near_duplicates(jobs: list[Job]) -> list[Job]:
     """Drop near-duplicates, keeping the copy with the longest description.
 
@@ -101,9 +131,7 @@ def merge_near_duplicates(jobs: list[Job]) -> list[Job]:
             keep.add(id(job))
             continue
         bucket = buckets.setdefault((company, city_key(job.location)), [])
-        if any(
-            title_similarity(k.title, job.title) >= TITLE_SIMILARITY for k in bucket
-        ):
+        if any(same_title(k.title, job.title) for k in bucket):
             continue
         bucket.append(job)
         keep.add(id(job))

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from rolescan.dedup import city_key, company_key, merge_near_duplicates
 from rolescan.models import Job
 
@@ -105,3 +107,38 @@ def test_keys() -> None:
     assert city_key("London Area, United Kingdom") == "london"
     assert city_key("United Kingdom") == ""
     assert city_key("") == ""
+
+
+def _pair_merges(t1: str, t2: str) -> bool:
+    a = _job("Drax", t1, "London", "https://x/1", "longer description")
+    b = _job("Drax", t2, "London", "https://x/2", "short")
+    return len(merge_near_duplicates([a, b])) == 1
+
+
+@pytest.mark.parametrize(
+    ("t1", "t2"),
+    [
+        ("Data Engineer I", "Data Engineer II"),
+        ("6 month FTC", "12 month FTC"),
+        ("Senior Data Engineer", "Senior Data Engineer II"),
+        ("MLE", "MLE - NLP"),
+    ],
+)
+def test_different_roles_with_similar_titles_stay_separate(t1: str, t2: str) -> None:
+    # Each pair was merged by a similarity-only rule, and `seen` then hid the
+    # loser permanently.
+    assert not _pair_merges(t1, t2)
+    assert not _pair_merges(t2, t1)
+
+
+@pytest.mark.parametrize(
+    ("t1", "t2"),
+    [
+        ("Data Engineer", "Data Engineers"),
+        ("Data Engineer", "Data Engineer"),
+        ("Senior Data Engineer", "senior data engineer"),
+    ],
+)
+def test_same_role_written_slightly_differently_merges(t1: str, t2: str) -> None:
+    assert _pair_merges(t1, t2)
+    assert _pair_merges(t2, t1)
