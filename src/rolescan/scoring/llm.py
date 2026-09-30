@@ -320,16 +320,41 @@ class FitScorer:
         moment one is configured, so a cache read of the FINAL verdict (see
         `final_key`) validates as the enriched subclass rather than refusing
         its extra fields.
+
+        `get_enricher` raises for an unknown `cfg.enricher` name - the right
+        thing for `_preflight` to fail fast on before a scan starts (see
+        `unusable_enricher_reason`), but the wrong thing for a scorer already
+        mid-run to do to every posting that reaches this method. The build
+        is only ever attempted once (`_enricher_built` is set before the
+        `try`, not after), so a bad name is logged once, not once per
+        posting, and every posting afterwards is scored exactly as if no
+        enricher had been configured at all.
         """
         if not self._enricher_built:
-            self._enricher = get_enricher(self.cfg)
+            self._enricher_built = True
+            try:
+                self._enricher = get_enricher(self.cfg)
+            except Exception as e:
+                log.warning(
+                    "enricher %r is unusable, scoring without it: %s",
+                    self.cfg.enricher,
+                    e,
+                )
+                self._enricher = None
             if self._enricher is not None:
                 self.verdict_model = self._enricher.verdict_model
-            self._enricher_built = True
         return self._enricher
 
     async def _maybe_enrich(self, job: Job, verdict: FitVerdict) -> FitVerdict:
         """Run the configured enricher, if any, for a verdict worth it.
+
+        Guarded by the same semaphore and call ceiling as every other LLM
+        call (`_call_judge`, `_call_facts`): an enricher is, by construction,
+        a second model call, and letting it run outside `self._sem` would let
+        a `max_concurrent=1` config still fire N enrichments at once, and
+        skipping the `max_calls_per_run` check would let a run that hit its
+        ceiling on facts calls alone go on to spend an unbounded number of
+        enrichment calls on top of it.
 
         Any failure keeps the plain verdict and is logged - never counted
         against `self.errors`, and never a reason to drop the posting.
@@ -343,11 +368,19 @@ class FitScorer:
             return verdict
         if verdict.fit_score < self.profile.min_report_score:
             return verdict
-        try:
-            return await enricher.enrich(job, verdict)
-        except Exception as e:
-            log.warning("enrichment failed for %r: %s", job.title, e)
-            return verdict
+        async with self._sem:
+            if self._calls >= self.cfg.max_calls_per_run:
+                log.info(
+                    "LLM call ceiling reached, skipping enrichment for %r",
+                    job.title,
+                )
+                return verdict
+            self._calls += 1
+            try:
+                return await enricher.enrich(job, verdict)
+            except Exception as e:
+                log.warning("enrichment failed for %r: %s", job.title, e)
+                return verdict
 
     def _system(self) -> str:
         return SYSTEM.format(

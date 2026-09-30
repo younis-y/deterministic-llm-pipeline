@@ -27,6 +27,7 @@ from rolescan.scoring import (
     FitScorer,
     score_keywords,
     unusable_backend_reason,
+    unusable_enricher_reason,
 )
 from rolescan.sources import get_source
 from rolescan.sources.base import _REGISTRY, PostingCache, SourceSkipped
@@ -177,9 +178,16 @@ async def _preflight(cfg: Config) -> str:
     """Why the configured judge cannot be used at all, or "".
 
     Run before anything is fetched, so a backend that cannot start says so
-    instead of quietly degrading the whole digest to keyword scores.
+    instead of quietly degrading the whole digest to keyword scores. Checked
+    second, after the backend: a misspelled `llm.enricher` does not stop
+    scoring itself (`FitScorer` falls back to no enrichment), but it is the
+    same class of silent misconfiguration a bad backend is, so it is
+    surfaced the same way rather than only as a warning once a scan is
+    already under way.
     """
     reason = await unusable_backend_reason(cfg.llm)
+    if not reason:
+        reason = unusable_enricher_reason(cfg.llm)
     if reason:
         log.warning(
             "LLM scoring is unavailable: %s. Postings will be ranked on "

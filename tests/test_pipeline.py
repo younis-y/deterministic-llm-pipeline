@@ -23,6 +23,7 @@ from rolescan.pipeline import (
     SourceReport,
     _check_coverage,
     _drop_stale,
+    _preflight,
     deduplicate,
     run_scan,
 )
@@ -461,6 +462,26 @@ async def test_a_deliberate_keyword_only_run_does_record_what_it_judged(
 
     second = await run_scan(cfg)
     assert second.already_seen == 1, "a keyword-only run must not repeat itself"
+
+
+async def test_preflight_reports_an_unknown_enricher_before_fetching(
+    tmp_path: Path,
+) -> None:
+    """A working backend does not hide a misspelled `llm.enricher`: the same
+    "fail fast, before anything is fetched" contract a bad backend gets.
+    `anthropic` with a (fake) key needs no network for its own preflight, so
+    this isolates the enricher check."""
+    cfg = _cfg(
+        tmp_path,
+        {
+            "enabled": True,
+            "backend": "anthropic",
+            "api_key": "fake-key",
+            "enricher": "not-a-real-enricher",
+        },
+    )
+    reason = await _preflight(cfg)
+    assert "not-a-real-enricher" in reason
 
 
 @respx.mock

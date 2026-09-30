@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rolescan.scoring.enrich import Enricher, unusable_enricher_reason
 from rolescan.scoring.judges import (
     Judge,
     available_judges,
@@ -12,10 +13,12 @@ from rolescan.scoring.keyword import score_keywords
 from rolescan.scoring.llm import FitScorer
 
 __all__ = [
+    "Enricher",
     "FitScorer",
     "Judge",
     "available_judges",
     "get_judge",
     "score_keywords",
     "unusable_backend_reason",
+    "unusable_enricher_reason",
 ]

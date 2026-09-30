@@ -4,7 +4,7 @@ Facts mode's job is to decide whether a posting is worth the reader's time -
 that decision is `rolescan.scoring.rules.decide`, and it is the same for
 every caller. What a caller does ONCE a posting has cleared that bar can
 differ enormously, and most of it is a second, more expensive model call: a
-private caller might tailor an application document, draft an outreach note,
+private caller might produce a supporting document, draft an outreach note,
 or run a domain-specific check that would be wasted on the roles the reader
 was never going to pursue.
 
@@ -38,6 +38,7 @@ __all__ = [
     "available_enrichers",
     "get_enricher",
     "register_enricher",
+    "unusable_enricher_reason",
 ]
 
 log = logging.getLogger(__name__)
@@ -114,6 +115,27 @@ def get_enricher(cfg: LLMConfig) -> Enricher | None:
         msg = f"unknown enricher {cfg.enricher!r}. Registered: {known}"
         raise ValueError(msg) from None
     return cls(cfg)
+
+
+def unusable_enricher_reason(cfg: LLMConfig) -> str:
+    """Why the configured enricher cannot be used, or "" if it can (or none
+    is configured).
+
+    A static, no-network check - unlike `judges.unusable_backend_reason`, an
+    enricher has no preflight of its own, since it does no work until a
+    posting has already cleared the gate. Checked before anything is
+    fetched all the same, and reported the same way a bad backend is (see
+    `rolescan.pipeline._preflight`), so a misspelled `llm.enricher` is a line
+    in the digest up front rather than a warning buried once per posting deep
+    into a scan.
+    """
+    if not cfg.enricher or cfg.enricher in _REGISTRY:
+        return ""
+    known = ", ".join(sorted(_REGISTRY)) or "none"
+    return (
+        f"llm.enricher {cfg.enricher!r} is not a registered enricher "
+        f"(registered: {known})"
+    )
 
 
 load_plugins()

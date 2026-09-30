@@ -7,6 +7,8 @@ would raise rather than pass silently.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,7 @@ from rolescan.scoring.enrich import (
     available_enrichers,
     get_enricher,
     register_enricher,
+    unusable_enricher_reason,
 )
 from rolescan.scoring.facts import (
     FieldFact,
@@ -113,6 +116,26 @@ class _RaisingEnricher(Enricher):
         self.calls += 1
         msg = "enrichment backend is down"
         raise RuntimeError(msg)
+
+
+class _ConcurrencyTrackingEnricher(Enricher):
+    """Records how many `enrich` calls were in flight at once."""
+
+    name = "concurrency-enricher"
+
+    def __init__(self, cfg: LLMConfig) -> None:
+        super().__init__(cfg)
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.calls = 0
+
+    async def enrich(self, job: Job, verdict: FitVerdict) -> FitVerdict:
+        self.calls += 1
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        await asyncio.sleep(0.01)
+        self.in_flight -= 1
+        return verdict
 
 
 @pytest.fixture
@@ -323,3 +346,180 @@ async def test_final_verdict_is_rewritten_on_a_facts_cache_hit(
         )
         assert stored is not None
         assert stored.extra == "enriched"
+
+
+async def test_final_verdict_after_a_raising_enricher_reads_back_as_plain_fitverdict(
+    clean_registry: None, tmp_path: Path
+) -> None:
+    """Minor 4: a failed enrichment writes the PLAIN verdict under `final_key`,
+    never a half-built subclass instance."""
+    register_enricher(_RaisingEnricher)
+    facts = _facts(fit_score=80)
+
+    async with Store(tmp_path / "store.db") as store:
+        scorer, _judge = _facts_scorer(
+            facts, enricher_name="raising-enricher", store=store
+        )
+        job = _job()
+
+        [out] = await scorer.score_all([job])
+
+        assert out.fit is not None
+        assert type(out.fit) is FitVerdict
+
+        stored = await store.get_verdict(
+            final_key(job.job), scorer.cfg.cache_days, FitVerdict
+        )
+        assert stored is not None
+        assert type(stored) is FitVerdict
+        assert stored.fit_score == 80
+        assert stored.verdict == Verdict.APPLY
+
+
+# --- concurrency and the call ceiling apply to enrichment too --------------
+
+
+async def test_enrichment_never_exceeds_max_concurrent(
+    clean_registry: None, tmp_path: Path
+) -> None:
+    register_enricher(_ConcurrencyTrackingEnricher)
+    facts = _facts(fit_score=80)
+    job1 = _job()
+    job2 = ScoredJob(
+        job=Job(
+            source="test",
+            company="Acme",
+            title="Data Engineer 2",
+            location="London",
+            url="https://x/2",
+            description="Analyst role.",
+        ),
+        keyword_score=40,
+    )
+
+    async with Store(tmp_path / "store.db") as store:
+        # Both postings' facts are already cached, so no model call competes
+        # for the semaphore - only the two enrichments do.
+        await store.put_verdict(cache_key(job1.job, "facts"), facts)
+        await store.put_verdict(cache_key(job2.job, "facts"), facts)
+
+        cfg = LLMConfig(
+            enabled=True,
+            backend="ollama",
+            mode="facts",
+            enricher="concurrency-enricher",
+            max_concurrent=1,
+        )
+        scorer = FitScorer(cfg, ProfileConfig(min_report_score=55), store)
+
+        out = await scorer.score_all([job1, job2])
+
+        enricher = scorer._get_enricher()
+        assert isinstance(enricher, _ConcurrencyTrackingEnricher)
+        assert enricher.calls == 2
+        assert enricher.max_in_flight == 1, (
+            "max_concurrent=1 must serialise enrichment the same as any other LLM call"
+        )
+        assert scorer.errors == 0
+        assert all(o.fit is not None for o in out)
+
+
+async def test_enrichment_is_skipped_once_the_call_ceiling_is_reached(
+    clean_registry: None, tmp_path: Path
+) -> None:
+    register_enricher(_FakeEnricher)
+    facts = _facts(fit_score=80)
+    job = _job()
+
+    async with Store(tmp_path / "store.db") as store:
+        await store.put_verdict(cache_key(job.job, "facts"), facts)
+
+        cfg = LLMConfig(
+            enabled=True,
+            backend="ollama",
+            mode="facts",
+            enricher="fake-enricher",
+            max_calls_per_run=0,
+        )
+        scorer = FitScorer(cfg, ProfileConfig(min_report_score=55), store)
+
+        [out] = await scorer.score_all([job])
+
+        enricher = scorer._get_enricher()
+        assert isinstance(enricher, _FakeEnricher)
+        assert enricher.calls == [], "the ceiling was already reached"
+        assert out.fit is not None
+        assert out.fit.verdict == Verdict.APPLY
+        assert not isinstance(out.fit, _ExtraVerdict), "plain verdict kept when skipped"
+        assert scorer.errors == 0
+
+
+# --- an unknown enricher fails fast, not per posting -----------------------
+
+
+def test_unusable_enricher_reason_is_empty_when_unset() -> None:
+    assert unusable_enricher_reason(LLMConfig(enricher="")) == ""
+
+
+def test_unusable_enricher_reason_is_empty_when_known(clean_registry: None) -> None:
+    register_enricher(_FakeEnricher)
+    assert unusable_enricher_reason(LLMConfig(enricher="fake-enricher")) == ""
+
+
+def test_unusable_enricher_reason_names_an_unknown_enricher(
+    clean_registry: None,
+) -> None:
+    register_enricher(_FakeEnricher)
+    reason = unusable_enricher_reason(LLMConfig(enricher="not-a-real-enricher"))
+    assert "not-a-real-enricher" in reason
+    assert "fake-enricher" in reason
+
+
+async def test_a_scorer_with_an_unknown_enricher_logs_once_and_keeps_plain_verdicts(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    facts = _facts(fit_score=80)
+    cfg = LLMConfig(
+        enabled=True, backend="ollama", mode="facts", enricher="does-not-exist"
+    )
+    scorer = FitScorer(cfg, ProfileConfig(min_report_score=55))
+    scorer._judge = _FakeFactsJudge(cfg, facts)
+
+    jobs = [
+        _job(),
+        ScoredJob(
+            job=Job(
+                source="test",
+                company="Acme",
+                title="Data Engineer 2",
+                location="London",
+                url="https://x/2",
+                description="Analyst role.",
+            ),
+            keyword_score=40,
+        ),
+        ScoredJob(
+            job=Job(
+                source="test",
+                company="Acme",
+                title="Data Engineer 3",
+                location="London",
+                url="https://x/3",
+                description="Analyst role.",
+            ),
+            keyword_score=40,
+        ),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="rolescan.scoring.llm"):
+        out = await scorer.score_all(jobs)
+
+    assert scorer.errors == 0
+    for o in out:
+        assert o.fit is not None
+        assert o.fit.verdict == Verdict.APPLY
+        assert type(o.fit) is FitVerdict
+    warnings = [r for r in caplog.records if "does-not-exist" in r.getMessage()]
+    assert len(warnings) == 1, (
+        "an unusable enricher must be logged once, not once per posting"
+    )
