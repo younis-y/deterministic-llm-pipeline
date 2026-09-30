@@ -10,16 +10,50 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
-from rolescan.models import normalise_term
+from rolescan.models import JobField, Level, normalise_term
 
-__all__ = ["Config", "LLMConfig", "OutputConfig", "ProfileConfig", "SourceEntry"]
+__all__ = [
+    "Config",
+    "LLMConfig",
+    "OutputConfig",
+    "ProfileConfig",
+    "RulesConfig",
+    "SourceEntry",
+]
 
 log = logging.getLogger(__name__)
+
+
+class RulesConfig(BaseModel):
+    """Rules for filtering and evaluating job postings per candidate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_years_required: int | None = Field(
+        default=None,
+        ge=0,
+        description="Maximum years required. None disables this check.",
+    )
+    allowed_levels: list[Level] = Field(
+        default=[Level.graduate_entry, Level.junior, Level.mid, Level.not_stated],
+        description=(
+            "Allowed career levels. Graduate, junior, mid, "
+            "not stated by default."
+        ),
+    )
+    student_only: Literal["skip", "allow"] = Field(
+        default="allow",
+        description="Skip or allow student-marked roles. Allow by default.",
+    )
+    allowed_fields: list[JobField] | None = Field(
+        default=None,
+        description="Allowed job fields. None means any field.",
+    )
 
 
 class SourceEntry(BaseModel):
@@ -116,6 +150,10 @@ class ProfileConfig(BaseModel):
     posting with no date at all is kept - unknown is not the same as old."""
     min_report_score: Annotated[int, Field(ge=0, le=100)] = 55
     """Final gate. Postings below this never reach the digest."""
+    rules: RulesConfig | None = Field(
+        default=None,
+        description="Rules for filtering postings. None disables rule filtering.",
+    )
 
     @model_validator(mode="after")
     def _clean_blocker_terms(self) -> Self:
@@ -242,6 +280,17 @@ class LLMConfig(BaseModel):
     a re-run and the measured accuracy never described what shipped."""
     description_chars: Annotated[int, Field(ge=500)] = 6000
     cache_days: Annotated[int, Field(ge=0)] = 30
+    mode: Literal["facts", "judge"] = Field(
+        default="facts",
+        description=(
+            "Scoring mode: facts extracts facts and applies rules; "
+            "judge is single call."
+        ),
+    )
+    enricher: str = Field(
+        default="",
+        description="Optional enricher identifier for context processing.",
+    )
 
     _auto_disabled: bool = PrivateAttr(default=False)
     """Set when `_resolve_key` switched scoring off, rather than the user."""

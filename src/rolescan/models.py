@@ -23,9 +23,12 @@ from pydantic import (
 )
 
 __all__ = [
+    "BarKind",
     "Confidence",
     "FitVerdict",
     "Job",
+    "JobField",
+    "Level",
     "ScoredJob",
     "Verdict",
     "normalise_term",
@@ -74,6 +77,37 @@ class Confidence(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
+
+class Level(StrEnum):
+    """Career stage a role targets."""
+
+    graduate_entry = "graduate_entry"
+    junior = "junior"
+    mid = "mid"
+    senior = "senior"
+    lead_principal = "lead_principal"
+    not_stated = "not_stated"
+
+
+class JobField(StrEnum):
+    """Job category or specialty."""
+
+    data_engineering = "data_engineering"
+    ai_llm = "ai_llm"
+    data_science = "data_science"
+    analytics_bi = "analytics_bi"
+    software = "software"
+    other = "other"
+
+
+class BarKind(StrEnum):
+    """Type of eligibility barrier in a posting."""
+
+    nationality = "nationality"
+    clearance = "clearance"
+    work_auth = "work_auth"
+    other = "other"
 
 
 class Job(BaseModel):
