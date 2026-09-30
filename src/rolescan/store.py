@@ -23,11 +23,10 @@ import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
-from typing import ClassVar, Self
+from typing import ClassVar, Self, TypeVar, overload
 
 import aiosqlite
 from pydantic import BaseModel, ValidationError
-from typing_extensions import TypeVar
 
 from rolescan.models import FitVerdict, Job, ScoredJob
 
@@ -40,12 +39,13 @@ log = logging.getLogger(__name__)
 #: (see `rolescan.scoring.llm.cache_key`, which keeps the two out of each
 #: other's rows). Bound to `BaseModel` rather than `FitVerdict` because the
 #: row is opaque JSON to this module either way: it is validated back into
-#: whatever type the caller asks for, never inspected here. `default=` (PEP
-#: 696, via `typing_extensions` - already a transitive pydantic dependency)
-#: lets every existing `get_verdict(hash, days)` call, with no `model=`
-#: argument, keep inferring `FitVerdict` under mypy exactly as it did before
-#: this became generic.
-_CachedT = TypeVar("_CachedT", bound=BaseModel, default=FitVerdict)
+#: whatever type the caller asks for, never inspected here.
+#:
+#: No default on this TypeVar (PEP 696 needs `typing_extensions` on this
+#: Python floor, and core takes no new runtime dependency for it) - the two
+#: `@overload`s on `get_verdict` below give every no-`model=` call site
+#: `FitVerdict` under mypy instead, stdlib-only.
+_T = TypeVar("_T", bound=BaseModel)
 
 _MIGRATIONS: tuple[str, ...] = (
     """
@@ -208,12 +208,22 @@ class Store:
 
     # -- verdict cache ------------------------------------------------------
 
+    @overload
+    async def get_verdict(
+        self, content_hash: str, max_age_days: int
+    ) -> FitVerdict | None: ...
+
+    @overload
+    async def get_verdict(
+        self, content_hash: str, max_age_days: int, model: type[_T]
+    ) -> _T | None: ...
+
     async def get_verdict(
         self,
         content_hash: str,
         max_age_days: int,
-        model: type[_CachedT] = FitVerdict,  # type: ignore[assignment]
-    ) -> _CachedT | None:
+        model: type[BaseModel] = FitVerdict,
+    ) -> BaseModel | None:
         """The cached payload for this key, validated as `model`, or None.
 
         `model` is how a caller reads back its OWN cached shape - a
@@ -222,6 +232,12 @@ class Store:
         and refusing it here silently deletes the row and re-scores - a whole
         cache lost to a schema that was never wrong. A caller passes back
         whatever type it stored.
+
+        Two `@overload`s above, rather than a generic default, give every
+        existing call with no `model=` argument `FitVerdict | None` under
+        mypy - the implementation signature itself stays non-generic
+        (`type[BaseModel]`), which is what lets the default value type-check
+        with no `# type: ignore` needed.
         """
         cur = await self.db.execute(
             "SELECT payload, created FROM verdicts WHERE content_hash=?",

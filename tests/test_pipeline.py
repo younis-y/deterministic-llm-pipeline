@@ -1042,7 +1042,7 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
         scored = await scorer.score_all([over_years, no_years])
 
     assert scorer.errors == 0
-    assert request_bodies, "the ollama chat endpoint must have been called"
+    assert len(request_bodies) == 2, "one ollama call per posting"
     for body in request_bodies:
         assert body["format"] == PostingFacts.model_json_schema()
         system_text = body["messages"][0]["content"]
@@ -1062,7 +1062,12 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
 
     # End to end: the rule-skipped posting never reaches the digest (its
     # score is capped below min_report_score by design), only the posting
-    # judged on fit_score alone does.
+    # judged on fit_score alone does. A SEPARATE db path here, not the one
+    # the FitScorer pass above already wrote to: the facts cache is keyed on
+    # content_hash, which is identical for these same two postings, so
+    # reusing that db would let run_scan silently read the cache the earlier
+    # pass filled rather than actually re-exercising the ollama path.
+    cfg.output.db_path = tmp_path / "run_scan_seen.db"
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200,
@@ -1089,4 +1094,8 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
         )
     )
     result = await run_scan(cfg, dry_run=True)
+    assert len(request_bodies) == 4, (
+        "run_scan must have made its own two fresh ollama calls against the "
+        "new db, not silently read the FitScorer pass's cache"
+    )
     assert [s.job.title for s in result.reportable] == ["Graduate Energy Data Scientist"]
