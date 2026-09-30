@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from rolescan.config import Config, SourceEntry
+from rolescan.dedup import merge_near_duplicates
 from rolescan.http import Fetcher
 from rolescan.models import Job, ScoredJob
 from rolescan.scoring import (
@@ -397,7 +398,7 @@ async def run_scan(
         result.reports, raw = await fetch_all(cfg, store)
         result.fetched = len(raw)
 
-        unique = deduplicate(raw)
+        unique = merge_near_duplicates(deduplicate(raw))
         unique, result.stale = _drop_stale(unique, cfg.profile.max_age_days)
         result.unique = len(unique)
 
