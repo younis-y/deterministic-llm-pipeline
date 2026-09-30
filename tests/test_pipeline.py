@@ -884,3 +884,39 @@ def test_an_unknown_source_is_aged_out_rather_than_trusted() -> None:
     old_advert = _job_posted(400).model_copy(update={"source": "some-plugin"})
     _, dropped = _drop_stale([old_advert], 90)
     assert dropped == 1
+
+
+async def test_a_fresh_copy_survives_when_its_longer_twin_is_stale(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Merging keeps the longest description. Merging before the age filter
+    let a stale survivor take its fresh twin down with it, and the role
+    vanished from the digest."""
+    stale_long = _job_posted(400, "Data Engineer").model_copy(
+        update={
+            "company": "Drax",
+            "location": "London, UK",
+            "url": "https://example.com/old",
+            "description": "a much longer description of the same role",
+        }
+    )
+    fresh_short = _job_posted(3, "Data Engineer").model_copy(
+        update={
+            "company": "Drax",
+            "location": "South East London, London",
+            "url": "https://example.com/new",
+            "description": "short",
+        }
+    )
+
+    async def fake_fetch_all(
+        cfg: Config, store: Store
+    ) -> tuple[list[SourceReport], list[Job]]:
+        return [], [stale_long, fresh_short]
+
+    monkeypatch.setattr("rolescan.pipeline.fetch_all", fake_fetch_all)
+    config.profile.max_age_days = 90
+    result = await run_scan(config, dry_run=True, check_llm=False)
+    assert result.fetched == 2
+    assert result.stale == 1
+    assert result.unique == 1

@@ -398,8 +398,10 @@ async def run_scan(
         result.reports, raw = await fetch_all(cfg, store)
         result.fetched = len(raw)
 
-        unique = merge_near_duplicates(deduplicate(raw))
-        unique, result.stale = _drop_stale(unique, cfg.profile.max_age_days)
+        # Age filter first: merging keeps the longest description, so merging
+        # first could let a stale survivor take its fresh twin down with it.
+        fresh_raw, result.stale = _drop_stale(raw, cfg.profile.max_age_days)
+        unique = merge_near_duplicates(deduplicate(fresh_raw))
         result.unique = len(unique)
 
         result.quiet_sources = await _check_coverage(result.reports, store)
