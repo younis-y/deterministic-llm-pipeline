@@ -97,3 +97,47 @@ def test_typographic_lookalikes_fold_before_verification() -> None:
         TYPO_JOB,
     )
     assert f.years_required.value == 3
+
+
+# --- quote length cap (fix B) ---------------------------------------------
+
+LONG_DESC = ("We need 3+ years of Python. " * 20).strip()
+LONG_JOB = Job(source="t", company="Acme", title="Data Engineer", url="https://x/3",
+               description=LONG_DESC)
+
+
+def test_every_quote_field_carries_a_200_char_max_length_in_the_schema() -> None:
+    """Ollama takes the schema as a grammar, so maxLength is enforced at
+    sampling time and a paragraph-long quote can no longer run the model's
+    JSON past its output budget."""
+    schema = PostingFacts.model_json_schema()
+    defs = schema["$defs"]
+    for name in ("LevelFact", "YearsFact", "StudentFact", "FieldFact", "HardBar"):
+        assert defs[name]["properties"]["quote"]["maxLength"] == 200, name
+
+
+def test_an_overlong_quote_is_trimmed_to_its_first_200_chars_not_rejected() -> None:
+    f = _facts(
+        years_required=YearsFact(value=3, quote=LONG_DESC),
+        hard_bars=[HardBar(kind=BarKind.other, quote=LONG_DESC)],
+    )
+    assert f.years_required.quote == LONG_DESC[:200]
+    assert f.hard_bars[0].quote == LONG_DESC[:200]
+
+
+def test_a_trimmed_quote_is_a_verbatim_prefix_and_still_verifies() -> None:
+    f = verify_facts(
+        _facts(years_required=YearsFact(value=3, quote=LONG_DESC)), LONG_JOB
+    )
+    assert f.years_required.value == 3
+    assert len(f.years_required.quote) == 200
+
+
+def test_an_overlong_quote_in_model_json_is_trimmed_on_validate() -> None:
+    raw = {
+        "level": {"value": "senior", "quote": "x" * 500},
+        "fit_score": 10,
+        "reason": "r",
+    }
+    f = PostingFacts.model_validate(raw)
+    assert f.level.quote == "x" * 200

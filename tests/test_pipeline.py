@@ -1091,7 +1091,7 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
         job=Job(
             source="greenhouse",
             company="Acme",
-            title="Senior Energy Data Scientist",
+            title="Experienced Energy Data Scientist",
             location="London, UK",
             url="https://boards.greenhouse.io/acme/jobs/1",
             description=over_years_description,
@@ -1125,7 +1125,7 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
         assert "Scoring guidance" not in system_text, "judge-mode SYSTEM wording leaked"
 
     by_title = {s.job.title: s for s in scored}
-    skipped = by_title["Senior Energy Data Scientist"]
+    skipped = by_title["Experienced Energy Data Scientist"]
     assert skipped.fit is not None
     assert skipped.fit.verdict == Verdict.SKIP
     assert years_quote in skipped.fit.reason
@@ -1150,7 +1150,7 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
                 "jobs": [
                     {
                         "id": 1,
-                        "title": "Senior Energy Data Scientist",
+                        "title": "Experienced Energy Data Scientist",
                         "location": {"name": "London, UK"},
                         "absolute_url": "https://boards.greenhouse.io/acme/jobs/1",
                         "content": over_years_description,

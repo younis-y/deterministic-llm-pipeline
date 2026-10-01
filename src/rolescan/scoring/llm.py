@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
 from rolescan.scoring.enrich import Enricher, get_enricher
-from rolescan.scoring.facts import PostingFacts, verify_facts
+from rolescan.scoring.facts import PostingFacts, resolve_level, verify_facts
 from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
 from rolescan.scoring.rules import decide
 
@@ -145,7 +145,9 @@ from the facts you extract below, not by you.
 </candidate>
 
 For level, years_required, student_only and field: copy the exact text from \
-the posting that states it, verbatim, into that fact's quote. If the posting \
+the posting that states it, verbatim, into that fact's quote. Quote the \
+shortest phrase that shows the fact, under 200 characters - never a whole \
+paragraph. If the posting \
 does not say, leave it not stated - never guess or infer a value. Encode "not \
 stated" as: level = not_stated; years_required, student_only and field = \
 null; and an empty quote in every case.
@@ -183,9 +185,11 @@ applicant, each with its own verbatim quote:
 - work_auth: a work authorisation the candidate lacks, per their summary \
 above - e.g. "no visa sponsorship" is a bar only when the job's country is \
 NOT one the candidate's summary says they can already work in.
-- other: any other explicit eligibility requirement stated as mandatory.
-Being underqualified, overqualified, or in the wrong field is never a hard \
-bar.
+- other: an explicit, mandatory eligibility requirement only - a licence, a \
+legal status, or residency in a location - never experience, sector \
+background or skills.
+Being underqualified, overqualified, lacking a sector background, or in the \
+wrong field is never a hard bar.
 
 fit_score is 0-100 for skills and domain match ONLY. Ignore seniority, years, \
 student status and eligibility completely when scoring - those are judged \
@@ -199,7 +203,7 @@ List up to 8 keywords_missing: skills or tools the posting asks for that are \
 not evidenced for this candidate."""
 
 
-def cache_key(job: Job, mode: str) -> str:
+def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
     """The verdict-cache key for this posting under this scoring mode.
 
     Facts mode and judge mode ask a different question of the same posting
@@ -211,9 +215,17 @@ def cache_key(job: Job, mode: str) -> str:
     change the answer - v2 itself is the move from caching the post-rules
     FitVerdict to caching the verified PostingFacts underneath it, so a v1
     row (a FitVerdict) is never misread as the v2 shape (a PostingFacts).
+    v3 adds the deterministic level pass (`resolve_level`), the 200-char quote
+    cap and the narrower `other` bar prompt, so a v2 row would replay facts
+    the current extraction would not produce.
+
+    The facts key also names `cfg.backend` and `cfg.model`: facts extracted by
+    one model must not be served (re-decided and enriched) for `cache_days`
+    after the user switches to another, which is exactly the switch an
+    evaluation of the two exists to inform. The judge-mode key is unchanged.
     """
     if mode == "facts":
-        return f"{job.content_hash}:facts-v2"
+        return f"{job.content_hash}:facts-v3:{cfg.backend}:{cfg.model}"
     return job.content_hash
 
 
@@ -280,6 +292,12 @@ class FitScorer:
         #: question `FitVerdict` alone cannot answer once `decide` has turned
         #: the facts into a verdict.
         self.last_facts: dict[str, PostingFacts] = {}
+        if extra_prompt and cfg.mode == "facts" and not cfg.enricher:
+            log.info(
+                "llm.extra_prompt is set but not used: facts mode does not send "
+                "it to the scoring call, and no llm.enricher is configured to "
+                "receive it"
+            )
 
     @property
     def enabled(self) -> bool:
@@ -419,7 +437,7 @@ class FitScorer:
 
     async def _score_one_judge(self, scored: ScoredJob) -> ScoredJob:
         job = scored.job
-        key = cache_key(job, self.cfg.mode)
+        key = cache_key(job, self.cfg.mode, self.cfg)
 
         if self.store is not None:
             cached = await self.store.get_verdict(
@@ -456,7 +474,7 @@ class FitScorer:
         rule that produced it would already be baked into the stored payload.
         """
         job = scored.job
-        key = cache_key(job, self.cfg.mode)
+        key = cache_key(job, self.cfg.mode, self.cfg)
 
         if self.store is not None:
             cached_facts = await self.store.get_verdict(
@@ -508,7 +526,7 @@ class FitScorer:
         # One call, always: Call 1 is already short, so the cascade - built to
         # skip generating prose for a role that will not clear the gate - buys
         # nothing here, and facts mode never runs it.
-        return verify_facts(await judge.facts(system, user), job)
+        return resolve_level(verify_facts(await judge.facts(system, user), job), job)
 
     async def _call_judge(self, scored: ScoredJob) -> FitVerdict:
         job = scored.job

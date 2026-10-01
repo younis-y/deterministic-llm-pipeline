@@ -115,3 +115,46 @@ def test_scores_are_capped_so_skips_and_blocks_never_reach_the_digest() -> None:
 
 def test_verdict_keeps_the_model_gaps() -> None:
     assert decide(_f(), RULES, 50).keywords_missing == ["Spark"]
+
+
+# --- `other` hard bars skip, never block (fix C) ---------------------------
+
+FS_QUOTE = (
+    "The client does not meet candidates who have not worked in a financial "
+    "services environment."
+)
+
+
+def test_a_verified_other_bar_is_a_rule_skip_not_a_block() -> None:
+    v = decide(_f(fit=90, hard_bars=[HardBar(kind=BarKind.other, quote=FS_QUOTE)]), RULES, 50)
+    assert v.verdict.value == "skip"
+    assert v.reason.startswith('Skip: advert requires "')
+    assert "financial" in v.reason
+    assert v.fit_score == 49
+    assert v.confidence.value == "high"
+    assert v.blockers == []
+
+
+def test_an_other_bar_skips_even_with_no_rules_block() -> None:
+    v = decide(_f(fit=90, hard_bars=[HardBar(kind=BarKind.other, quote="UK driving licence")]), None, 50)
+    assert v.verdict.value == "skip" and v.fit_score == 49
+
+
+@pytest.mark.parametrize("kind", [BarKind.nationality, BarKind.clearance, BarKind.work_auth])
+def test_structural_bars_still_block(kind: BarKind) -> None:
+    v = decide(_f(hard_bars=[HardBar(kind=kind, quote="the bar")]), RULES, 50)
+    assert v.verdict.value == "blocked" and v.fit_score == 20
+
+
+def test_a_structural_bar_listed_after_an_other_bar_still_blocks() -> None:
+    v = decide(
+        _f(hard_bars=[
+            HardBar(kind=BarKind.other, quote="UK driving licence"),
+            HardBar(kind=BarKind.clearance, quote="SC clearance required"),
+        ]),
+        RULES,
+        50,
+    )
+    assert v.verdict.value == "blocked"
+    assert "SC clearance required" in v.reason
+    assert v.blockers == ["SC clearance required"]

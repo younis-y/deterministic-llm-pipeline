@@ -7,7 +7,10 @@ how a stray call into the judge-mode path would be caught.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+import pytest
 
 from rolescan.config import LLMConfig, ProfileConfig, RulesConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
@@ -140,9 +143,38 @@ async def test_facts_prompt_carries_no_extra_prompt() -> None:
 
 async def test_cache_key_is_mode_aware() -> None:
     job = _job().job
-    assert cache_key(job, "facts") != cache_key(job, "judge")
-    assert cache_key(job, "judge") == job.content_hash
-    assert cache_key(job, "facts") == f"{job.content_hash}:facts-v2"
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
+    assert cache_key(job, "facts", cfg) != cache_key(job, "judge", cfg)
+    assert cache_key(job, "judge", cfg) == job.content_hash
+    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v3:ollama:qwen2.5:14b"
+
+
+async def test_facts_cache_key_changes_with_backend_and_model() -> None:
+    """Facts extracted by one model must not be served for 30 days after the
+    owner switches to another - the switch the evaluation exists to inform."""
+    job = _job().job
+    local = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
+    other_model = LLMConfig(enabled=True, backend="ollama", model="llama3.1:8b")
+    hosted = LLMConfig(enabled=True, backend="anthropic", model="qwen2.5:14b", api_key="k")
+    keys = {cache_key(job, "facts", c) for c in (local, other_model, hosted)}
+    assert len(keys) == 3
+    # judge mode is unchanged: the bare content hash whatever the backend
+    assert {cache_key(job, "judge", c) for c in (local, hosted)} == {job.content_hash}
+
+
+async def test_a_facts_row_cached_under_another_model_is_not_read_back(
+    tmp_path: Path,
+) -> None:
+    job = _job("Analyst role.")
+    async with Store(tmp_path / "store.db") as store:
+        old = LLMConfig(enabled=True, backend="ollama", model="older-model")
+        await store.put_verdict(cache_key(job.job, "facts", old), _facts(fit_score=99))
+
+        scorer, judge = _facts_scorer(_facts(fit_score=60), store=store)
+        [out] = await scorer.score_all([job])
+
+        assert len(judge.facts_calls) == 1
+        assert out.fit is not None and out.fit.fit_score == 60
 
 
 async def test_a_judge_mode_cache_entry_is_not_read_back_in_facts_mode(
@@ -157,7 +189,7 @@ async def test_a_judge_mode_cache_entry_is_not_read_back_in_facts_mode(
             confidence="high",
             reason="stale judge-mode verdict",
         )
-        await store.put_verdict(cache_key(job.job, "judge"), stale)
+        await store.put_verdict(cache_key(job.job, "judge", LLMConfig()), stale)
 
         facts = _facts(fit_score=60, reason="fresh facts-mode verdict")
         scorer, judge = _facts_scorer(facts, store=store)
@@ -275,3 +307,87 @@ async def test_a_cached_rule_skip_never_reaches_the_digest_after_the_gate_drops(
         assert second.fit is not None
         assert second.fit.verdict == Verdict.SKIP
         assert second.fit.fit_score == 0, "capped under the new min_report_score of 1"
+
+
+# --- the deterministic level pass runs on the live path (fix A) ------------
+
+
+async def test_a_senior_title_the_model_left_not_stated_skips_with_the_title_quote() -> None:
+    job = ScoredJob(
+        job=Job(source="test", company="Harnham", title="Senior AI Engineer (198174)",
+                url="https://x/9", description="Build agentic systems."),
+        keyword_score=40,
+    )
+    facts = _facts(fit_score=75, level=LevelFact(value="not_stated", quote=""))
+    rules = RulesConfig(allowed_levels=["graduate_entry", "junior", "not_stated"])
+    scorer, _judge = _facts_scorer(facts, rules=rules)
+
+    [out] = await scorer.score_all([job])
+
+    assert out.fit is not None
+    assert out.fit.verdict == Verdict.SKIP
+    assert out.fit.reason == 'Skip: advert is for "Senior AI Engineer (198174)"'
+    assert scorer.last_facts[job.job.url].level.value == "senior"
+
+
+async def test_a_graduate_title_still_passes_on_fit() -> None:
+    job = ScoredJob(
+        job=Job(source="test", company="FDM", title="Graduate AI Engineer",
+                url="https://x/10", description="Graduate programme."),
+        keyword_score=40,
+    )
+    rules = RulesConfig(allowed_levels=["graduate_entry", "junior", "not_stated"])
+    scorer, _judge = _facts_scorer(_facts(fit_score=75), rules=rules)
+
+    [out] = await scorer.score_all([job])
+
+    assert out.fit is not None and out.fit.verdict == Verdict.APPLY
+
+
+# --- extra_prompt is not sent in facts mode; say so once (fix E) -----------
+
+
+def test_facts_mode_with_extra_prompt_and_no_enricher_logs_once_at_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="rolescan.scoring.llm"):
+        FitScorer(
+            LLMConfig(enabled=True, backend="ollama", mode="facts"),
+            ProfileConfig(),
+            extra_prompt="private block",
+        )
+    hits = [r for r in caplog.records if "extra_prompt" in r.getMessage()]
+    assert len(hits) == 1 and hits[0].levelno == logging.INFO
+
+
+@pytest.mark.parametrize(
+    ("mode", "enricher", "extra"),
+    [("judge", "", "private"), ("facts", "some-enricher", "private"), ("facts", "", "")],
+)
+def test_no_extra_prompt_notice_otherwise(
+    caplog: pytest.LogCaptureFixture, mode: str, enricher: str, extra: str
+) -> None:
+    with caplog.at_level(logging.INFO, logger="rolescan.scoring.llm"):
+        FitScorer(
+            LLMConfig(enabled=True, backend="ollama", mode=mode, enricher=enricher),
+            ProfileConfig(),
+            extra_prompt=extra,
+        )
+    assert not [r for r in caplog.records if "extra_prompt" in r.getMessage()]
+
+
+# --- prompt wording (fixes B and C) ----------------------------------------
+
+
+def test_facts_prompt_asks_for_short_quotes() -> None:
+    from rolescan.scoring.llm import SYSTEM_FACTS
+
+    assert "under 200 characters" in SYSTEM_FACTS
+
+
+def test_facts_prompt_narrows_the_other_bar() -> None:
+    from rolescan.scoring.llm import SYSTEM_FACTS
+
+    text = " ".join(SYSTEM_FACTS.split())
+    assert "other: an explicit, mandatory eligibility requirement" in text
+    assert "never experience, sector background or skills" in text

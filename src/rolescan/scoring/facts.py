@@ -27,7 +27,17 @@ Two rules keep that check honest rather than merely convenient:
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+import re
+from typing import Annotated
+
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+)
 
 from rolescan.models import _REASON_CHARS, BarKind, Job, JobField, Level, _norm
 
@@ -45,14 +55,40 @@ _TYPO_FOLD = str.maketrans(
 )
 
 __all__ = [
+    "QUOTE_CHARS",
     "FieldFact",
     "HardBar",
     "LevelFact",
     "PostingFacts",
     "StudentFact",
     "YearsFact",
+    "level_from_text",
+    "resolve_level",
     "verify_facts",
 ]
+
+#: The longest quote any fact may carry. A local model asked for "the text
+#: that states it" will sometimes copy a whole paragraph, and five of those in
+#: one answer ran its JSON past the output budget mid-string ("EOF while
+#: parsing a string"), losing the posting. The schema carries this as
+#: `maxLength`, which Ollama's grammar enforces at sampling time; `_trim_quote`
+#: covers backends that do not enforce it.
+QUOTE_CHARS = 200
+
+
+def _trim_quote(v: object) -> object:
+    """Keep the first `QUOTE_CHARS` characters of an over-long quote.
+
+    A prefix of a verbatim quote is itself verbatim, so the trimmed quote still
+    verifies against the posting; rejecting it would lose a whole set of facts
+    over one chatty field.
+    """
+    if isinstance(v, str) and len(v) > QUOTE_CHARS:
+        return v[:QUOTE_CHARS]
+    return v
+
+
+_Quote = Annotated[str, BeforeValidator(_trim_quote)]
 
 
 def _normalise(text: str) -> str:
@@ -71,8 +107,9 @@ class LevelFact(BaseModel):
             "does not say."
         ),
     )
-    quote: str = Field(
+    quote: _Quote = Field(
         default="",
+        max_length=QUOTE_CHARS,
         description=(
             "Text copied verbatim from the posting that states this level. "
             "Empty if not stated."
@@ -93,8 +130,9 @@ class YearsFact(BaseModel):
             "not stated."
         ),
     )
-    quote: str = Field(
+    quote: _Quote = Field(
         default="",
+        max_length=QUOTE_CHARS,
         description=(
             "Text copied verbatim from the posting that states the years "
             "required."
@@ -114,8 +152,9 @@ class StudentFact(BaseModel):
             "students. None if not stated."
         ),
     )
-    quote: str = Field(
+    quote: _Quote = Field(
         default="",
+        max_length=QUOTE_CHARS,
         description=(
             "Text copied verbatim from the posting that states this "
             "restriction."
@@ -132,8 +171,9 @@ class FieldFact(BaseModel):
         default=None,
         description="The job category this posting belongs to. None if unclear.",
     )
-    quote: str = Field(
+    quote: _Quote = Field(
         default="",
+        max_length=QUOTE_CHARS,
         description=(
             "Text copied verbatim from the posting that supports this "
             "category."
@@ -147,7 +187,8 @@ class HardBar(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: BarKind = Field(description="The kind of structural bar this is.")
-    quote: str = Field(
+    quote: _Quote = Field(
+        max_length=QUOTE_CHARS,
         description="Text copied verbatim from the posting that states this bar."
     )
 
@@ -301,3 +342,77 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
             "hard_bars": hard_bars,
         }
     )
+
+
+# Level words, checked in this order. Graduate/intern words come first because
+# an intern posting is an intern posting whatever else its title says ("Senior
+# Analyst Internship" is an internship); otherwise the most senior word wins
+# ("Senior Engineering Manager" is lead_principal). Whole words only, so
+# "Internal", "Headcount", "Staffing" and "Leadership" match nothing.
+_LEVEL_WORDS: tuple[tuple[Level, re.Pattern[str]], ...] = (
+    (
+        Level.graduate_entry,
+        re.compile(
+            r"\b(?:graduate|grad|intern|internship|placement|entry[- ]level|"
+            r"trainee|apprentice)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        Level.lead_principal,
+        re.compile(
+            r"\b(?:lead|principal|staff|head|director|manager)\b", re.IGNORECASE
+        ),
+    ),
+    (Level.senior, re.compile(r"\b(?:senior|sr)\b", re.IGNORECASE)),
+    (Level.junior, re.compile(r"\b(?:junior|jr)\b", re.IGNORECASE)),
+)
+
+
+def level_from_text(text: str) -> Level | None:
+    """The level a title or quote names by keyword, or None if it names none."""
+    folded = text.translate(_TYPO_FOLD)
+    for level, pattern in _LEVEL_WORDS:
+        if pattern.search(folded):
+            return level
+    return None
+
+
+def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
+    """Settle `level` deterministically, after `verify_facts`.
+
+    The local model was observed getting level wrong in both directions: it
+    quoted "Senior Data & BI Engineer" (the title) and still answered
+    `not_stated`, and it skipped a two-years role on the one-word quote
+    "Senior" lifted from a sentence about stakeholders. The quote guard only
+    proves a quote exists, not that it is about this role's level. The title
+    is better evidence than either, and the code already has it. In order:
+
+    1. The title names a level (`_LEVEL_WORDS`): that level, quoting the title.
+    2. The model stated a level and its verified quote is at least two words:
+       keep it. One word ("Senior") is too easily lifted from a sentence about
+       someone else.
+    3. The model said `not_stated` but its verified quote (again two words or
+       more, for the same reason) names a level: derive the level from it.
+    4. Otherwise `not_stated`.
+
+    Pure and idempotent; never mutates `facts`. Expects `facts` to have been
+    through `verify_facts` already, so every quote it reads is verbatim.
+    """
+    title_level = level_from_text(job.title)
+    if title_level is not None:
+        quote = job.title[:QUOTE_CHARS]
+        level = LevelFact(value=title_level, quote=quote)
+    else:
+        model = facts.level
+        enough_words = len(model.quote.split()) >= 2
+        derived = level_from_text(model.quote) if enough_words else None
+        if model.value != Level.not_stated and enough_words:
+            level = model
+        elif model.value == Level.not_stated and derived is not None:
+            level = LevelFact(value=derived, quote=model.quote)
+        else:
+            level = LevelFact(value=Level.not_stated, quote="")
+    if level == facts.level:
+        return facts
+    return facts.model_copy(update={"level": level})
