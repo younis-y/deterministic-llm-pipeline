@@ -146,7 +146,7 @@ async def test_cache_key_is_mode_aware() -> None:
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
     assert cache_key(job, "facts", cfg) != cache_key(job, "judge", cfg)
     assert cache_key(job, "judge", cfg) == job.content_hash
-    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v8:ollama:qwen2.5:14b"
+    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v9:ollama:qwen2.5:14b"
 
 
 async def test_facts_cache_key_changes_with_backend_and_model() -> None:
@@ -446,3 +446,39 @@ def test_facts_prompt_says_work_auth_is_checked_by_keywords() -> None:
     assert "- work_auth:" in text
     assert "work authorisation is checked by configured keywords" in text
     assert "not by your judgement of the candidate" in text
+
+
+# --- 2.5.2: the recent-graduates guard runs on the live path ---------------
+
+
+async def test_a_student_flag_on_an_advert_that_accepts_graduates_does_not_skip() -> None:
+    job = _job("Requirements: Recent graduates or final year students.")
+    rules = RulesConfig(student_only="skip")
+    scorer, _judge = _facts_scorer(
+        _facts(fit_score=75, student_only=StudentFact(value=True, quote="final year students")),
+        rules=rules,
+    )
+
+    [out] = await scorer.score_all([job])
+
+    assert out.fit is not None and out.fit.verdict == Verdict.APPLY
+    student = scorer.last_facts[job.job.url].student_only
+    assert student.value is False
+    assert student.quote == "Requirements: Recent graduates or final year students."
+
+
+async def test_an_unsupported_clearance_bar_does_not_block_on_the_live_path() -> None:
+    from rolescan.models import BarKind
+    from rolescan.scoring.facts import HardBar
+
+    job = _job("Adheres to the established internal security practices.")
+    scorer, _judge = _facts_scorer(
+        _facts(fit_score=75, hard_bars=[
+            HardBar(kind=BarKind.clearance, quote="internal security practices"),
+        ]),
+    )
+
+    [out] = await scorer.score_all([job])
+
+    assert out.fit is not None and out.fit.verdict == Verdict.APPLY
+    assert scorer.last_facts[job.job.url].hard_bars == []

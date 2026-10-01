@@ -90,6 +90,10 @@ class Level(StrEnum):
     not_stated = "not_stated"
 
 
+# `quant`, `product` and `consulting` (2.5.2) were `other` before: with no
+# label of their own, `allowed_fields` could not let one through without also
+# letting sales and operations through. The docstring below reaches the hosted
+# model as schema text (`FieldFact.value`), so this history is a comment.
 class JobField(StrEnum):
     """Job category or specialty."""
 
@@ -97,7 +101,10 @@ class JobField(StrEnum):
     ai_llm = "ai_llm"
     data_science = "data_science"
     analytics_bi = "analytics_bi"
+    quant = "quant"
+    product = "product"
     software = "software"
+    consulting = "consulting"
     other = "other"
 
 

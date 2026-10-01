@@ -331,3 +331,27 @@ def test_examples_change_the_facts_cache_key(tmp_path: Path) -> None:
     path.write_text(EXAMPLES_YAML.replace("fit_score: 60", "fit_score: 61"), encoding="utf-8")
     edited, _ = _scorer(path)
     assert edited._facts_cache_key(job) != keyed
+
+
+# --- 2.5.2: examples meet the student and hard-bar guards too ---------------
+
+
+def test_an_example_marking_a_graduates_welcome_advert_student_only_fails_fast(
+    tmp_path: Path,
+) -> None:
+    bad = EXAMPLES_YAML.replace(
+        "A ten-week internship for students graduating in 2028.",
+        "A ten-week internship for students graduating in 2028. Recent graduates are welcome.",
+    )
+    with pytest.raises(ValueError, match=r"example 1 .*student_only"):
+        load_facts_examples(_write(tmp_path, bad))
+
+
+def test_an_example_bar_its_quote_does_not_support_fails_fast(tmp_path: Path) -> None:
+    bad = EXAMPLES_YAML.replace(
+        "    fit_score: 70\n",
+        "    hard_bars: [{kind: nationality, quote: Python and SQL required}]\n"
+        "    fit_score: 70\n",
+    )
+    with pytest.raises(ValueError, match=r"example 1 .*hard_bars \(nationality\)"):
+        load_facts_examples(_write(tmp_path, bad))

@@ -153,7 +153,11 @@ the advert text it read it from. Code checks every quote is really in the
 posting (a fact whose quote is not there is dropped), then applies your
 `profile.rules` in a fixed order:
 
-1. A nationality or security-clearance bar: `blocked`. Any other stated
+1. A nationality or security-clearance bar: `blocked`. The bar's own quote
+   must name it - nationality, national(s), citizen(ship), passport,
+   Emirati, Emiratisation and the like for nationality ("right to work" is
+   not one); clearance, cleared, vetting, SC, DV, BPSS, NPPV for clearance -
+   or the bar is dropped like an unverified quote. Any other stated
    mandatory requirement (a licence, a residency) is a `skip` that quotes it,
    never a block. A work-authorisation bar the model extracts decides
    nothing: put the visa wording you cannot get past in `hard_blockers`.
@@ -163,7 +167,12 @@ posting (a fact whose quote is not there is dropped), then applies your
 3. `student_only: skip` and the advert is students-only: `skip`. While
    `max_graduation_year` is set, this applies only to adverts that state no
    graduation year: one that states a year within the limit passes, however
-   student-only it is, because the year is the sharper test.
+   student-only it is, because the year is the sharper test. An advert that
+   also accepts graduates ("students or recent graduates", "recently
+   completed a degree", "graduated within the last year") is not
+   students-only, whatever the model says: code finds that wording in the
+   title or description and clears the flag, quoting it. Wording with a
+   negation close by ("recent graduates are not eligible") does not count.
 4. The level is not in `allowed_levels`: `skip`. A level word in the title
    decides the level: graduate, grad, intern, internship, placement,
    entry-level, trainee, apprentice; junior, jr, assistant; senior, sr,
@@ -179,9 +188,12 @@ posting (a fact whose quote is not there is dropped), then applies your
    has guessed).
 5. The stated minimum years exceed `max_years_required`: `skip`.
 6. The field is not in `allowed_fields`: `skip`. Like level, the field is
-   read from the title first (Data Engineer, Data Analyst, ML Engineer and so
-   on; a title is never read as `other`); otherwise the model's field counts
-   only with a quote of two words or more.
+   read from the title first (Data Engineer, Data Analyst, ML Engineer,
+   Quantitative Analyst, Product Manager, Consultant and so on; a title is
+   never read as `other`); otherwise the model's field counts only with a
+   quote of two words or more. Data and AI words win over the rest ("Data
+   Science Consultant" is `data_science`), quant and product words beat
+   software words, and software beats a plain "consultant".
 7. Otherwise the model's 0-100 skills/domain score decides.
 
 A fact the advert does not state never fires a rule, so an advert that says
@@ -195,7 +207,7 @@ the rule and quotes the advert. The `rules` keys and their defaults:
 | `student_only` | `allow` | `skip` drops roles open only to current students. |
 | `max_graduation_year` | `null` | Skip a stated graduation year above this; `null` is no limit, and a stated year then changes nothing. |
 | `level_from_title_only` | `false` | `true`: only a level word in the job title can skip; a level the model states is ignored. |
-| `allowed_fields` | `null` (any) | From `data_engineering`, `ai_llm`, `data_science`, `analytics_bi`, `software`, `other`. |
+| `allowed_fields` | `null` (any) | From `data_engineering`, `ai_llm`, `data_science`, `analytics_bi`, `quant`, `product`, `software`, `consulting`, `other`. |
 
 `llm.facts_examples_file` points at a YAML list of worked examples, each a
 posting excerpt and the facts it should yield:
@@ -215,8 +227,10 @@ They are appended to the facts-mode system prompt after its instructions, so
 they sit inside the cached prefix. The path is relative to the config file,
 and every example is validated when the config loads: a bad one stops the run
 and names the example. That includes the quote check every real posting gets:
-each quote must appear in the example's own title or description, and a
-graduation year must appear in its quote. No file, no change to the prompt.
+each quote must appear in the example's own title or description, a
+graduation year must appear in its quote, a nationality or clearance bar must
+name its kind, and an example must not mark students-only an advert that
+also accepts graduates. No file, no change to the prompt.
 
 With examples, a facts-mode call needs a model context of roughly 8k tokens
 (the prompt, the examples and one posting). Ollama's default context can be

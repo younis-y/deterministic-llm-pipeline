@@ -66,9 +66,11 @@ __all__ = [
     "StudentFact",
     "YearsFact",
     "field_from_text",
+    "graduates_eligible",
     "level_from_text",
     "resolve_field",
     "resolve_level",
+    "resolve_student",
     "verify_facts",
 ]
 
@@ -356,6 +358,44 @@ def _year_in_quote(year: int | None, quote: str) -> bool:
     return re.search(rf"(?<!\d){year}(?!\d)", quote) is not None
 
 
+# Words a structural bar's own quote must contain (2.5.2). The quote guard
+# proves a quote is in the posting, not that it says what the bar claims: one
+# evaluation posting was blocked as a nationality-or-clearance bar on a
+# verbatim quote about "business policies and procedure", in an advert that
+# never mentions either. A block hides the posting for good, so these two
+# kinds - the only ones that block - must name what they are. "Right to work"
+# and "visa" are work authorisation, never nationality, and a country named as
+# a place ("Saudi Arabia") is not a nationality requirement. "UAEN" (UAE
+# National) and "Family Book" (the Emirati citizenship record) are how Gulf
+# adverts often write the bar itself. SC and DV are matched in capitals only,
+# so the "Sc" of "MSc" is not a clearance.
+_BAR_WORDS: dict[BarKind, re.Pattern[str]] = {
+    BarKind.nationality: re.compile(
+        r"\b(?:nationals?|nationality|nationalities|citizens?|citizenship"
+        r"|passports?|emiratis?|uaen|family\s+book"
+        r"|(?:saudi|emirati|omani|qatari|kuwaiti|bahraini|national)i?[sz]ation)\b",
+        re.IGNORECASE,
+    ),
+    BarKind.clearance: re.compile(
+        r"\b(?:clearances?|cleared|vetting|vetted|bpss|nppv\d?|uksv"
+        r"|security\s+checks?|top\s+secret|ts/sci|polygraph|(?-i:SC|DV))\b",
+        re.IGNORECASE,
+    ),
+}
+
+
+def _bar_supported(bar: HardBar) -> bool:
+    """Whether a bar's quote names its own kind (2.5.2).
+
+    Only the kinds in `_BAR_WORDS` are checked; any other kind passes, since
+    its quote has no fixed vocabulary to check against.
+    """
+    pattern = _BAR_WORDS.get(bar.kind)
+    if pattern is None:
+        return True
+    return pattern.search(bar.quote.translate(_TYPO_FOLD)) is not None
+
+
 def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     """Downgrade any fact whose quote is not actually in the posting.
 
@@ -380,6 +420,11 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     (2.5.1): a verbatim "Current students only" proves the quote exists but
     says nothing about which year, so a year the quote does not state is the
     model's invention and is downgraded like an unverified quote.
+
+    Likewise a nationality or clearance bar must name its own kind in its
+    quote (2.5.2, `_BAR_WORDS`): a verbatim sentence about something else
+    proves the quote exists but not the bar, so the bar is dropped like an
+    unverified one.
     """
     title = _normalise(job.title)
     description = _normalise(job.description)
@@ -412,7 +457,9 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     if not _verified(field.quote):
         field = FieldFact(value=None, quote="")
 
-    hard_bars = [bar for bar in facts.hard_bars if _verified(bar.quote)]
+    hard_bars = [
+        bar for bar in facts.hard_bars if _verified(bar.quote) and _bar_supported(bar)
+    ]
 
     return facts.model_copy(
         update={
@@ -424,6 +471,104 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
             "hard_bars": hard_bars,
         }
     )
+
+
+# Graduate eligibility (2.5.2). The model set `student_only` on adverts that
+# say, in their own words, that recent graduates may apply too ("university
+# students and recent graduates", "Recent graduates or final year students",
+# "Currently undertaking or recently completed Bachelor's"), so a graduate was
+# skipped as if the role excluded them. These phrases name graduates as
+# eligible; "graduate" alone does not ("graduate students" are postgraduate
+# students, "graduate scheme" is a programme), and neither does a student-only
+# line ("current students only", "returning to study", "penultimate-year
+# students"). "Students and graduates" without "recent" or "final-year" is left
+# out on purpose: it is employer boilerplate on placement adverts ("each year
+# we recruit hundreds of graduates and students", "Career Area: Students and
+# Graduates") far more often than an eligibility line.
+_GRADUATES_ELIGIBLE = re.compile(
+    r"\b(?:(?:recent|fresh)(?:ly)?[- ]graduat(?:es?|ed)"
+    r"|graduated\s+(?:with|in|within|less\s+than|no\s+more\s+than)"
+    r"|or\s+(?:have\s+|has\s+)?graduated"
+    r"|recently\s+completed\s+(?:(?:a|an|your|their|the)\s+)?(?:[\w'-]+\s+){0,3}?"
+    r"(?:degrees?|studies|bachelor|master|ph\.?\s?d|doctorate|msc|bsc|mba|university)"
+    r"|students?\s+(?:or|/)\s+(?:recent\s+)?graduates"
+    r"|final[- ]year\s+students?\s+(?:and|or|/|&)\s+(?:recent\s+)?graduates"
+    r"|graduates\s+(?:or|/)\s+(?:(?:current|final[- ]year|penultimate[- ]year"
+    r"|university)\s+)?students?"
+    r"|graduates\s+(?:are\s+)?(?:also\s+)?(?:welcome|eligible"
+    r"|(?:may|can)\s+(?:also\s+)?apply)"
+    r"|graduates\s+only)",
+    re.IGNORECASE,
+)
+
+#: A negation near a graduate phrase turns it into an exclusion ("Recent
+#: graduates are not eligible", "not open to recent graduates"), which must
+#: not clear `student_only`. Checked within the phrase's own sentence, up to
+#: `_NEGATION_REACH` characters either side of it.
+_NEGATION = re.compile(
+    r"\b(?:not|no|never|cannot|ineligible|excluded|unable)\b|n't\b", re.IGNORECASE
+)
+#: The word just before a graduate phrase can exclude it too: "If you have
+#: already graduated with a bachelor's degree ... you are not eligible" (seen
+#: on placement adverts, with the "not" too far away to see), or peers rather
+#: than applicants ("share ideas with other recent graduates").
+_EXCLUDING_WORD_BEFORE = re.compile(r"\b(?:already|other|fellow)\s+$", re.IGNORECASE)
+_NEGATION_REACH = 60
+_SENTENCE_END = re.compile(r"[.!?;](?=\s|$)")
+
+
+def graduates_eligible(text: str) -> str | None:
+    """The text's own words saying graduates may apply, or None (2.5.2).
+
+    Returns the sentence that says so when it fits in `QUOTE_CHARS`, else the
+    phrase itself - verbatim either way, so it passes the quote guard. A
+    phrase with a negation close by in its own sentence does not count.
+    """
+    folded = text.translate(_TYPO_FOLD)  # one character for one: offsets hold
+    ends = [m.end() for m in _SENTENCE_END.finditer(folded)]
+    for match in _GRADUATES_ELIGIBLE.finditer(folded):
+        start = max((e for e in ends if e <= match.start()), default=0)
+        end = min((e for e in ends if e >= match.end()), default=len(folded))
+        before = folded[max(start, match.start() - _NEGATION_REACH) : match.start()]
+        after = folded[match.end() : min(end, match.end() + _NEGATION_REACH)]
+        if (
+            _NEGATION.search(before)
+            or _NEGATION.search(after)
+            or _EXCLUDING_WORD_BEFORE.search(before)
+        ):
+            continue
+        sentence = text[start:end].strip()
+        if len(sentence) <= QUOTE_CHARS:
+            return sentence
+        return text[match.start() : match.end()]
+    return None
+
+
+def resolve_student(facts: PostingFacts, job: Job) -> PostingFacts:
+    """Clear a `student_only` the advert itself contradicts, after `verify_facts`.
+
+    The model was observed setting `student_only` on internships that also
+    accept recent graduates - three in one evaluation run, each with an
+    explicit graduate clause. The quote guard cannot catch it: the model's
+    quote ("in the final year of a Bachelor's") is verbatim, just not the
+    whole story. When `student_only` is True and the title or description
+    states that graduates are eligible (`graduates_eligible`), the fact
+    becomes False, quoting the advert's own words; the title is read first.
+
+    Only ever clears a True: None and False pass through untouched, so this
+    can never make a posting student-only. The graduation-year rule is
+    separate - a "graduating in 2028" advert is still judged on its year.
+
+    Pure and idempotent; never mutates `facts`. Expects `facts` to have been
+    through `verify_facts` already.
+    """
+    if facts.student_only.value is not True:
+        return facts
+    said = graduates_eligible(job.title) or graduates_eligible(job.description)
+    if said is None:
+        return facts
+    student = StudentFact(value=False, quote=said[:QUOTE_CHARS])
+    return facts.model_copy(update={"student_only": student})
 
 
 # Level words. Whole words only, so "Internal", "Headcount", "Staffing" and
@@ -554,6 +699,14 @@ def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
 # "AI Backend Engineer") for the same reason: "software"/"backend" sitting
 # between them is not a different field, it is still an AI role. Word
 # boundaries and the row order are otherwise unchanged.
+#
+# 2.5.2 adds three rows, so the order is now ai_llm, data_engineering,
+# data_science, analytics_bi, quant, product, software, consulting. Data and AI
+# words still win ("Data Science Consultant" is data_science, "Product Manager,
+# Data Platform" is data_engineering); quant and product beat software words
+# ("Quantitative Developer, Backend" is quant); and software beats a generic
+# consultant ("DevOps Consultant" is software). The data_science row keeps its
+# "quant research" phrases, so a Quant Researcher is data_science as before.
 _FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
     (
         JobField.ai_llm,
@@ -593,12 +746,36 @@ _FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        JobField.quant,
+        re.compile(
+            r"\b(?:quant(?:itative)?\s+(?:analysts?|traders?|developers?"
+            r"|strategists?|trading)"
+            r"|algorithmic\s+trading|systematic\s+trading)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        JobField.product,
+        re.compile(
+            r"\bproduct\s+(?:managers?|owners?|analysts?|management|associates?"
+            r"|interns?|internships?)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         JobField.software,
         re.compile(
             r"\b(?:software\s+engineer|software\s+developer|backend|back-end"
             r"|frontend|front-end|full\s+stack|fullstack|full-stack|devops"
             r"|site\s+reliability|sre|mobile\s+developer|ios\s+developer"
             r"|android\s+developer)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        JobField.consulting,
+        re.compile(
+            r"\b(?:consultants?|consulting|advisory\s+(?:analysts?|associates?))\b",
             re.IGNORECASE,
         ),
     ),

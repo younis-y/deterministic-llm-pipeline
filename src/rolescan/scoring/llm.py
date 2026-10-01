@@ -27,6 +27,7 @@ from rolescan.scoring.facts import (
     PostingFacts,
     resolve_field,
     resolve_level,
+    resolve_student,
     verify_facts,
 )
 from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
@@ -189,9 +190,12 @@ field - the job's core work:
 - ai_llm: building ML, LLM, or AI systems.
 - data_science: modelling, statistics, or analytics research.
 - analytics_bi: reporting, dashboards, or BI.
+- quant: quantitative finance or trading - quant analyst, trader, developer \
+or strategist, algorithmic or systematic trading.
+- product: product management - product manager, owner, analyst or associate.
 - software: general software engineering not centred on data or AI.
-- other: anything else - sales, finance, consulting, operations, hospitality, \
-and so on.
+- consulting: consulting or advisory work not centred on data or AI.
+- other: anything else - sales, finance, operations, hospitality, and so on.
 
 List hard_bars only for a bar the candidate cannot clear by being a better \
 applicant, each with its own verbatim quote:
@@ -258,6 +262,12 @@ def cache_key(
     and `verify_facts` drops a graduation year its quote does not state. A
     v7 row could replay a title-sourced level, a missed mid title or an
     invented year.
+    v9 (2.5.2) changes three more: `resolve_student` clears a `student_only`
+    the advert contradicts by accepting recent graduates, `verify_facts`
+    drops a nationality or clearance bar whose quote does not name its kind,
+    and `JobField` gains quant, product and consulting (in `_FIELD_WORDS` and
+    the prompt). A v8 row could replay a student flag, a spurious block or an
+    `other` field the current code would not produce.
 
     `examples_digest` names the worked examples the prompt carried (see
     `FitScorer._facts_cache_key`): they change what the model extracts, and
@@ -270,7 +280,7 @@ def cache_key(
     evaluation of the two exists to inform. The judge-mode key is unchanged.
     """
     if mode == "facts":
-        key = f"{job.content_hash}:facts-v8:{cfg.backend}:{cfg.model}"
+        key = f"{job.content_hash}:facts-v9:{cfg.backend}:{cfg.model}"
         return f"{key}:ex-{examples_digest}" if examples_digest else key
     return job.content_hash
 
@@ -617,7 +627,7 @@ class FitScorer:
         # skip generating prose for a role that will not clear the gate - buys
         # nothing here, and facts mode never runs it.
         verified = verify_facts(await judge.facts(system, user), job)
-        return resolve_field(resolve_level(verified, job), job)
+        return resolve_field(resolve_level(resolve_student(verified, job), job), job)
 
     async def _call_judge(self, scored: ScoredJob) -> FitVerdict:
         job = scored.job

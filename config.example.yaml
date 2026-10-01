@@ -113,8 +113,8 @@ profile:
   #                              # ignored. Default false.
   #   allowed_fields:            # default null: any field. Values:
   #     - data_engineering       # data_engineering, ai_llm, data_science,
-  #     - ai_llm                 # analytics_bi, software, other.
-  #     - data_science
+  #     - ai_llm                 # analytics_bi, quant, product, software,
+  #     - data_science           # consulting, other.
 
 llm:
   # Set false to score on keywords alone — no key, no network, no bill.

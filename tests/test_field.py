@@ -195,3 +195,104 @@ def test_an_unchanged_field_returns_the_same_object() -> None:
     job = _job("Data Engineer")
     facts = resolve_field(verify_facts(_facts(), job), job)
     assert resolve_field(facts, job) is facts
+
+
+# --- 2.5.2: quant, product and consulting have their own fields -------------
+# Before 2.5.2 these roles had no field label, so the model filed them under
+# `other` and an `allowed_fields` list could not let them through without
+# also letting sales and operations through.
+
+
+@pytest.mark.parametrize(
+    ("title", "field"),
+    [
+        ("Quantitative Analyst", JobField.quant),
+        ("Quant Trader", JobField.quant),
+        ("Quantitative Developer", JobField.quant),
+        ("Quant Strategist - Rates", JobField.quant),
+        ("Graduate Quantitative Trading Analyst", JobField.quant),
+        ("Algorithmic Trading Engineer", JobField.quant),
+        ("Systematic Trading Researcher", JobField.quant),
+        ("Product Manager", JobField.product),
+        ("Product Owner", JobField.product),
+        ("Product Analyst", JobField.product),
+        ("Product Management Intern", JobField.product),
+        ("Associate Product Manager", JobField.product),
+        ("Product Intern, SoftPOS", JobField.product),
+        ("Product Internship 2027", JobField.product),
+        ("Management Consultant", JobField.consulting),
+        ("Consulting Analyst", JobField.consulting),
+        ("Technology Consultants", JobField.consulting),
+        ("Risk Advisory Analyst", JobField.consulting),
+        ("Deals Advisory Associate", JobField.consulting),
+    ],
+)
+def test_quant_product_and_consulting_titles(title: str, field: JobField) -> None:
+    assert field_from_text(title) == field
+
+
+@pytest.mark.parametrize(
+    ("title", "field"),
+    [
+        # Data/AI words still win over the three new fields.
+        ("Data Science Consultant", JobField.data_science),
+        ("DATA SCIENCE CONSULTANT UK", JobField.data_science),
+        ("Data Engineering Consultant", JobField.data_engineering),
+        ("Machine Learning Consultant", JobField.ai_llm),
+        ("Power BI Consultant", JobField.analytics_bi),
+        ("Product Manager, Data Platform", JobField.data_engineering),
+        ("Product Owner - Machine Learning", JobField.ai_llm),
+        ("Quantitative Analyst, Data Science", JobField.data_science),
+        # The existing quant-research phrases are unchanged: data_science.
+        ("Quantitative Researcher", JobField.data_science),
+        ("Quant Research Analyst", JobField.data_science),
+        # Quant and product beat software words; software beats a consultant.
+        ("Quantitative Developer, Backend", JobField.quant),
+        ("Product Manager, Full Stack", JobField.product),
+        ("DevOps Consultant", JobField.software),
+        ("Backend Engineer - Consulting", JobField.software),
+        # Product beats consulting.
+        ("Product Manager - Consulting Practice", JobField.product),
+    ],
+)
+def test_new_field_precedence(title: str, field: JobField) -> None:
+    assert field_from_text(title) == field
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Quantity Surveyor",        # "quant" is a whole word only
+        "Product Designer",         # not a product-management role word
+        "Production Engineer",
+        "Advisory Board Member",    # advisory only before analyst/associate
+        "Equity Research Analyst",  # no field word at all
+    ],
+)
+def test_new_field_words_match_whole_phrases_only(title: str) -> None:
+    assert field_from_text(title) is None
+
+
+def test_a_model_quant_field_with_a_two_word_quote_is_kept() -> None:
+    job = _job("Equity Research Analyst, China",
+               "Build systematic trading signals for Chinese equities.")
+    got = _resolve(job, FieldFact(value=JobField.quant, quote="systematic trading signals"))
+    assert got.value == JobField.quant
+
+
+def test_the_facts_prompt_lists_every_field_and_consulting_is_not_other() -> None:
+    from rolescan.scoring.llm import SYSTEM_FACTS
+
+    for field in JobField:
+        assert f"\n- {field.value}: " in SYSTEM_FACTS, field
+    other_line = next(
+        line for line in SYSTEM_FACTS.splitlines() if line.startswith("- other: anything")
+    )
+    assert "consulting" not in other_line
+
+
+def test_allowed_fields_accepts_the_new_fields() -> None:
+    from rolescan.config import RulesConfig
+
+    rules = RulesConfig(allowed_fields=["quant", "product", "consulting"])
+    assert rules.allowed_fields == [JobField.quant, JobField.product, JobField.consulting]

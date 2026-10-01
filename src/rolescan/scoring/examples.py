@@ -33,7 +33,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from rolescan.models import Job
-from rolescan.scoring.facts import PostingFacts, verify_facts
+from rolescan.scoring.facts import PostingFacts, resolve_student, verify_facts
 
 __all__ = ["FactsExample", "load_facts_examples", "render_facts_examples"]
 
@@ -121,9 +121,12 @@ def _unverified_quotes(example: FactsExample) -> list[str]:
 
     Runs the real guard rather than a copy of it, so an example is held to
     exactly the check every live posting gets - typographic folding, the
-    separate title/description haystacks and the graduation-year check
-    included. A fact the guard leaves untouched is fine; any change means
-    the example states a value its own posting does not support.
+    separate title/description haystacks, the graduation-year check and
+    (2.5.2) the bar-word check included. The recent-graduates guard
+    (`resolve_student`) runs too: an example marking an advert student-only
+    while it accepts graduates teaches the very mistake that guard corrects.
+    A fact the guards leave untouched is fine; any change means the example
+    states a value its own posting does not support.
     """
     job = Job(
         source="example",
@@ -133,7 +136,7 @@ def _unverified_quotes(example: FactsExample) -> list[str]:
         description=example.description,
     )
     facts = example.facts
-    checked = verify_facts(facts, job)
+    checked = resolve_student(verify_facts(facts, job), job)
     bad: list[str] = []
     for name in _QUOTED_FACTS:
         before = getattr(facts, name)
