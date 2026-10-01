@@ -166,7 +166,10 @@ is dropped), then applies your `profile.rules` in a fixed order:
    "manager" is not a level word. Otherwise the model's level counts only
    with a quote of two words or more.
 4. The stated minimum years exceed `max_years_required`: `skip`.
-5. The field is not in `allowed_fields`: `skip`.
+5. The field is not in `allowed_fields`: `skip`. Like level, the field is
+   read from the title first (Data Engineer, Data Analyst, ML Engineer and so
+   on; a title is never read as `other`); otherwise the model's field counts
+   only with a quote of two words or more.
 6. Otherwise the model's 0-100 skills/domain score decides.
 
 A fact the advert does not state never fires a rule, so an advert that says

@@ -62,7 +62,9 @@ __all__ = [
     "PostingFacts",
     "StudentFact",
     "YearsFact",
+    "field_from_text",
     "level_from_text",
+    "resolve_field",
     "resolve_level",
     "verify_facts",
 ]
@@ -432,3 +434,109 @@ def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
     if level == facts.level:
         return facts
     return facts.model_copy(update={"level": level})
+
+
+# Field words, as whole phrases. Precedence (2.4.3): the first matching row
+# wins, so a title that names both reads as the earlier field - AI/ML beats
+# data engineering ("ML Engineer, Data Platform"), data words beat software
+# words ("Software Engineer, Data Platform"), data science beats analytics
+# ("Data Scientist / Data Analyst") and analytics beats software ("BI
+# Developer / Software Engineer"). There is deliberately no `other` row: a
+# title that names no field here says nothing, and guessing `other` from it
+# would let `allowed_fields` skip a posting on the strength of a missing word.
+_FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
+    (
+        JobField.ai_llm,
+        re.compile(
+            r"\b(?:machine\s+learning|ml\s+engineer|mlops|ai\s+engineer|ai/ml"
+            r"|llm|nlp|deep\s+learning|computer\s+vision|generative\s+ai"
+            r"|applied\s+scientist)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        JobField.data_engineering,
+        re.compile(
+            r"\b(?:data\s+engineer|analytics\s+engineer|etl|data\s+platform"
+            r"|big\s+data|data\s+architect|dataops|data\s+pipeline)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        JobField.data_science,
+        re.compile(
+            r"\b(?:data\s+scientist|data\s+science"
+            r"|quantitative\s+research(?:er)?|quant\s+research(?:er)?"
+            r"|statistician|research\s+scientist)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        JobField.analytics_bi,
+        re.compile(
+            r"\b(?:data\s+analyst|bi\s+analyst|bi\s+developer"
+            r"|business\s+intelligence|reporting\s+analyst|insights\s+analyst"
+            r"|power\s+bi|tableau\s+developer)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        JobField.software,
+        re.compile(
+            r"\b(?:software\s+engineer|software\s+developer|backend|back-end"
+            r"|frontend|front-end|full\s+stack|fullstack|full-stack|devops"
+            r"|site\s+reliability|sre|mobile\s+developer|ios\s+developer"
+            r"|android\s+developer)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def field_from_text(text: str) -> JobField | None:
+    """The field a title or quote names by phrase, or None if it names none.
+
+    The first matching row of `_FIELD_WORDS` wins, which encodes the
+    precedence described above it. Never returns `JobField.other`.
+    """
+    folded = text.translate(_TYPO_FOLD)
+    for field, pattern in _FIELD_WORDS:
+        if pattern.search(folded):
+            return field
+    return None
+
+
+def resolve_field(facts: PostingFacts, job: Job) -> PostingFacts:
+    """Settle `field` deterministically, after `verify_facts`.
+
+    The local model left `field` null on 82 of 91 cached postings, so
+    `allowed_fields` almost never fired - the same failure `resolve_level`
+    fixed for level, and the same remedy: the title is better evidence than
+    the model, and the code already has it. In order:
+
+    1. The title names a field (`_FIELD_WORDS`): that field, quoting the title.
+    2. The model stated a field and its verified quote is at least two words:
+       keep it. One word ("Python") is too thin to put a posting in a field.
+    3. The model stated no field but its verified quote (again two words or
+       more) names one: derive the field from it.
+    4. Otherwise None.
+
+    Pure and idempotent; never mutates `facts`. Expects `facts` to have been
+    through `verify_facts` already, so every quote it reads is verbatim.
+    """
+    title_field = field_from_text(job.title)
+    if title_field is not None:
+        field = FieldFact(value=title_field, quote=job.title[:QUOTE_CHARS])
+    else:
+        model = facts.field
+        enough_words = len(model.quote.split()) >= 2
+        derived = field_from_text(model.quote) if enough_words else None
+        if model.value is not None and enough_words:
+            field = model
+        elif model.value is None and derived is not None:
+            field = FieldFact(value=derived, quote=model.quote)
+        else:
+            field = FieldFact(value=None, quote="")
+    if field == facts.field:
+        return facts
+    return facts.model_copy(update={"field": field})

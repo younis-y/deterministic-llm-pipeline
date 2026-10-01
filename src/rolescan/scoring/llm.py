@@ -21,7 +21,12 @@ from typing import TYPE_CHECKING
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
 from rolescan.scoring.enrich import Enricher, get_enricher
-from rolescan.scoring.facts import PostingFacts, resolve_level, verify_facts
+from rolescan.scoring.facts import (
+    PostingFacts,
+    resolve_field,
+    resolve_level,
+    verify_facts,
+)
 from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
 from rolescan.scoring.rules import decide
 
@@ -222,6 +227,9 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
     level table (no "manager"; "lead"/"staff" only before a role word; junior
     beats senior) and the work_auth prompt wording; cached facts hold the
     post-`resolve_level` level, so a v3 row would replay the old table.
+    v5 (2.4.3) adds the deterministic field pass (`resolve_field`): cached
+    facts hold the post-`resolve_field` field, so a v4 row would replay the
+    model's (usually null) field.
 
     The facts key also names `cfg.backend` and `cfg.model`: facts extracted by
     one model must not be served (re-decided and enriched) for `cache_days`
@@ -229,7 +237,7 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
     evaluation of the two exists to inform. The judge-mode key is unchanged.
     """
     if mode == "facts":
-        return f"{job.content_hash}:facts-v4:{cfg.backend}:{cfg.model}"
+        return f"{job.content_hash}:facts-v5:{cfg.backend}:{cfg.model}"
     return job.content_hash
 
 
@@ -530,7 +538,8 @@ class FitScorer:
         # One call, always: Call 1 is already short, so the cascade - built to
         # skip generating prose for a role that will not clear the gate - buys
         # nothing here, and facts mode never runs it.
-        return resolve_level(verify_facts(await judge.facts(system, user), job), job)
+        verified = verify_facts(await judge.facts(system, user), job)
+        return resolve_field(resolve_level(verified, job), job)
 
     async def _call_judge(self, scored: ScoredJob) -> FitVerdict:
         job = scored.job
