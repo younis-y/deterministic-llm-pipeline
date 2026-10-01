@@ -230,6 +230,11 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
     v5 (2.4.3) adds the deterministic field pass (`resolve_field`): cached
     facts hold the post-`resolve_field` field, so a v4 row would replay the
     model's (usually null) field.
+    v6 (2.4.4) widens `_FIELD_WORDS` to match the natural inflections of the
+    ai_llm/data_engineering/data_science role words ("Data Engineering",
+    "AI Engineering", "Data Platforms", "AI Software Engineer"); a v5 row may
+    hold a field the widened table would now resolve differently, so it must
+    not be replayed.
 
     The facts key also names `cfg.backend` and `cfg.model`: facts extracted by
     one model must not be served (re-decided and enriched) for `cache_days`
@@ -237,7 +242,7 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
     evaluation of the two exists to inform. The judge-mode key is unchanged.
     """
     if mode == "facts":
-        return f"{job.content_hash}:facts-v5:{cfg.backend}:{cfg.model}"
+        return f"{job.content_hash}:facts-v6:{cfg.backend}:{cfg.model}"
     return job.content_hash
 
 

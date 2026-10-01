@@ -104,6 +104,23 @@ def test_title_field_table_precedence_and_variants(
 
 
 @pytest.mark.parametrize(
+    ("title", "field"),
+    [
+        # 2.4.4: natural inflections on the ai_llm/data_engineering/
+        # data_science phrases. A software word must not win just because
+        # the data/AI phrase was spelled as a gerund or a plural.
+        ("Software Engineer - Data Engineering", JobField.data_engineering),
+        ("Software Engineer Intern (Data Engineering)", JobField.data_engineering),
+        ("AI Engineering Intern", JobField.ai_llm),
+        ("AI Software Engineer", JobField.ai_llm),
+        ("Data Platforms Engineer", JobField.data_engineering),
+    ],
+)
+def test_title_field_inflections(title: str, field: JobField) -> None:
+    assert field_from_text(title) == field
+
+
+@pytest.mark.parametrize(
     "title",
     ["Hallmark Brand Analyst", "Dubai Engineer", "Data Entry Clerk",
      "Data Protection Officer", "AI Sales Executive", "Engineer"],

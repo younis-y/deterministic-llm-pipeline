@@ -444,11 +444,23 @@ def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
 # Developer / Software Engineer"). There is deliberately no `other` row: a
 # title that names no field here says nothing, and guessing `other` from it
 # would let `allowed_fields` skip a posting on the strength of a missing word.
+#
+# 2.4.4: the ai_llm/data_engineering/data_science phrases allow the natural
+# inflections of the role words ("-ing", plural "-s") so "Data Engineering",
+# "AI Engineering" and "Data Platforms" match like their bare forms did
+# already - a whole-word match on "engineer" alone missed the gerund, which
+# let a software word in the same title win by default, against the design's
+# own intent that data/AI words beat software words. "ai engineer" also
+# allows one word between "ai" and the role word ("AI Software Engineer",
+# "AI Backend Engineer") for the same reason: "software"/"backend" sitting
+# between them is not a different field, it is still an AI role. Word
+# boundaries and the row order are otherwise unchanged.
 _FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
     (
         JobField.ai_llm,
         re.compile(
-            r"\b(?:machine\s+learning|ml\s+engineer|mlops|ai\s+engineer|ai/ml"
+            r"\b(?:machine\s+learning|ml\s+engineer(?:ing|s)?|mlops"
+            r"|ai\s+(?:\w+\s+)?engineer(?:ing|s)?|ai/ml"
             r"|llm|nlp|deep\s+learning|computer\s+vision|generative\s+ai"
             r"|applied\s+scientist)\b",
             re.IGNORECASE,
@@ -457,15 +469,16 @@ _FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
     (
         JobField.data_engineering,
         re.compile(
-            r"\b(?:data\s+engineer|analytics\s+engineer|etl|data\s+platform"
-            r"|big\s+data|data\s+architect|dataops|data\s+pipeline)\b",
+            r"\b(?:data\s+engineer(?:ing|s)?|analytics\s+engineer(?:ing|s)?"
+            r"|etl|data\s+platforms?"
+            r"|big\s+data|data\s+architect|dataops|data\s+pipelines?)\b",
             re.IGNORECASE,
         ),
     ),
     (
         JobField.data_science,
         re.compile(
-            r"\b(?:data\s+scientist|data\s+science"
+            r"\b(?:data\s+scientists?|data\s+science"
             r"|quantitative\s+research(?:er)?|quant\s+research(?:er)?"
             r"|statistician|research\s+scientist)\b",
             re.IGNORECASE,
