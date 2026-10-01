@@ -61,6 +61,48 @@ def _quote_reason(prefix: str, quote: str) -> str:
     return f'{prefix}"{q}"'
 
 
+def _rule_skip(facts: PostingFacts, rules: RulesConfig) -> str | None:
+    """The reason the first of rules 2-6 that fires gives, or None.
+
+    Split out of `decide` so the rule order reads top to bottom in one place.
+    """
+    year = facts.graduation_year.value
+    limit = rules.max_graduation_year
+    # The year rule exists only while a limit is set. While it does, a stated
+    # year decides on its own and `student_only` steps aside for that posting;
+    # with no limit, a stated year changes nothing and `student_only` decides
+    # exactly as it did before the year was extracted.
+    judged_by_year = year is not None and limit is not None
+    if year is not None and limit is not None and year > limit:
+        return _quote_reason("Skip: advert says ", facts.graduation_year.quote)
+    level = facts.level
+    if (
+        not judged_by_year
+        and facts.student_only.value is True
+        and rules.student_only == "skip"
+    ):
+        return _quote_reason("Skip: advert says ", facts.student_only.quote)
+    if (
+        level.value != Level.not_stated
+        and level.value not in rules.allowed_levels
+        and (not rules.level_from_title_only or level.source == "title")
+    ):
+        return _quote_reason("Skip: advert is for ", level.quote)
+    if (
+        facts.years_required.value is not None
+        and rules.max_years_required is not None
+        and facts.years_required.value > rules.max_years_required
+    ):
+        return _quote_reason("Skip: advert asks for ", facts.years_required.quote)
+    if (
+        facts.field.value is not None
+        and rules.allowed_fields is not None
+        and facts.field.value not in rules.allowed_fields
+    ):
+        return _quote_reason("Skip: advert is for ", facts.field.quote)
+    return None
+
+
 def decide(
     facts: PostingFacts, rules: RulesConfig | None, min_report_score: int
 ) -> FitVerdict:
@@ -70,22 +112,28 @@ def decide(
       0. `work_auth` hard bars are ignored (see `_IGNORED_BARS`).
       1. A nationality or clearance hard bar -> blocked.
       1b. Any other (`BarKind.other`) hard bar -> skip, whatever `rules` says.
-      2. `student_only` is True and `rules.student_only == "skip"` -> skip.
-      3. `level` is stated and not in `rules.allowed_levels` -> skip.
-      4. `years_required` is stated and exceeds `rules.max_years_required`
+      2. `graduation_year` is stated, `rules.max_graduation_year` is set, and
+         the year exceeds it -> skip (2.5.0).
+      3. `student_only` is True and `rules.student_only == "skip"` -> skip -
+         but only when rule 2 did not judge the posting: with a limit set, a
+         stated year within it means `student_only` does not fire.
+      4. `level` is stated and not in `rules.allowed_levels` -> skip. With
+         `rules.level_from_title_only`, only a level whose `source` is
+         `title` (see `resolve_level`) can fire this (2.5.0).
+      5. `years_required` is stated and exceeds `rules.max_years_required`
          (when that cap is set) -> skip.
-      5. `field` is stated and `rules.allowed_fields` is set and excludes it
+      6. `field` is stated and `rules.allowed_fields` is set and excludes it
          -> skip.
-      6. Otherwise, the model's `fit_score` decides: apply at `APPLY_AT` or
+      7. Otherwise, the model's `fit_score` decides: apply at `APPLY_AT` or
          above, consider at `CONSIDER_AT` or above, else skip.
 
-    `rules is None` means only rules 1, 1b and 6 apply - a not-stated fact
-    never fires a rule, and no `RulesConfig` means no rule from 2-5 exists to
+    `rules is None` means only rules 1, 1b and 7 apply - a not-stated fact
+    never fires a rule, and no `RulesConfig` means no rule from 2-6 exists to
     fire at all.
 
-    A rule that fires (1-5) caps the score so a filtered-out posting can
+    A rule that fires (1-6) caps the score so a filtered-out posting can
     never look better than one that reached the digest on fit alone: rule 1
-    caps at `BLOCKED_CAP`, rules 1b-5 cap just under `min_report_score`.
+    caps at `BLOCKED_CAP`, rules 1b-6 cap just under `min_report_score`.
     `confidence` is `high` when a rule fired, since a rule is a fact check
     rather than a judgement call, and `medium` otherwise. `keywords_missing`
     always passes through from the model unchanged.
@@ -107,29 +155,7 @@ def decide(
         skip_reason = _quote_reason("Skip: advert requires ", bars[0].quote)
 
     if rules is not None and skip_reason is None:
-        if facts.student_only.value is True and rules.student_only == "skip":
-            skip_reason = _quote_reason(
-                "Skip: advert says ", facts.student_only.quote
-            )
-        elif (
-            facts.level.value != Level.not_stated
-            and facts.level.value not in rules.allowed_levels
-        ):
-            skip_reason = _quote_reason("Skip: advert is for ", facts.level.quote)
-        elif (
-            facts.years_required.value is not None
-            and rules.max_years_required is not None
-            and facts.years_required.value > rules.max_years_required
-        ):
-            skip_reason = _quote_reason(
-                "Skip: advert asks for ", facts.years_required.quote
-            )
-        elif (
-            facts.field.value is not None
-            and rules.allowed_fields is not None
-            and facts.field.value not in rules.allowed_fields
-        ):
-            skip_reason = _quote_reason("Skip: advert is for ", facts.field.quote)
+        skip_reason = _rule_skip(facts, rules)
 
     if skip_reason is not None:
         capped = min(facts.fit_score, max(min_report_score - 1, 0))

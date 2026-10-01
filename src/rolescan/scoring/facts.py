@@ -28,7 +28,7 @@ Two rules keep that check honest rather than merely convenient:
 from __future__ import annotations
 
 import re
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -38,6 +38,7 @@ from pydantic import (
     ValidationInfo,
     field_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from rolescan.models import _REASON_CHARS, BarKind, Job, JobField, Level, _norm
 
@@ -57,8 +58,10 @@ _TYPO_FOLD = str.maketrans(
 __all__ = [
     "QUOTE_CHARS",
     "FieldFact",
+    "GraduationYearFact",
     "HardBar",
     "LevelFact",
+    "LevelSource",
     "PostingFacts",
     "StudentFact",
     "YearsFact",
@@ -97,6 +100,13 @@ def _normalise(text: str) -> str:
     return " ".join(text.translate(_TYPO_FOLD).split()).casefold()
 
 
+#: Where a resolved level came from (2.5.0). `title`: the job title names it,
+#: by keyword or in the model's verified quote. `text`: only the description
+#: does. `none`: no level. `rules.level_from_title_only` lets only `title`
+#: fire the level rule.
+LevelSource = Literal["title", "text", "none"]
+
+
 class LevelFact(BaseModel):
     """The career level the posting targets, with the text that says so."""
 
@@ -115,6 +125,19 @@ class LevelFact(BaseModel):
         description=(
             "Text copied verbatim from the posting that states this level. "
             "Empty if not stated."
+        ),
+    )
+    # Provenance, not something the model states. Left out of the JSON schema
+    # (`SkipJsonSchema`), so neither backend ever asks for it, and set by
+    # `resolve_level` after the quote guard. Still serialised, so cached facts
+    # carry it into every later re-decision. Class docstrings and field
+    # descriptions here reach the hosted model as schema text, which is why
+    # this note is a comment.
+    source: SkipJsonSchema[LevelSource] = Field(
+        default="none",
+        description=(
+            "Where the level was read from: the job title, the rest of the "
+            "posting, or nowhere. Set by `resolve_level`, never by the model."
         ),
     )
 
@@ -160,6 +183,35 @@ class StudentFact(BaseModel):
         description=(
             "Text copied verbatim from the posting that states this "
             "restriction."
+        ),
+    )
+
+
+# 2.5.0. `student_only` alone cannot tell an internship for 2027 graduates
+# from one for 2028 graduates; this can. The docstring below reaches the hosted
+# model as schema text, so it says only what the model needs.
+class GraduationYearFact(BaseModel):
+    """The earliest graduation year the posting requires of applicants.
+
+    "graduating in 2028" is 2028; "graduating 2027 or 2028" is 2027; "class
+    of 2027" is 2027.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: int | None = Field(
+        default=None,
+        description=(
+            "The earliest graduation year the advert requires of applicants. "
+            "None if not stated."
+        ),
+    )
+    quote: _Quote = Field(
+        default="",
+        max_length=QUOTE_CHARS,
+        description=(
+            "Text copied verbatim from the posting that states the graduation "
+            "year."
         ),
     )
 
@@ -219,6 +271,10 @@ class PostingFacts(BaseModel):
     student_only: StudentFact = Field(
         default_factory=StudentFact,
         description="Whether only current students may apply.",
+    )
+    graduation_year: GraduationYearFact = Field(
+        default_factory=GraduationYearFact,
+        description="The earliest graduation year applicants must have.",
     )
     hard_bars: list[HardBar] = Field(
         default_factory=list,
@@ -329,6 +385,10 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     if not _verified(student.quote):
         student = StudentFact(value=None, quote="")
 
+    graduation_year = facts.graduation_year
+    if not _verified(graduation_year.quote):
+        graduation_year = GraduationYearFact(value=None, quote="")
+
     field = facts.field
     if not _verified(field.quote):
         field = FieldFact(value=None, quote="")
@@ -340,6 +400,7 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
             "level": level,
             "years_required": years,
             "student_only": student,
+            "graduation_year": graduation_year,
             "field": field,
             "hard_bars": hard_bars,
         }
@@ -414,23 +475,34 @@ def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
        more, for the same reason) names a level: derive the level from it.
     4. Otherwise `not_stated`.
 
+    It also records where the level came from (2.5.0), for
+    `rules.level_from_title_only`: `title` for step 1, and for steps 2-3 when
+    the model's quote is itself part of the title ("Mid-Level Data Engineer"
+    names no level keyword but is still the title speaking); `text` when the
+    quote is only in the description; `none` for step 4. Any `source` already
+    on the fact is overwritten, so a model can never claim `title` for itself.
+
     Pure and idempotent; never mutates `facts`. Expects `facts` to have been
     through `verify_facts` already, so every quote it reads is verbatim.
     """
     title_level = level_from_text(job.title)
     if title_level is not None:
         quote = job.title[:QUOTE_CHARS]
-        level = LevelFact(value=title_level, quote=quote)
+        level = LevelFact(value=title_level, quote=quote, source="title")
     else:
         model = facts.level
         enough_words = len(model.quote.split()) >= 2
         derived = level_from_text(model.quote) if enough_words else None
+        in_title = bool(model.quote) and _normalise(model.quote) in _normalise(
+            job.title
+        )
+        source: LevelSource = "title" if in_title else "text"
         if model.value != Level.not_stated and enough_words:
-            level = model
+            level = LevelFact(value=model.value, quote=model.quote, source=source)
         elif model.value == Level.not_stated and derived is not None:
-            level = LevelFact(value=derived, quote=model.quote)
+            level = LevelFact(value=derived, quote=model.quote, source=source)
         else:
-            level = LevelFact(value=Level.not_stated, quote="")
+            level = LevelFact(value=Level.not_stated, quote="", source="none")
     if level == facts.level:
         return facts
     return facts.model_copy(update={"level": level})

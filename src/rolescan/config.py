@@ -68,6 +68,25 @@ class RulesConfig(BaseModel):
         default=None,
         description="Job fields that pass the filter. None means any field.",
     )
+    max_graduation_year: int | None = Field(
+        default=None,
+        description=(
+            "A stated graduation year above this skips; None = no limit. The "
+            "year is the EARLIEST one the advert accepts, so \"graduating 2027 "
+            "or 2028\" passes a limit of 2027. While this is set, a posting "
+            "that states a graduation year is judged on the year alone and "
+            "`student_only` does not fire for it; `student_only` still decides "
+            "postings that state no year. Unset, a stated year changes nothing."
+        ),
+    )
+    level_from_title_only: bool = Field(
+        default=False,
+        description=(
+            "When true, only a level read from the job title can fire the "
+            "level rule; a level the model reads from the description is "
+            "ignored."
+        ),
+    )
 
 
 class SourceEntry(BaseModel):
@@ -312,6 +331,16 @@ class LLMConfig(BaseModel):
             "postings that clear min_report_score. Empty means none."
         ),
     )
+    facts_examples_file: Path | None = Field(
+        default=None,
+        description=(
+            "A YAML list of worked examples (title, company, description, "
+            "facts) rendered into the facts-mode SYSTEM prompt after its "
+            "instructions, so they sit inside the cached prefix. Resolved "
+            "relative to the config file and validated when the config loads. "
+            "None means no examples and an unchanged prompt."
+        ),
+    )
 
     _auto_disabled: bool = PrivateAttr(default=False)
     """Set when `_resolve_key` switched scoring off, rather than the user."""
@@ -423,6 +452,17 @@ class Config(BaseModel):
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         cfg = cls.model_validate(data)
         object.__setattr__(cfg, "root", path.resolve().parent)
+        examples = cfg.llm.facts_examples_file
+        if examples is not None:
+            # Resolved here, once, because FitScorer only ever sees `cfg.llm`
+            # and never the config's location. Loaded here too, so a bad
+            # example fails the run before a single posting is scored rather
+            # than as one error per posting mid-scan.
+            from rolescan.scoring.examples import load_facts_examples
+
+            resolved = cfg.resolve(examples)
+            object.__setattr__(cfg.llm, "facts_examples_file", resolved)
+            load_facts_examples(resolved)
         return cfg
 
     def resolve(self, p: Path) -> Path:

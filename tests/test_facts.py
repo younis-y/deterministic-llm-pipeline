@@ -112,7 +112,9 @@ def test_every_quote_field_carries_a_200_char_max_length_in_the_schema() -> None
     JSON past its output budget."""
     schema = PostingFacts.model_json_schema()
     defs = schema["$defs"]
-    for name in ("LevelFact", "YearsFact", "StudentFact", "FieldFact", "HardBar"):
+    for name in (
+        "LevelFact", "YearsFact", "StudentFact", "GraduationYearFact", "FieldFact", "HardBar",
+    ):
         assert defs[name]["properties"]["quote"]["maxLength"] == 200, name
 
 

@@ -104,6 +104,13 @@ profile:
   #     - not_stated             # not state a level is skipped.
   #   student_only: skip         # skip roles open only to current students.
   #                              # Default allow.
+  #   max_graduation_year: 2027  # skip a stated graduation year above this
+  #                              # (the earliest the advert accepts). While
+  #                              # set, student_only applies only to adverts
+  #                              # that state no year. Default null: no limit.
+  #   level_from_title_only: true  # only a level read from the job title can
+  #                              # skip; one read from the description is
+  #                              # ignored. Default false.
   #   allowed_fields:            # default null: any field. Values:
   #     - data_engineering       # data_engineering, ai_llm, data_science,
   #     - ai_llm                 # analytics_bi, software, other.
@@ -144,6 +151,11 @@ llm:
   # adding your own advice. Empty means none. A failing enricher keeps the
   # plain verdict.
   # enricher: ""
+
+  # A YAML list of worked examples (title, company, description, facts in the
+  # shape the model returns) appended to the facts-mode system prompt, inside
+  # the cached prefix. Relative to this file; validated at load. Default none.
+  # facts_examples_file: facts_examples.yaml
 
   # Appended verbatim to the judge-mode system prompt. In facts mode it is NOT
   # sent to the scoring call (only an enricher may use it), and rolescan logs

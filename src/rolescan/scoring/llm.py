@@ -15,12 +15,14 @@ Three things keep this cheap:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from typing import TYPE_CHECKING
 
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
 from rolescan.scoring.enrich import Enricher, get_enricher
+from rolescan.scoring.examples import load_facts_examples, render_facts_examples
 from rolescan.scoring.facts import (
     PostingFacts,
     resolve_field,
@@ -136,10 +138,14 @@ as "Title:"."""
 # own line below rather than relying on the schema's description strings.
 #
 # No extra_prompt and no CV vocabulary: unlike SYSTEM, this prompt has no seam
-# for private context. The judgement it makes is skills and domain fit only;
-# level, years, student status and eligibility are decided afterwards by
-# `rolescan.scoring.rules.decide`, from the quoted facts extracted here, not
-# by the model.
+# for free-text private context. The judgement it makes is skills and domain
+# fit only; level, years, student status, graduation year and eligibility are
+# decided afterwards by `rolescan.scoring.rules.decide`, from the quoted facts
+# extracted here, not by the model. The one addition a caller can make is
+# `llm.facts_examples_file` (2.5.0): worked examples, validated as
+# `PostingFacts` and appended after these instructions by
+# `FitScorer.facts_system_prompt` - structured data in the schema's own
+# shape, not prose the model could read as new rules.
 SYSTEM_FACTS = """\
 You extract facts from a job posting for one specific candidate. You do not \
 decide seniority fit, years fit, or eligibility - those are decided by code \
@@ -149,13 +155,13 @@ from the facts you extract below, not by you.
 {summary}
 </candidate>
 
-For level, years_required, student_only and field: copy the exact text from \
-the posting that states it, verbatim, into that fact's quote. Quote the \
-shortest phrase that shows the fact, under 200 characters - never a whole \
-paragraph. If the posting \
+For level, years_required, student_only, graduation_year and field: copy the \
+exact text from the posting that states it, verbatim, into that fact's quote. \
+Quote the shortest phrase that shows the fact, under 200 characters - never a \
+whole paragraph. If the posting \
 does not say, leave it not stated - never guess or infer a value. Encode "not \
-stated" as: level = not_stated; years_required, student_only and field = \
-null; and an empty quote in every case.
+stated" as: level = not_stated; years_required, student_only, graduation_year \
+and field = null; and an empty quote in every case.
 
 level - the career level the posting targets:
 - graduate_entry: graduate schemes, entry-level, 0-1 years, internships or \
@@ -173,6 +179,10 @@ not stated.
 
 student_only - true only if the posting restricts the role to current \
 students; not stated otherwise.
+
+graduation_year - the EARLIEST graduation year the advert requires of \
+applicants ("graduating in 2028" -> 2028; "graduating 2027 or 2028" -> 2027; \
+"class of 2027" -> 2027); null when not stated.
 
 field - the job's core work:
 - data_engineering: building data pipelines, platforms, or ETL.
@@ -209,7 +219,9 @@ List up to 8 keywords_missing: skills or tools the posting asks for that are \
 not evidenced for this candidate."""
 
 
-def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
+def cache_key(
+    job: Job, mode: str, cfg: LLMConfig, *, examples_digest: str = ""
+) -> str:
     """The verdict-cache key for this posting under this scoring mode.
 
     Facts mode and judge mode ask a different question of the same posting
@@ -235,6 +247,15 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
     "AI Engineering", "Data Platforms", "AI Software Engineer"); a v5 row may
     hold a field the widened table would now resolve differently, so it must
     not be replayed.
+    v7 (2.5.0) adds the `graduation_year` fact to the schema and prompt, and
+    `LevelFact.source` (set by `resolve_level`) to the cached payload; a v6
+    row has neither, so `max_graduation_year` and `level_from_title_only`
+    could not judge it.
+
+    `examples_digest` names the worked examples the prompt carried (see
+    `FitScorer._facts_cache_key`): they change what the model extracts, and
+    the owner edits them, which no version string here can track. Empty -
+    no examples - leaves the key exactly as it was.
 
     The facts key also names `cfg.backend` and `cfg.model`: facts extracted by
     one model must not be served (re-decided and enriched) for `cache_days`
@@ -242,7 +263,8 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
     evaluation of the two exists to inform. The judge-mode key is unchanged.
     """
     if mode == "facts":
-        return f"{job.content_hash}:facts-v6:{cfg.backend}:{cfg.model}"
+        key = f"{job.content_hash}:facts-v7:{cfg.backend}:{cfg.model}"
+        return f"{key}:ex-{examples_digest}" if examples_digest else key
     return job.content_hash
 
 
@@ -309,6 +331,11 @@ class FitScorer:
         #: question `FitVerdict` alone cannot answer once `decide` has turned
         #: the facts into a verdict.
         self.last_facts: dict[str, PostingFacts] = {}
+        #: The rendered worked examples (`cfg.facts_examples_file`), loaded on
+        #: first use and kept for the scorer's life, so every posting in a run
+        #: is scored - and cache-keyed - against the same examples even if the
+        #: file is edited mid-run. None until loaded; "" when none configured.
+        self._examples_block: str | None = None
         if extra_prompt and cfg.mode == "facts" and not cfg.enricher:
             log.info(
                 "llm.extra_prompt is set but not used: facts mode does not send "
@@ -417,6 +444,47 @@ class FitScorer:
                 log.warning("enrichment failed for %r: %s", job.title, e)
                 return verdict
 
+    def _facts_examples(self) -> str:
+        """The worked-examples block for the facts prompt, or "" for none.
+
+        `Config.load` has already resolved the path against the config file
+        and validated every example, so a failure here means the file changed
+        or vanished after the config loaded; it raises `ValueError` naming it.
+        """
+        if self._examples_block is None:
+            path = self.cfg.facts_examples_file
+            self._examples_block = (
+                render_facts_examples(load_facts_examples(path)) if path else ""
+            )
+        return self._examples_block
+
+    def facts_system_prompt(self) -> str:
+        """The facts-mode system prompt exactly as `_call_facts` sends it.
+
+        `SYSTEM_FACTS` with the candidate summary, then the worked examples
+        when `cfg.facts_examples_file` is set. Public so a caller measuring
+        the prompt (the evaluation's prompt-cache preflight) counts the same
+        bytes the backend receives, examples included, rather than rebuilding
+        it and drifting.
+        """
+        system = SYSTEM_FACTS.format(
+            summary=self.profile.summary or "(no summary configured)"
+        )
+        examples = self._facts_examples()
+        return f"{system}\n\n{examples}" if examples else system
+
+    def _facts_cache_key(self, job: Job) -> str:
+        """`cache_key` for facts mode, naming the worked examples in use.
+
+        The digest covers the rendered block, so editing any example (or
+        removing the file) stops cached facts extracted under the old
+        examples from being replayed. With no examples the key is the plain
+        `cache_key`, unchanged.
+        """
+        examples = self._facts_examples()
+        digest = hashlib.sha256(examples.encode()).hexdigest()[:12] if examples else ""
+        return cache_key(job, "facts", self.cfg, examples_digest=digest)
+
     def _system(self) -> str:
         return SYSTEM.format(
             summary=self.profile.summary or "(no summary configured)",
@@ -491,7 +559,7 @@ class FitScorer:
         rule that produced it would already be baked into the stored payload.
         """
         job = scored.job
-        key = cache_key(job, self.cfg.mode, self.cfg)
+        key = self._facts_cache_key(job)
 
         if self.store is not None:
             cached_facts = await self.store.get_verdict(
@@ -536,9 +604,7 @@ class FitScorer:
                 or "(no description provided by the source)"
             ),
         )
-        system = SYSTEM_FACTS.format(
-            summary=self.profile.summary or "(no summary configured)"
-        )
+        system = self.facts_system_prompt()
         judge = self._get_judge()
         # One call, always: Call 1 is already short, so the cascade - built to
         # skip generating prose for a role that will not clear the gate - buys

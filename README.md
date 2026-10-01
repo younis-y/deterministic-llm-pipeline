@@ -147,30 +147,40 @@ hosted backend is materially better at it. Choose accordingly.
 
 **Facts first, then rules.** By default (`llm.mode: facts`) the model is not
 asked whether you should apply. It is asked what the advert says: the level,
-the minimum years, whether it is open only to current students, the field,
-and any hard eligibility bar, each with the advert text it read it from. Code
-checks every quote is really in the posting (a fact whose quote is not there
-is dropped), then applies your `profile.rules` in a fixed order:
+the minimum years, whether it is open only to current students, the earliest
+graduation year it accepts, the field, and any hard eligibility bar, each with
+the advert text it read it from. Code checks every quote is really in the
+posting (a fact whose quote is not there is dropped), then applies your
+`profile.rules` in a fixed order:
 
 1. A nationality or security-clearance bar: `blocked`. Any other stated
    mandatory requirement (a licence, a residency) is a `skip` that quotes it,
    never a block. A work-authorisation bar the model extracts decides
    nothing: put the visa wording you cannot get past in `hard_blockers`.
-2. `student_only: skip` and the advert is students-only: `skip`.
-3. The level is not in `allowed_levels`: `skip`. A level word in the title
+2. With `max_graduation_year` set, a stated graduation year above it: `skip`.
+   The year is the earliest the advert accepts, so "graduating 2027 or 2028"
+   is 2027 and passes a limit of 2027.
+3. `student_only: skip` and the advert is students-only: `skip`. While
+   `max_graduation_year` is set, this applies only to adverts that state no
+   graduation year: one that states a year within the limit passes, however
+   student-only it is, because the year is the sharper test.
+4. The level is not in `allowed_levels`: `skip`. A level word in the title
    decides the level: graduate, grad, intern, internship, placement,
    entry-level, trainee, apprentice; junior, jr, assistant; senior, sr;
    principal, head of, director, "staff" before engineer/scientist/developer,
    and "lead" before a role word (Lead Data Engineer, not Lead Generation).
    Graduate and junior words beat senior and lead ones; lead beats senior.
    "manager" is not a level word. Otherwise the model's level counts only
-   with a quote of two words or more.
-4. The stated minimum years exceed `max_years_required`: `skip`.
-5. The field is not in `allowed_fields`: `skip`. Like level, the field is
+   with a quote of two words or more. With `level_from_title_only: true`,
+   only a level read from the title (a level word, or a model quote that is
+   part of the title) can fire this rule; a level the model reads from the
+   description is ignored.
+5. The stated minimum years exceed `max_years_required`: `skip`.
+6. The field is not in `allowed_fields`: `skip`. Like level, the field is
    read from the title first (Data Engineer, Data Analyst, ML Engineer and so
    on; a title is never read as `other`); otherwise the model's field counts
    only with a quote of two words or more.
-6. Otherwise the model's 0-100 skills/domain score decides.
+7. Otherwise the model's 0-100 skills/domain score decides.
 
 A fact the advert does not state never fires a rule, so an advert that says
 nothing about level or years is decided on fit alone. Every rule skip names
@@ -181,10 +191,32 @@ the rule and quotes the advert. The `rules` keys and their defaults:
 | `max_years_required` | `null` | Skip a stated minimum above this; `null` disables the check. |
 | `allowed_levels` | `[graduate_entry, junior, mid, not_stated]` | Levels that pass. Also `senior`, `lead_principal`. Keep `not_stated`. |
 | `student_only` | `allow` | `skip` drops roles open only to current students. |
+| `max_graduation_year` | `null` | Skip a stated graduation year above this; `null` is no limit, and a stated year then changes nothing. |
+| `level_from_title_only` | `false` | `true`: only a level read from the job title can skip; a level read from the description is ignored. |
 | `allowed_fields` | `null` (any) | From `data_engineering`, `ai_llm`, `data_science`, `analytics_bi`, `software`, `other`. |
 
-Facts are cached per posting text, backend and model, and re-decided on every
-run, so a rules change applies to cached postings at no model cost.
+`llm.facts_examples_file` points at a YAML list of worked examples, each a
+posting excerpt and the facts it should yield:
+
+```yaml
+- title: Data Science Intern
+  company: Example Co
+  description: A ten-week internship for students graduating in 2028.
+  facts:                      # the shape the model returns
+    level: {value: graduate_entry, quote: Data Science Intern}
+    graduation_year: {value: 2028, quote: graduating in 2028}
+    fit_score: 70
+    reason: Python and SQL match.
+```
+
+They are appended to the facts-mode system prompt after its instructions, so
+they sit inside the cached prefix. The path is relative to the config file,
+and every example is validated when the config loads: a bad one stops the run
+and names the example. No file, no change to the prompt.
+
+Facts are cached per posting text, backend, model and examples file, and
+re-decided on every run, so a rules change applies to cached postings at no
+model cost.
 `llm.mode: judge` restores the older single-call judge; it is kept for one
 release so the two can be compared, then removed.
 

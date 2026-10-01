@@ -35,3 +35,10 @@ def test_llm_mode_defaults_to_facts_and_accepts_judge() -> None:
     assert LLMConfig().mode == "facts"
     assert LLMConfig(mode="judge").mode == "judge"
     assert LLMConfig().enricher == ""
+
+
+def test_2_5_0_rule_keys_parse_and_default_off() -> None:
+    assert RulesConfig().max_graduation_year is None
+    assert RulesConfig().level_from_title_only is False
+    r = RulesConfig.model_validate({"max_graduation_year": 2027, "level_from_title_only": True})
+    assert r.max_graduation_year == 2027 and r.level_from_title_only is True
