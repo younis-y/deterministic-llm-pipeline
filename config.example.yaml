@@ -84,6 +84,31 @@ profile:
   min_keyword_score: 18   # below this, a posting never reaches the LLM
   min_report_score: 55    # below this, a posting never reaches the digest
 
+  # Eligibility rules, applied by code in facts mode (llm.mode: facts) to the
+  # facts the model quotes from each posting. The model never decides these;
+  # it only extracts them, each with a verbatim quote that is checked against
+  # the posting before it may count.
+  #
+  # The not-stated rule: a fact the posting does not state never fires a
+  # rule. A posting that gives no level, no years and no student restriction
+  # is decided on fit alone. Every skip a rule makes names the rule and quotes
+  # the advert, e.g. Skip: advert asks for "5+ years".
+  #
+  # Omit the whole block and no rule fires (structural hard bars still do).
+  # rules:
+  #   max_years_required: 2      # skip a stated minimum above this. Default
+  #                              # null: no years check.
+  #   allowed_levels:            # default: graduate_entry, junior, mid,
+  #     - graduate_entry         # not_stated. Others: senior, lead_principal.
+  #     - junior                 # Keep not_stated, or every advert that does
+  #     - not_stated             # not state a level is skipped.
+  #   student_only: skip         # skip roles open only to current students.
+  #                              # Default allow.
+  #   allowed_fields:            # default null: any field. Values:
+  #     - data_engineering       # data_engineering, ai_llm, data_science,
+  #     - ai_llm                 # analytics_bi, software, other.
+  #     - data_science
+
 llm:
   # Set false to score on keywords alone — no key, no network, no bill.
   enabled: true
@@ -102,6 +127,28 @@ llm:
   #              spot them.
   backend: anthropic
   model: claude-sonnet-5
+
+  # How the model is used.
+  #   facts  (default) The model extracts quoted facts - level, years,
+  #          student-only, field, hard bars - plus a skills/domain fit score.
+  #          Code then applies profile.rules. A level word in the title
+  #          (senior, lead, graduate, intern...) decides the level outright.
+  #          Only nationality, clearance and work-authorisation bars block;
+  #          any other stated requirement is a skip with its quote.
+  #   judge  The older single-call judge that decides everything itself.
+  #          Kept for one release so you can compare the two, then removed.
+  # mode: facts
+
+  # Name of a registered enricher (entry-point group `rolescan.enrichers`)
+  # that does extra work only for postings that clear min_report_score, e.g.
+  # adding your own advice. Empty means none. A failing enricher keeps the
+  # plain verdict.
+  # enricher: ""
+
+  # Appended verbatim to the judge-mode system prompt. In facts mode it is NOT
+  # sent to the scoring call (only an enricher may use it), and rolescan logs
+  # a note at startup if it is set with no enricher to receive it.
+  # extra_prompt: ""
 
   # base_url: http://localhost:11434   # ollama only
   # timeout: 120.0                     # local models are slow; per posting

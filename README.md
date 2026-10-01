@@ -145,6 +145,49 @@ gates the rest — but a bar that appears only in the posting text, and that no
 configured term names, is one this backend will miss about half the time. The
 hosted backend is materially better at it. Choose accordingly.
 
+**Facts first, then rules.** By default (`llm.mode: facts`) the model is not
+asked whether you should apply. It is asked what the advert says: the level,
+the minimum years, whether it is open only to current students, the field,
+and any hard eligibility bar, each with the advert text it read it from. Code
+checks every quote is really in the posting (a fact whose quote is not there
+is dropped), then applies your `profile.rules` in a fixed order:
+
+1. A nationality, security-clearance or work-authorisation bar: `blocked`.
+   Any other stated mandatory requirement (a licence, a residency) is a
+   `skip` that quotes it, never a block.
+2. `student_only: skip` and the advert is students-only: `skip`.
+3. The level is not in `allowed_levels`: `skip`. A level word in the title
+   (senior, sr, lead, principal, staff, head, director, manager, junior,
+   graduate, intern, placement, trainee, apprentice, entry-level) decides
+   the level, with internship and graduate words winning; otherwise the
+   model's level counts only with a quote of two words or more.
+4. The stated minimum years exceed `max_years_required`: `skip`.
+5. The field is not in `allowed_fields`: `skip`.
+6. Otherwise the model's 0-100 skills/domain score decides.
+
+A fact the advert does not state never fires a rule, so an advert that says
+nothing about level or years is decided on fit alone. Every rule skip names
+the rule and quotes the advert. The `rules` keys and their defaults:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_years_required` | `null` | Skip a stated minimum above this; `null` disables the check. |
+| `allowed_levels` | `[graduate_entry, junior, mid, not_stated]` | Levels that pass. Also `senior`, `lead_principal`. Keep `not_stated`. |
+| `student_only` | `allow` | `skip` drops roles open only to current students. |
+| `allowed_fields` | `null` (any) | From `data_engineering`, `ai_llm`, `data_science`, `analytics_bi`, `software`, `other`. |
+
+Facts are cached per posting text, backend and model, and re-decided on every
+run, so a rules change applies to cached postings at no model cost.
+`llm.mode: judge` restores the older single-call judge; it is kept for one
+release so the two can be compared, then removed.
+
+`llm.enricher` names a plugin registered under the `rolescan.enrichers`
+entry-point group that does extra work only for postings that clear
+`min_report_score`; a failing enricher keeps the plain verdict.
+`llm.extra_prompt` is appended to the judge-mode prompt only. In facts mode it
+is not sent to the scoring call (an enricher may use it), and rolescan logs a
+note at startup when it is set with no enricher configured.
+
 With `llm.enabled: false`, or with no key and no local model, you get stage one
 alone. If a configured backend fails, the digest says so rather than quietly
 serving keyword scores that look like a normal run. There is a test that
