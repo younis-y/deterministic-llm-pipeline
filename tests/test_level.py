@@ -16,6 +16,7 @@ from rolescan.scoring.facts import (
     PostingFacts,
     StudentFact,
     YearsFact,
+    level_from_text,
     resolve_level,
     verify_facts,
 )
@@ -112,8 +113,10 @@ def test_nothing_anywhere_is_not_stated() -> None:
         ("Principal ML Engineer", Level.lead_principal),
         ("Staff Engineer", Level.lead_principal),
         ("Head of Data", Level.lead_principal),
-        ("Engineering Manager, Data", Level.lead_principal),
-        ("Senior Engineering Manager", Level.lead_principal),
+        # 2.4.2: "manager" is no longer a level word, so these two changed
+        # (were lead_principal in 2.4.1).
+        ("Engineering Manager, Data", Level.not_stated),
+        ("Senior Engineering Manager", Level.senior),
         ("Jr Data Analyst", Level.junior),
         ("Graduate AI Engineer", Level.graduate_entry),
         ("Junior Graduate Data Engineer", Level.graduate_entry),
@@ -147,3 +150,35 @@ def test_resolve_level_is_idempotent_and_never_mutates() -> None:
     )
     twice = resolve_level(once, job)
     assert once == twice
+
+
+# --- 2.4.2 title level table ---------------------------------------------
+# "manager" is gone; "staff" and "lead" count only before a role word; any
+# graduate/junior word beats any senior/lead word in the same title.
+
+
+@pytest.mark.parametrize(
+    ("title", "level"),
+    [
+        ("Junior Product Manager", Level.junior),
+        ("Jr Staff Engineer", Level.junior),
+        ("Assistant Manager", Level.junior),
+        ("Senior Analyst Internship", Level.graduate_entry),
+        ("Head of Data", Level.lead_principal),
+        ("Principal Data Scientist", Level.lead_principal),
+        ("Senior Data Engineer", Level.senior),
+        ("Lead Data Engineer", Level.lead_principal),
+        ("Lead Data & AI Engineer", Level.lead_principal),
+        ("Senior Lead Engineer", Level.lead_principal),
+        ("Staff Scientist, Data", Level.lead_principal),
+        ("Senior Director of Data", Level.lead_principal),
+        ("Product Manager", None),
+        ("Staff Accountant", None),
+        ("Lead Generation Executive", None),
+        ("Headquarters Analyst", None),
+    ],
+)
+def test_level_words_2_4_2(title: str, level: Level | None) -> None:
+    assert level_from_text(title) == level
+    expected = Level.not_stated if level is None else level
+    assert _resolve(_job(title), LevelFact()).value == expected

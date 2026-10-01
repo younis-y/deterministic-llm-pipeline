@@ -29,17 +29,23 @@ __all__ = ["APPLY_AT", "BLOCKED_CAP", "CONSIDER_AT", "decide"]
 
 _REASON_CHARS = 220
 
-#: Bars whose category itself constrains the model: a nationality gate, a
-#: clearance, a work authorisation. Only these block. `BarKind.other` is open
+#: Bars whose category itself constrains the model: a nationality gate or a
+#: clearance. Only these block. `BarKind.other` is open
 #: ended, and the quote guard proves a quote exists, not that it is an
 #: eligibility bar - the local model has filed an experience requirement under
 #: it ("have not worked in a financial services environment"). A block is a
 #: one-way door (hidden, recorded as seen, never prepared), so an `other` bar
 #: is a rule skip instead: capped below the digest like any other rule skip,
 #: but still a skip with its quote, not a deletion.
-_STRUCTURAL_BARS = frozenset(
-    {BarKind.nationality, BarKind.clearance, BarKind.work_auth}
-)
+_STRUCTURAL_BARS = frozenset({BarKind.nationality, BarKind.clearance})
+
+#: Bars `decide` ignores entirely (2.4.2). A work_auth bar depends on the
+#: model's judgement of which countries the candidate can already work in,
+#: read from a free-text summary, and that judgement was not reliable enough
+#: to hide a role on. Work authorisation is checked by configured keywords
+#: (`profile.hard_blockers`) instead. The bar is still extracted, so an
+#: evaluation can keep measuring extraction, but it neither blocks nor skips.
+_IGNORED_BARS = frozenset({BarKind.work_auth})
 
 
 def _quote_reason(prefix: str, quote: str) -> str:
@@ -61,7 +67,8 @@ def decide(
     """Turn verified facts into a verdict, applying `rules` in a fixed order.
 
     Rule order (first match wins):
-      1. A nationality, clearance or work_auth hard bar -> blocked.
+      0. `work_auth` hard bars are ignored (see `_IGNORED_BARS`).
+      1. A nationality or clearance hard bar -> blocked.
       1b. Any other (`BarKind.other`) hard bar -> skip, whatever `rules` says.
       2. `student_only` is True and `rules.student_only == "skip"` -> skip.
       3. `level` is stated and not in `rules.allowed_levels` -> skip.
@@ -83,7 +90,8 @@ def decide(
     rather than a judgement call, and `medium` otherwise. `keywords_missing`
     always passes through from the model unchanged.
     """
-    structural = [b for b in facts.hard_bars if b.kind in _STRUCTURAL_BARS]
+    bars = [b for b in facts.hard_bars if b.kind not in _IGNORED_BARS]
+    structural = [b for b in bars if b.kind in _STRUCTURAL_BARS]
     if structural:
         return FitVerdict(
             fit_score=min(facts.fit_score, BLOCKED_CAP),
@@ -95,8 +103,8 @@ def decide(
         )
 
     skip_reason: str | None = None
-    if facts.hard_bars:
-        skip_reason = _quote_reason("Skip: advert requires ", facts.hard_bars[0].quote)
+    if bars:
+        skip_reason = _quote_reason("Skip: advert requires ", bars[0].quote)
 
     if rules is not None and skip_reason is None:
         if facts.student_only.value is True and rules.student_only == "skip":

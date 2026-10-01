@@ -152,15 +152,19 @@ and any hard eligibility bar, each with the advert text it read it from. Code
 checks every quote is really in the posting (a fact whose quote is not there
 is dropped), then applies your `profile.rules` in a fixed order:
 
-1. A nationality, security-clearance or work-authorisation bar: `blocked`.
-   Any other stated mandatory requirement (a licence, a residency) is a
-   `skip` that quotes it, never a block.
+1. A nationality or security-clearance bar: `blocked`. Any other stated
+   mandatory requirement (a licence, a residency) is a `skip` that quotes it,
+   never a block. A work-authorisation bar the model extracts decides
+   nothing: put the visa wording you cannot get past in `hard_blockers`.
 2. `student_only: skip` and the advert is students-only: `skip`.
 3. The level is not in `allowed_levels`: `skip`. A level word in the title
-   (senior, sr, lead, principal, staff, head, director, manager, junior,
-   graduate, intern, placement, trainee, apprentice, entry-level) decides
-   the level, with internship and graduate words winning; otherwise the
-   model's level counts only with a quote of two words or more.
+   decides the level: graduate, grad, intern, internship, placement,
+   entry-level, trainee, apprentice; junior, jr, assistant; senior, sr;
+   principal, head of, director, "staff" before engineer/scientist/developer,
+   and "lead" before a role word (Lead Data Engineer, not Lead Generation).
+   Graduate and junior words beat senior and lead ones; lead beats senior.
+   "manager" is not a level word. Otherwise the model's level counts only
+   with a quote of two words or more.
 4. The stated minimum years exceed `max_years_required`: `skip`.
 5. The field is not in `allowed_fields`: `skip`.
 6. Otherwise the model's 0-100 skills/domain score decides.

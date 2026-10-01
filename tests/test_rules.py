@@ -140,7 +140,7 @@ def test_an_other_bar_skips_even_with_no_rules_block() -> None:
     assert v.verdict.value == "skip" and v.fit_score == 49
 
 
-@pytest.mark.parametrize("kind", [BarKind.nationality, BarKind.clearance, BarKind.work_auth])
+@pytest.mark.parametrize("kind", [BarKind.nationality, BarKind.clearance])
 def test_structural_bars_still_block(kind: BarKind) -> None:
     v = decide(_f(hard_bars=[HardBar(kind=kind, quote="the bar")]), RULES, 50)
     assert v.verdict.value == "blocked" and v.fit_score == 20
@@ -158,3 +158,53 @@ def test_a_structural_bar_listed_after_an_other_bar_still_blocks() -> None:
     assert v.verdict.value == "blocked"
     assert "SC clearance required" in v.reason
     assert v.blockers == ["SC clearance required"]
+
+
+# --- work_auth bars no longer decide anything (2.4.2) ----------------------
+# Work authorisation is checked by configured keywords (hard_blockers), not by
+# the model's judgement of the candidate. The bar is still extracted so the
+# eval can measure extraction, but decide() ignores it.
+
+
+def test_a_verified_work_auth_bar_alone_is_decided_by_fit_score() -> None:
+    bar = HardBar(kind=BarKind.work_auth, quote="No visa sponsorship available")
+    v = decide(_f(fit=80, hard_bars=[bar]), RULES, 50)
+    assert v.verdict.value == "apply"
+    assert v.fit_score == 80
+    assert v.reason == "Model sentence."
+    assert v.blockers == []
+    low = decide(_f(fit=45, hard_bars=[bar]), RULES, 50)
+    assert low.verdict.value == "consider" and low.fit_score == 45
+
+
+def test_a_work_auth_bar_alone_with_no_rules_is_decided_by_fit_score() -> None:
+    bar = HardBar(kind=BarKind.work_auth, quote="Must have the right to work in the US")
+    v = decide(_f(fit=70, hard_bars=[bar]), None, 50)
+    assert v.verdict.value == "apply" and v.fit_score == 70
+
+
+def test_nationality_still_blocks_next_to_a_work_auth_bar() -> None:
+    v = decide(
+        _f(hard_bars=[
+            HardBar(kind=BarKind.work_auth, quote="No visa sponsorship"),
+            HardBar(kind=BarKind.nationality, quote="UK nationals only"),
+        ]),
+        RULES,
+        50,
+    )
+    assert v.verdict.value == "blocked"
+    assert v.blockers == ["UK nationals only"]
+    assert "UK nationals only" in v.reason
+
+
+def test_an_other_bar_still_skips_next_to_a_work_auth_bar() -> None:
+    v = decide(
+        _f(fit=90, hard_bars=[
+            HardBar(kind=BarKind.work_auth, quote="No visa sponsorship"),
+            HardBar(kind=BarKind.other, quote="UK driving licence"),
+        ]),
+        RULES,
+        50,
+    )
+    assert v.verdict.value == "skip"
+    assert "UK driving licence" in v.reason

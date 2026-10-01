@@ -146,7 +146,7 @@ async def test_cache_key_is_mode_aware() -> None:
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
     assert cache_key(job, "facts", cfg) != cache_key(job, "judge", cfg)
     assert cache_key(job, "judge", cfg) == job.content_hash
-    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v3:ollama:qwen2.5:14b"
+    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v4:ollama:qwen2.5:14b"
 
 
 async def test_facts_cache_key_changes_with_backend_and_model() -> None:
@@ -391,3 +391,14 @@ def test_facts_prompt_narrows_the_other_bar() -> None:
     text = " ".join(SYSTEM_FACTS.split())
     assert "other: an explicit, mandatory eligibility requirement" in text
     assert "never experience, sector background or skills" in text
+
+
+def test_facts_prompt_says_work_auth_is_checked_by_keywords() -> None:
+    """2.4.2: work_auth bars are still extracted (the eval measures them) but
+    decide() ignores them; the prompt must not pretend the model decides."""
+    from rolescan.scoring.llm import SYSTEM_FACTS
+
+    text = " ".join(SYSTEM_FACTS.split())
+    assert "- work_auth:" in text
+    assert "work authorisation is checked by configured keywords" in text
+    assert "not by your judgement of the candidate" in text

@@ -182,9 +182,10 @@ List hard_bars only for a bar the candidate cannot clear by being a better \
 applicant, each with its own verbatim quote:
 - nationality: a nationality-only requirement.
 - clearance: a security clearance requirement.
-- work_auth: a work authorisation the candidate lacks, per their summary \
-above - e.g. "no visa sponsorship" is a bar only when the job's country is \
-NOT one the candidate's summary says they can already work in.
+- work_auth: a work authorisation requirement stated in the posting, such \
+as "no visa sponsorship" or "must have the right to work in the UK". List it \
+when the posting states it; work authorisation is checked by configured \
+keywords, not by your judgement of the candidate.
 - other: an explicit, mandatory eligibility requirement only - a licence, a \
 legal status, or residency in a location - never experience, sector \
 background or skills.
@@ -217,7 +218,10 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
     row (a FitVerdict) is never misread as the v2 shape (a PostingFacts).
     v3 adds the deterministic level pass (`resolve_level`), the 200-char quote
     cap and the narrower `other` bar prompt, so a v2 row would replay facts
-    the current extraction would not produce.
+    the current extraction would not produce. v4 (2.4.2) changes the title
+    level table (no "manager"; "lead"/"staff" only before a role word; junior
+    beats senior) and the work_auth prompt wording; cached facts hold the
+    post-`resolve_level` level, so a v3 row would replay the old table.
 
     The facts key also names `cfg.backend` and `cfg.model`: facts extracted by
     one model must not be served (re-decided and enriched) for `cache_days`
@@ -225,7 +229,7 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig) -> str:
     evaluation of the two exists to inform. The judge-mode key is unchanged.
     """
     if mode == "facts":
-        return f"{job.content_hash}:facts-v3:{cfg.backend}:{cfg.model}"
+        return f"{job.content_hash}:facts-v4:{cfg.backend}:{cfg.model}"
     return job.content_hash
 
 

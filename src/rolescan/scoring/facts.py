@@ -344,11 +344,20 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     )
 
 
-# Level words, checked in this order. Graduate/intern words come first because
-# an intern posting is an intern posting whatever else its title says ("Senior
-# Analyst Internship" is an internship); otherwise the most senior word wins
-# ("Senior Engineering Manager" is lead_principal). Whole words only, so
-# "Internal", "Headcount", "Staffing" and "Leadership" match nothing.
+# Level words. Whole words only, so "Internal", "Headcount", "Staffing" and
+# "Leadership" match nothing. Precedence (2.4.2):
+#   1. Any graduate/entry word, then any junior word, beats any senior or lead
+#      word in the same text: an intern posting is an intern posting whatever
+#      else its title says ("Senior Analyst Internship"), and "Junior Product
+#      Manager" or "Jr Staff Engineer" is a junior role.
+#   2. Between senior and lead_principal, lead_principal wins ("Senior
+#      Director of Data").
+# "manager" is not a level word: "Product Manager", "Account Manager" and
+# "Assistant Manager" say nothing about seniority on their own. "staff" counts
+# only before engineer/scientist/developer ("Staff Accountant" is not staff
+# level), and "lead" only immediately before a role word ("Lead Data Engineer"
+# counts, "Lead Generation Executive" does not).
+_LEAD_ROLE_WORDS = r"(?:engineer|developer|scientist|analyst|data|architect|ml|ai)"
 _LEVEL_WORDS: tuple[tuple[Level, re.Pattern[str]], ...] = (
     (
         Level.graduate_entry,
@@ -358,19 +367,26 @@ _LEVEL_WORDS: tuple[tuple[Level, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    (Level.junior, re.compile(r"\b(?:junior|jr|assistant)\b", re.IGNORECASE)),
     (
         Level.lead_principal,
         re.compile(
-            r"\b(?:lead|principal|staff|head|director|manager)\b", re.IGNORECASE
+            r"\b(?:principal|director|head\s+of"
+            r"|staff\s+(?:engineer|scientist|developer)"
+            rf"|lead\s+{_LEAD_ROLE_WORDS})\b",
+            re.IGNORECASE,
         ),
     ),
     (Level.senior, re.compile(r"\b(?:senior|sr)\b", re.IGNORECASE)),
-    (Level.junior, re.compile(r"\b(?:junior|jr)\b", re.IGNORECASE)),
 )
 
 
 def level_from_text(text: str) -> Level | None:
-    """The level a title or quote names by keyword, or None if it names none."""
+    """The level a title or quote names by keyword, or None if it names none.
+
+    The first matching row of `_LEVEL_WORDS` wins, which encodes the
+    precedence described above it.
+    """
     folded = text.translate(_TYPO_FOLD)
     for level, pattern in _LEVEL_WORDS:
         if pattern.search(folded):
