@@ -108,8 +108,8 @@ profile:
   #                              # (the earliest the advert accepts). While
   #                              # set, student_only applies only to adverts
   #                              # that state no year. Default null: no limit.
-  #   level_from_title_only: true  # only a level read from the job title can
-  #                              # skip; one read from the description is
+  #   level_from_title_only: true  # only a level word in the job title can
+  #                              # skip; a level the model states is
   #                              # ignored. Default false.
   #   allowed_fields:            # default null: any field. Values:
   #     - data_engineering       # data_engineering, ai_llm, data_science,

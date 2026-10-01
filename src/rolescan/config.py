@@ -82,9 +82,9 @@ class RulesConfig(BaseModel):
     level_from_title_only: bool = Field(
         default=False,
         description=(
-            "When true, only a level read from the job title can fire the "
-            "level rule; a level the model reads from the description is "
-            "ignored."
+            "When true, only a level word in the job title can fire the "
+            "level rule; a level the model states is ignored, even when its "
+            "quote is copied from the title."
         ),
     )
 

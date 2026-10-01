@@ -26,12 +26,14 @@ File format, a YAML list:
 from __future__ import annotations
 
 import json
+from enum import Enum
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from rolescan.scoring.facts import PostingFacts
+from rolescan.models import Job
+from rolescan.scoring.facts import PostingFacts, verify_facts
 
 __all__ = ["FactsExample", "load_facts_examples", "render_facts_examples"]
 
@@ -69,6 +71,12 @@ def load_facts_examples(path: Path) -> list[FactsExample]:
     out-of-range score, a value not in an enum) fails here, naming the file
     and the example by position and title, rather than teaching the model a
     shape the schema then refuses.
+
+    Every fact is then put through the quote guard (`verify_facts`) against
+    the example's OWN title and description (2.5.1). An example whose quote
+    is not in its own posting - or whose graduation year is not in its quote -
+    teaches the model to quote text that is not there, which the guard throws
+    away on every real posting; it fails here, naming the fact and the quote.
     """
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -85,14 +93,62 @@ def load_facts_examples(path: Path) -> list[FactsExample]:
     for i, raw in enumerate(data, start=1):
         title = raw.get("title", "") if isinstance(raw, dict) else ""
         try:
-            examples.append(FactsExample.model_validate(raw))
+            example = FactsExample.model_validate(raw)
         except ValidationError as e:
             msg = (
                 f"llm.facts_examples_file {path}: example {i} ({title!r}) is "
                 f"invalid: {e}"
             )
             raise ValueError(msg) from e
+        bad = _unverified_quotes(example)
+        if bad:
+            msg = (
+                f"llm.facts_examples_file {path}: example {i} ({title!r}) "
+                f"fails the quote guard against its own title and description: "
+                + "; ".join(bad)
+            )
+            raise ValueError(msg)
+        examples.append(example)
     return examples
+
+
+#: The single-quote facts `verify_facts` checks, in schema order.
+_QUOTED_FACTS = ("level", "years_required", "student_only", "graduation_year", "field")
+
+
+def _unverified_quotes(example: FactsExample) -> list[str]:
+    """Each fact of `example` the quote guard would change, described.
+
+    Runs the real guard rather than a copy of it, so an example is held to
+    exactly the check every live posting gets - typographic folding, the
+    separate title/description haystacks and the graduation-year check
+    included. A fact the guard leaves untouched is fine; any change means
+    the example states a value its own posting does not support.
+    """
+    job = Job(
+        source="example",
+        company=example.company,
+        title=example.title,
+        url="example:",
+        description=example.description,
+    )
+    facts = example.facts
+    checked = verify_facts(facts, job)
+    bad: list[str] = []
+    for name in _QUOTED_FACTS:
+        before = getattr(facts, name)
+        if getattr(checked, name) != before:
+            value = before.value
+            if isinstance(value, Enum):
+                value = value.value
+            bad.append(f"{name} (value {value!r}) quote {before.quote!r}")
+    kept = list(checked.hard_bars)
+    for bar in facts.hard_bars:
+        if bar in kept:
+            kept.remove(bar)
+        else:
+            bad.append(f"hard_bars ({bar.kind.value}) quote {bar.quote!r}")
+    return bad
 
 
 def render_facts_examples(examples: list[FactsExample]) -> str:

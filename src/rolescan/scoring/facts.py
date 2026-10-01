@@ -100,10 +100,11 @@ def _normalise(text: str) -> str:
     return " ".join(text.translate(_TYPO_FOLD).split()).casefold()
 
 
-#: Where a resolved level came from (2.5.0). `title`: the job title names it,
-#: by keyword or in the model's verified quote. `text`: only the description
-#: does. `none`: no level. `rules.level_from_title_only` lets only `title`
-#: fire the level rule.
+#: Where a resolved level came from (2.5.0). `title`: the job title names it
+#: by a level keyword (`_LEVEL_WORDS`). `text`: the model stated or quoted it,
+#: wherever the quote sits - even a quote copied from the title is the model's
+#: reading, not the title's (2.5.1). `none`: no level.
+#: `rules.level_from_title_only` lets only `title` fire the level rule.
 LevelSource = Literal["title", "text", "none"]
 
 
@@ -344,6 +345,17 @@ class PostingFacts(BaseModel):
         return cut + "…"
 
 
+def _year_in_quote(year: int | None, quote: str) -> bool:
+    """Whether `year` is stated in `quote` as a whole number (2.5.1).
+
+    `None` (no year) passes: there is no value for the quote to contradict.
+    Digit boundaries stop 27 from matching inside "2027".
+    """
+    if year is None:
+        return True
+    return re.search(rf"(?<!\d){year}(?!\d)", quote) is not None
+
+
 def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     """Downgrade any fact whose quote is not actually in the posting.
 
@@ -363,6 +375,11 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     comparing, so a real quote does not fail only because the posting and
     the model disagree on which quote character to use; it cannot make an
     invented quote verify.
+
+    A graduation year must also appear in its own quote, as a whole number
+    (2.5.1): a verbatim "Current students only" proves the quote exists but
+    says nothing about which year, so a year the quote does not state is the
+    model's invention and is downgraded like an unverified quote.
     """
     title = _normalise(job.title)
     description = _normalise(job.description)
@@ -386,7 +403,9 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
         student = StudentFact(value=None, quote="")
 
     graduation_year = facts.graduation_year
-    if not _verified(graduation_year.quote):
+    if not _verified(graduation_year.quote) or not _year_in_quote(
+        graduation_year.value, graduation_year.quote
+    ):
         graduation_year = GraduationYearFact(value=None, quote="")
 
     field = facts.field
@@ -415,6 +434,10 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
 #      Manager" or "Jr Staff Engineer" is a junior role.
 #   2. Between senior and lead_principal, lead_principal wins ("Senior
 #      Director of Data").
+#   3. (2.5.1) mid comes last: "mid-level" and "intermediate" are mid, but any
+#      other level word in the same text beats them ("Senior / Mid-Level").
+#      "mid-senior" is senior, spelled out in the senior row; "mid" alone
+#      ("Mid Market", "Mid-Office") is not a level word.
 # "manager" is not a level word: "Product Manager", "Account Manager" and
 # "Assistant Manager" say nothing about seniority on their own. "staff" counts
 # only before engineer/scientist/developer ("Staff Accountant" is not staff
@@ -440,7 +463,14 @@ _LEVEL_WORDS: tuple[tuple[Level, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
-    (Level.senior, re.compile(r"\b(?:senior|sr)\b", re.IGNORECASE)),
+    (
+        Level.senior,
+        re.compile(r"\b(?:mid[- ]senior|senior|sr)\b", re.IGNORECASE),
+    ),
+    (
+        Level.mid,
+        re.compile(r"\b(?:mid[- ]level|intermediate)\b", re.IGNORECASE),
+    ),
 )
 
 
@@ -476,11 +506,12 @@ def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
     4. Otherwise `not_stated`.
 
     It also records where the level came from (2.5.0), for
-    `rules.level_from_title_only`: `title` for step 1, and for steps 2-3 when
-    the model's quote is itself part of the title ("Mid-Level Data Engineer"
-    names no level keyword but is still the title speaking); `text` when the
-    quote is only in the description; `none` for step 4. Any `source` already
-    on the fact is overwritten, so a model can never claim `title` for itself.
+    `rules.level_from_title_only`: `title` for step 1 only, `text` for steps
+    2-3, `none` for step 4. Steps 2-3 are `text` even when the model's quote is
+    copied from the title (2.5.1): the title "Data Engineer" names no level, so
+    a model that answers `mid` quoting it has inferred the level, and that
+    inference must not fire the title-only rule. Any `source` already on the
+    fact is overwritten, so a model can never claim `title` for itself.
 
     Pure and idempotent; never mutates `facts`. Expects `facts` to have been
     through `verify_facts` already, so every quote it reads is verbatim.
@@ -493,14 +524,10 @@ def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
         model = facts.level
         enough_words = len(model.quote.split()) >= 2
         derived = level_from_text(model.quote) if enough_words else None
-        in_title = bool(model.quote) and _normalise(model.quote) in _normalise(
-            job.title
-        )
-        source: LevelSource = "title" if in_title else "text"
         if model.value != Level.not_stated and enough_words:
-            level = LevelFact(value=model.value, quote=model.quote, source=source)
+            level = LevelFact(value=model.value, quote=model.quote, source="text")
         elif model.value == Level.not_stated and derived is not None:
-            level = LevelFact(value=derived, quote=model.quote, source=source)
+            level = LevelFact(value=derived, quote=model.quote, source="text")
         else:
             level = LevelFact(value=Level.not_stated, quote="", source="none")
     if level == facts.level:

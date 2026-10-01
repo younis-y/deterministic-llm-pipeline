@@ -251,6 +251,13 @@ def cache_key(
     `LevelFact.source` (set by `resolve_level`) to the cached payload; a v6
     row has neither, so `max_graduation_year` and `level_from_title_only`
     could not judge it.
+    v8 (2.5.1) changes three things the cached facts already hold:
+    `resolve_level` sets `source="title"` only for a level keyword in the
+    title (a model level quoting the title is now `text`), `_LEVEL_WORDS`
+    gains a mid row ("mid-level", "intermediate"; "mid-senior" is senior),
+    and `verify_facts` drops a graduation year its quote does not state. A
+    v7 row could replay a title-sourced level, a missed mid title or an
+    invented year.
 
     `examples_digest` names the worked examples the prompt carried (see
     `FitScorer._facts_cache_key`): they change what the model extracts, and
@@ -263,7 +270,7 @@ def cache_key(
     evaluation of the two exists to inform. The judge-mode key is unchanged.
     """
     if mode == "facts":
-        key = f"{job.content_hash}:facts-v7:{cfg.backend}:{cfg.model}"
+        key = f"{job.content_hash}:facts-v8:{cfg.backend}:{cfg.model}"
         return f"{key}:ex-{examples_digest}" if examples_digest else key
     return job.content_hash
 

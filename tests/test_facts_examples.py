@@ -102,6 +102,89 @@ def test_a_missing_file_fails_fast(tmp_path: Path) -> None:
         load_facts_examples(tmp_path / "nope.yaml")
 
 
+# --- 2.5.1 review finding M6: every example quote is verbatim -----------------
+# An example whose quote is not in its own posting teaches the model to quote
+# text that is not there - exactly what the quote guard then throws away.
+
+
+def test_m6_a_quote_not_in_the_examples_own_posting_fails_fast(tmp_path: Path) -> None:
+    bad = EXAMPLES_YAML.replace(
+        "quote: 3+ years of experience required", "quote: 5+ years of experience required"
+    )
+    path = _write(tmp_path, bad)
+
+    with pytest.raises(ValueError, match=r"example 2 \('Analytics Engineer'\)") as err:
+        load_facts_examples(path)
+    msg = str(err.value)
+    assert "years_required" in msg
+    assert "5+ years of experience required" in msg
+    assert str(path) in msg
+
+
+def test_m6_a_quote_from_another_examples_posting_fails_fast(tmp_path: Path) -> None:
+    """Title and description are the example's OWN - a quote lifted from the
+    other example does not verify."""
+    bad = EXAMPLES_YAML.replace(
+        "field: {value: data_engineering, quote: Analytics Engineer}",
+        "field: {value: data_engineering, quote: Python and SQL required}",
+    )
+    with pytest.raises(ValueError, match=r"example 2 .*Python and SQL required"):
+        load_facts_examples(_write(tmp_path, bad))
+
+
+def test_m6_a_hard_bar_quote_not_in_the_posting_fails_fast(tmp_path: Path) -> None:
+    bad = EXAMPLES_YAML.replace(
+        "    fit_score: 70\n",
+        "    hard_bars: [{kind: clearance, quote: SC clearance required}]\n"
+        "    fit_score: 70\n",
+    )
+    with pytest.raises(ValueError, match=r"example 1 .*hard_bars.*SC clearance required"):
+        load_facts_examples(_write(tmp_path, bad))
+
+
+def test_m6_a_value_with_no_quote_fails_fast(tmp_path: Path) -> None:
+    bad = EXAMPLES_YAML.replace(
+        "level: {value: graduate_entry, quote: Data Science Intern}",
+        "level: {value: graduate_entry, quote: ''}",
+    )
+    with pytest.raises(ValueError, match=r"example 1 .*level"):
+        load_facts_examples(_write(tmp_path, bad))
+
+
+def test_m6_a_graduation_year_not_in_its_quote_fails_fast(tmp_path: Path) -> None:
+    bad = EXAMPLES_YAML.replace(
+        "graduation_year: {value: 2028, quote: graduating in 2028}",
+        "graduation_year: {value: 2027, quote: graduating in 2028}",
+    )
+    with pytest.raises(ValueError, match=r"example 1 .*graduation_year"):
+        load_facts_examples(_write(tmp_path, bad))
+
+
+def test_m6_quotes_verify_through_typographic_folding(tmp_path: Path) -> None:
+    """The check is the quote guard itself, so a curly apostrophe in the
+    posting still matches a straight one in the quote."""
+    text = EXAMPLES_YAML.replace(
+        "Build dbt models. 3+ years",
+        "Build dbt models. You\u2019ll need 3+ years",
+    ).replace(
+        "quote: 3+ years of experience required",
+        "quote: \"You'll need 3+ years\"",
+    )
+    examples = load_facts_examples(_write(tmp_path, text))
+    assert examples[1].facts.years_required.quote == "You'll need 3+ years"
+
+
+def test_m6_config_load_fails_fast_on_an_unverified_example_quote(tmp_path: Path) -> None:
+    _write(tmp_path, EXAMPLES_YAML.replace("quote: Analytics Engineer", "quote: Data Engineer"))
+    cfg_path = _write(
+        tmp_path, "llm:\n  enabled: false\n  facts_examples_file: facts_examples.yaml\n",
+        name="config.yaml",
+    )
+
+    with pytest.raises(ValueError, match=r"example 2 \('Analytics Engineer'\).*Data Engineer"):
+        Config.load(cfg_path)
+
+
 # --- rendering -------------------------------------------------------------
 
 

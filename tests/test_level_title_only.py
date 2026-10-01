@@ -78,12 +78,80 @@ def test_a_level_derived_from_a_description_quote_is_sourced_from_text() -> None
     assert got.level.value == Level.senior and got.level.source == "text"
 
 
-def test_a_model_level_quoted_from_the_title_is_sourced_from_the_title() -> None:
-    """No level keyword in the title, but the model read "mid" from the title
-    itself - that is still the title speaking."""
+def test_a_mid_level_title_is_sourced_from_the_title_by_keyword() -> None:
+    """2.5.1: "Mid-Level" is a level word now, so the title speaks through
+    step 1 (the keyword), not through the model's quote."""
     job = _job("Mid-Level Data Engineer", "Build pipelines.")
-    got = _resolved(job, LevelFact(value=Level.mid, quote="Mid-Level Data Engineer"))
+    got = _resolved(job, LevelFact())
     assert got.level.value == Level.mid and got.level.source == "title"
+    assert got.level.quote == "Mid-Level Data Engineer"
+
+
+# --- 2.5.1 review finding C1 -------------------------------------------------
+# A model-inferred level whose quote merely sits inside the title was tagged
+# `source="title"` and fired the level rule under `level_from_title_only`.
+# Live repro: title "Data Engineer", model level `mid` quoting "Data Engineer"
+# -> skip 49. Only a level KEYWORD in the title is the title speaking.
+
+#: The owner's rules (rolescan-extra config.yaml, 2026-10-01).
+OWNER_RULES = RulesConfig(
+    max_years_required=1,
+    allowed_levels=[Level.graduate_entry, Level.junior, Level.not_stated],
+    level_from_title_only=True,
+    max_graduation_year=2027,
+    student_only="skip",
+    allowed_fields=[
+        JobField.data_engineering,
+        JobField.ai_llm,
+        JobField.data_science,
+        JobField.analytics_bi,
+    ],
+)
+
+
+def test_c1_a_model_level_quoting_a_bare_title_is_sourced_from_text() -> None:
+    job = _job("Data Engineer", "Build pipelines.")
+    got = _resolved(job, LevelFact(value=Level.mid, quote="Data Engineer"))
+    assert got.level.value == Level.mid
+    assert got.level.source == "text"
+
+
+def test_c1_live_repro_does_not_skip_under_the_owner_rules() -> None:
+    job = _job("Data Engineer", "Build pipelines.")
+    facts = _resolved(job, LevelFact(value=Level.mid, quote="Data Engineer"))
+
+    v = decide(facts, OWNER_RULES, 50)
+
+    assert v.verdict.value == "apply"
+    assert v.fit_score == 80
+    assert v.reason == "Model sentence."
+
+
+def test_c1_a_level_derived_from_a_title_fragment_is_sourced_from_text() -> None:
+    """Step 3 (derive from the model's quote) never speaks for the title
+    either. The title names no level word ("Seniority" is not "senior"), but
+    the cut-off fragment "Data Senior" does; that is the model's reading, not
+    the title's."""
+    job = _job("Data Seniority Analyst", "Build pipelines.")
+    got = _resolved(job, LevelFact(value=Level.not_stated, quote="Data Senior"))
+    assert got.level.value == Level.senior and got.level.source == "text"
+    assert decide(got, OWNER_RULES, 50).verdict.value == "apply"
+
+
+def test_c1_mid_level_title_skips_under_the_owner_rules() -> None:
+    job = _job("Mid-Level Data Engineer", "Build pipelines.")
+    facts = _resolved(job, LevelFact())
+
+    assert facts.level.value == Level.mid and facts.level.source == "title"
+    v = decide(facts, OWNER_RULES, 50)
+    assert v.verdict.value == "skip"
+    assert v.reason == 'Skip: advert is for "Mid-Level Data Engineer"'
+
+
+def test_c1_mid_senior_title_reads_as_senior() -> None:
+    job = _job("Mid-Senior Data Scientist", "Model things.")
+    got = _resolved(job, LevelFact())
+    assert got.level.value == Level.senior and got.level.source == "title"
 
 
 def test_no_level_has_no_source() -> None:

@@ -182,3 +182,34 @@ def test_level_words_2_4_2(title: str, level: Level | None) -> None:
     assert level_from_text(title) == level
     expected = Level.not_stated if level is None else level
     assert _resolve(_job(title), LevelFact()).value == expected
+
+
+# --- 2.5.1 mid row ------------------------------------------------------------
+# "mid-level" and "intermediate" are mid; "mid-senior" is senior. Precedence is
+# unchanged: graduate/junior words beat everything, lead beats senior, and
+# senior beats mid.
+
+
+@pytest.mark.parametrize(
+    ("title", "level"),
+    [
+        ("Mid-Level Data Engineer", Level.mid),
+        ("Mid Level Data Engineer", Level.mid),
+        ("Mid\u2013Level Data Engineer", Level.mid),
+        ("Data Engineer (Mid-Level)", Level.mid),
+        ("Intermediate Data Analyst", Level.mid),
+        ("Mid-Senior Data Scientist", Level.senior),
+        ("Mid Senior Data Scientist", Level.senior),
+        ("Senior / Mid-Level Data Engineer", Level.senior),
+        ("Lead Data Engineer (Mid-Level)", Level.lead_principal),
+        ("Mid-Level Graduate Engineer", Level.graduate_entry),
+        ("Junior to Mid-Level Analyst", Level.junior),
+        ("Midlands Data Engineer", None),
+        ("Mid Market Account Executive", None),
+        ("Mid-Office Analyst", None),
+    ],
+)
+def test_level_words_2_5_1_mid_row(title: str, level: Level | None) -> None:
+    assert level_from_text(title) == level
+    expected = Level.not_stated if level is None else level
+    assert _resolve(_job(title), LevelFact()).value == expected

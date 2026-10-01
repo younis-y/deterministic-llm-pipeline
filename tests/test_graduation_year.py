@@ -91,6 +91,55 @@ def test_a_graduation_year_with_no_quote_is_downgraded() -> None:
     assert f.graduation_year.value is None
 
 
+# --- 2.5.1 review finding M5: the year must be in its own quote --------------
+
+
+def test_m5_a_year_not_in_its_verbatim_quote_is_downgraded() -> None:
+    """The quote is verbatim, but it does not say 2026: the value was the
+    model's invention, so it must not reach the year rule."""
+    f = verify_facts(
+        _f(graduation_year=GraduationYearFact(value=2026, quote="Current students only")),
+        JOB,
+    )
+    assert f.graduation_year == GraduationYearFact()
+
+
+def test_m5_a_year_that_differs_from_the_year_quoted_is_downgraded() -> None:
+    f = verify_facts(
+        _f(graduation_year=GraduationYearFact(value=2027, quote="graduating in 2028")),
+        JOB,
+    )
+    assert f.graduation_year == GraduationYearFact()
+
+
+def test_m5_the_year_must_be_a_whole_number_in_the_quote() -> None:
+    """27 is not "in" a quote that says 2027 for this purpose."""
+    f = verify_facts(
+        _f(graduation_year=GraduationYearFact(value=27, quote="graduating 2027 or 2028")),
+        JOB,
+    )
+    assert f.graduation_year == GraduationYearFact()
+
+
+def test_m5_the_earliest_of_two_quoted_years_survives() -> None:
+    f = verify_facts(
+        _f(graduation_year=GraduationYearFact(value=2027, quote="graduating 2027 or 2028")),
+        JOB,
+    )
+    assert f.graduation_year == GraduationYearFact(
+        value=2027, quote="graduating 2027 or 2028"
+    )
+
+
+def test_m5_a_downgraded_year_no_longer_fires_the_year_rule() -> None:
+    facts = verify_facts(
+        _f(graduation_year=GraduationYearFact(value=2029, quote="Current students only")),
+        JOB,
+    )
+    v = decide(facts, RulesConfig(max_graduation_year=2027), 55)
+    assert v.verdict.value == "apply"
+
+
 # --- the rule --------------------------------------------------------------
 
 OWNER = RulesConfig(student_only="skip", max_graduation_year=2027)
