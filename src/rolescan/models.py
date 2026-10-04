@@ -92,8 +92,10 @@ class Level(StrEnum):
 
 # `quant`, `product` and `consulting` (2.5.2) were `other` before: with no
 # label of their own, `allowed_fields` could not let one through without also
-# letting sales and operations through. The docstring below reaches the hosted
-# model as schema text (`FieldFact.value`), so this history is a comment.
+# letting sales and operations through. `finance` (2.5.3) likewise: M&A,
+# investment and equity research, trading and markets, energy and commodity
+# market analysts. The docstring below reaches the hosted model as schema text
+# (`FieldFact.value`), so this history is a comment.
 class JobField(StrEnum):
     """Job category or specialty."""
 
@@ -105,6 +107,7 @@ class JobField(StrEnum):
     product = "product"
     software = "software"
     consulting = "consulting"
+    finance = "finance"
     other = "other"
 
 

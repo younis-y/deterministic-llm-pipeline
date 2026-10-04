@@ -195,7 +195,9 @@ or strategist, algorithmic or systematic trading.
 - product: product management - product manager, owner, analyst or associate.
 - software: general software engineering not centred on data or AI.
 - consulting: consulting or advisory work not centred on data or AI.
-- other: anything else - sales, finance, operations, hospitality, and so on.
+- finance: investment, M&A, equity research, trading and markets, financial \
+or credit analysis, energy and commodity market analysis - not quant work.
+- other: anything else - sales, accounting, operations, hospitality, and so on.
 
 List hard_bars only for a bar the candidate cannot clear by being a better \
 applicant, each with its own verbatim quote:
@@ -268,6 +270,12 @@ def cache_key(
     and `JobField` gains quant, product and consulting (in `_FIELD_WORDS` and
     the prompt). A v8 row could replay a student flag, a spurious block or an
     `other` field the current code would not produce.
+    v10 (2.5.3): `_LEVEL_WORDS` reads staff, tech/team lead and trailing-lead
+    titles; `resolve_student` can now SET `student_only` from enrolment
+    wording ("penultimate year", "currently pursuing"); and `JobField` gains
+    finance (in `_FIELD_WORDS` and the prompt). A v9 row could replay a
+    missed staff level, a students-only internship left open, or an `other`
+    field the current code would not produce.
 
     `examples_digest` names the worked examples the prompt carried (see
     `FitScorer._facts_cache_key`): they change what the model extracts, and
@@ -280,7 +288,7 @@ def cache_key(
     evaluation of the two exists to inform. The judge-mode key is unchanged.
     """
     if mode == "facts":
-        key = f"{job.content_hash}:facts-v9:{cfg.backend}:{cfg.model}"
+        key = f"{job.content_hash}:facts-v10:{cfg.backend}:{cfg.model}"
         return f"{key}:ex-{examples_digest}" if examples_digest else key
     return job.content_hash
 

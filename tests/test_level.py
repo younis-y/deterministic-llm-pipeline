@@ -213,3 +213,32 @@ def test_level_words_2_5_1_mid_row(title: str, level: Level | None) -> None:
     assert level_from_text(title) == level
     expected = Level.not_stated if level is None else level
     assert _resolve(_job(title), LevelFact()).value == expected
+
+
+# 2.5.3: titles from Tem's live board (2026-10-03) that named a lead or staff
+# level the table did not know, so `level_from_title_only` let them through -
+# "Staff Data Analyst" came out APPLY 75 for a graduate. The negatives are the
+# reasons the staff and lead rows were narrow in the first place.
+@pytest.mark.parametrize(
+    ("title", "level"),
+    [
+        ("Staff Data Analyst", Level.lead_principal),
+        ("Senior Staff Machine Learning Engineer - Pricing", Level.lead_principal),
+        ("Staff Full Stack Engineer - Sell Side Engine", Level.lead_principal),
+        ("Staff QA Automation Engineer", Level.lead_principal),
+        ("Tech Lead - Payments and Billing", Level.lead_principal),
+        ("Team Lead, Data Platform", Level.lead_principal),
+        ("Brand & Creative Design Lead", Level.lead_principal),
+        ("Video Lead", Level.lead_principal),
+        ("Data Lead, EMEA", Level.lead_principal),
+        ("Junior Staff Engineer", Level.junior),
+        ("Staff Accountant", None),
+        ("Staffing Coordinator", None),
+        ("Staff Nurse", None),
+        ("Lead Generation Executive", None),
+        ("Leading Edge Data Engineer", None),
+        ("Market Analyst", None),
+    ],
+)
+def test_level_words_2_5_3_staff_and_lead_titles(title: str, level: Level | None) -> None:
+    assert level_from_text(title) == level

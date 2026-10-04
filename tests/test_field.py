@@ -266,7 +266,7 @@ def test_new_field_precedence(title: str, field: JobField) -> None:
         "Product Designer",         # not a product-management role word
         "Production Engineer",
         "Advisory Board Member",    # advisory only before analyst/associate
-        "Equity Research Analyst",  # no field word at all
+        "Research Analyst",         # no field word at all (2.5.3: "Equity Research" is finance)
     ],
 )
 def test_new_field_words_match_whole_phrases_only(title: str) -> None:
@@ -274,7 +274,7 @@ def test_new_field_words_match_whole_phrases_only(title: str) -> None:
 
 
 def test_a_model_quant_field_with_a_two_word_quote_is_kept() -> None:
-    job = _job("Equity Research Analyst, China",
+    job = _job("Research Analyst, China",  # 2.5.3: "Equity Research" now names finance
                "Build systematic trading signals for Chinese equities.")
     got = _resolve(job, FieldFact(value=JobField.quant, quote="systematic trading signals"))
     assert got.value == JobField.quant
@@ -296,3 +296,47 @@ def test_allowed_fields_accepts_the_new_fields() -> None:
 
     rules = RulesConfig(allowed_fields=["quant", "product", "consulting"])
     assert rules.allowed_fields == [JobField.quant, JobField.product, JobField.consulting]
+
+
+# 2.5.3: a finance row. Titles from adverts the owner applied to on
+# 2026-10-03/04 (Lazard, Modo Energy, InCommodities) were "other" before, so
+# `allowed_fields` skipped them however well they fitted.
+@pytest.mark.parametrize(
+    ("title", "field"),
+    [
+        ("2027 M&A Internship - Abu Dhabi", JobField.finance),
+        ("Market Analyst", JobField.finance),
+        ("Market Analyst (Nordic)", JobField.finance),
+        ("Global Gas Analyst", JobField.finance),
+        ("Power Analyst, ERCOT", JobField.finance),
+        ("Investment Analyst", JobField.finance),
+        ("Senior Equity Research Analyst", JobField.finance),
+        ("Credit Analyst", JobField.finance),
+        ("Financial Analyst", JobField.finance),
+        ("Private Equity Associate | Abu Dhabi", JobField.finance),
+        ("Trader Trainee for Intraday Power Trading", JobField.finance),
+        ("Analyst - Loan Portfolio Management", JobField.finance),
+        ("Investment Banking Analyst", JobField.finance),
+        # Earlier rows still win.
+        ("Quantitative Analyst", JobField.quant),
+        ("Data Analyst, Trading", JobField.analytics_bi),
+        ("Software Engineer, Trading Systems", JobField.software),
+        ("Analyst - Management Consulting", JobField.consulting),
+        # Not finance on their own.
+        ("Marketing Analyst", None),
+        ("Research Analyst", None),
+        ("Graduate Analyst", None),
+    ],
+)
+def test_finance_titles_2_5_3(title: str, field: JobField | None) -> None:
+    assert field_from_text(title) == field
+
+
+
+def test_finance_is_no_longer_described_as_other_in_the_facts_prompt() -> None:
+    from rolescan.scoring.llm import SYSTEM_FACTS
+
+    other_line = next(
+        line for line in SYSTEM_FACTS.splitlines() if line.startswith("- other: anything")
+    )
+    assert "finance" not in other_line

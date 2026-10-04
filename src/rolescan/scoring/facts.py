@@ -517,16 +517,34 @@ _NEGATION_REACH = 60
 _SENTENCE_END = re.compile(r"[.!?;](?=\s|$)")
 
 
-def graduates_eligible(text: str) -> str | None:
-    """The text's own words saying graduates may apply, or None (2.5.2).
+#: Eligibility wording that restricts a posting to current students (2.5.3).
+#: Only phrases that name the applicant's own enrolment: "penultimate year",
+#: "currently pursuing/enrolled/studying", a first-year master's or PhD, or
+#: returning to study. "Students" alone, "final year" (often paired with
+#: graduates) and "graduating in 2028" (the graduation-year rule's job) are
+#: deliberately absent.
+_STUDENTS_ONLY = re.compile(
+    r"\b(?:penultimate[- ]year"
+    r"|currently\s+(?:enrolled|pursuing|studying)"
+    r"|(?:1st|first)[- ]year\s+(?:of\s+(?:a|an|your)\s+)?"
+    r"(?:master'?s|msc|mba|ph\.?\s?d|postgraduate)"
+    r"|returning\s+to\s+(?:university|(?:full[- ]time\s+)?stud(?:y|ies)"
+    r"|(?:full[- ]time\s+)?education)"
+    r"|current\s+(?:university\s+)?students\s+only)",
+    re.IGNORECASE,
+)
 
-    Returns the sentence that says so when it fits in `QUOTE_CHARS`, else the
+
+def _unnegated_sentence(pattern: re.Pattern[str], text: str) -> str | None:
+    """The first un-negated match of `pattern`, quoted verbatim, or None.
+
+    Returns the match's sentence when it fits in `QUOTE_CHARS`, else the
     phrase itself - verbatim either way, so it passes the quote guard. A
     phrase with a negation close by in its own sentence does not count.
     """
     folded = text.translate(_TYPO_FOLD)  # one character for one: offsets hold
     ends = [m.end() for m in _SENTENCE_END.finditer(folded)]
-    for match in _GRADUATES_ELIGIBLE.finditer(folded):
+    for match in pattern.finditer(folded):
         start = max((e for e in ends if e <= match.start()), default=0)
         end = min((e for e in ends if e >= match.end()), default=len(folded))
         before = folded[max(start, match.start() - _NEGATION_REACH) : match.start()]
@@ -544,8 +562,18 @@ def graduates_eligible(text: str) -> str | None:
     return None
 
 
+def graduates_eligible(text: str) -> str | None:
+    """The text's own words saying graduates may apply, or None (2.5.2)."""
+    return _unnegated_sentence(_GRADUATES_ELIGIBLE, text)
+
+
+def students_only(text: str) -> str | None:
+    """The text's own words restricting it to current students, or None (2.5.3)."""
+    return _unnegated_sentence(_STUDENTS_ONLY, text)
+
+
 def resolve_student(facts: PostingFacts, job: Job) -> PostingFacts:
-    """Clear a `student_only` the advert itself contradicts, after `verify_facts`.
+    """Correct `student_only` against the advert's own words, after `verify_facts`.
 
     The model was observed setting `student_only` on internships that also
     accept recent graduates - three in one evaluation run, each with an
@@ -555,19 +583,31 @@ def resolve_student(facts: PostingFacts, job: Job) -> PostingFacts:
     states that graduates are eligible (`graduates_eligible`), the fact
     becomes False, quoting the advert's own words; the title is read first.
 
-    Only ever clears a True: None and False pass through untouched, so this
-    can never make a posting student-only. The graduation-year rule is
+    2.5.3 adds the other direction. The local model left `student_only` unset
+    on adverts that restrict eligibility in so many words ("A penultimate
+    year undergraduate or 1st year master's student", "Currently pursuing a
+    Bachelor's"), so a graduate's profile scored them APPLY. When the advert
+    has no graduate clause and does name current enrolment
+    (`students_only`), the fact becomes True, quoting those words. A graduate
+    clause anywhere still wins, so an advert open to "final year students or
+    recent graduates" is never made student-only. The graduation-year rule is
     separate - a "graduating in 2028" advert is still judged on its year.
 
     Pure and idempotent; never mutates `facts`. Expects `facts` to have been
     through `verify_facts` already.
     """
-    if facts.student_only.value is not True:
+    graduates = graduates_eligible(job.title) or graduates_eligible(job.description)
+    if graduates is not None:
+        if facts.student_only.value is not True:
+            return facts
+        student = StudentFact(value=False, quote=graduates[:QUOTE_CHARS])
+        return facts.model_copy(update={"student_only": student})
+    if facts.student_only.value is True:
         return facts
-    said = graduates_eligible(job.title) or graduates_eligible(job.description)
-    if said is None:
+    enrolled = students_only(job.title) or students_only(job.description)
+    if enrolled is None:
         return facts
-    student = StudentFact(value=False, quote=said[:QUOTE_CHARS])
+    student = StudentFact(value=True, quote=enrolled[:QUOTE_CHARS])
     return facts.model_copy(update={"student_only": student})
 
 
@@ -588,7 +628,14 @@ def resolve_student(facts: PostingFacts, job: Job) -> PostingFacts:
 # only before engineer/scientist/developer ("Staff Accountant" is not staff
 # level), and "lead" only immediately before a role word ("Lead Data Engineer"
 # counts, "Lead Generation Executive" does not).
+# 2.5.3: "staff" also counts with up to three words between it and the role
+# word ("Staff Data Analyst", "Staff Machine Learning Engineer"), analyst and
+# architect join that role list, and "lead" counts after tech/team or at the
+# end of the title or a title segment ("Tech Lead - Payments", "Video Lead",
+# "Data Lead, EMEA"). "Staff Accountant", "Staff Nurse" and "Lead Generation
+# Executive" still match nothing.
 _LEAD_ROLE_WORDS = r"(?:engineer|developer|scientist|analyst|data|architect|ml|ai)"
+_STAFF_ROLE_WORDS = r"(?:engineer|developer|scientist|analyst|architect)"
 _LEVEL_WORDS: tuple[tuple[Level, re.Pattern[str]], ...] = (
     (
         Level.graduate_entry,
@@ -603,8 +650,10 @@ _LEVEL_WORDS: tuple[tuple[Level, re.Pattern[str]], ...] = (
         Level.lead_principal,
         re.compile(
             r"\b(?:principal|director|head\s+of"
-            r"|staff\s+(?:engineer|scientist|developer)"
-            rf"|lead\s+{_LEAD_ROLE_WORDS})\b",
+            rf"|staff\s+(?:[\w&/-]+\s+){{0,3}}?{_STAFF_ROLE_WORDS}"
+            r"|(?:tech|technical|team)\s+lead"
+            rf"|lead\s+{_LEAD_ROLE_WORDS}"
+            r"|lead(?=\s*(?:$|[-\u2013\u2014,(|/:])))\b",
             re.IGNORECASE,
         ),
     ),
@@ -707,6 +756,12 @@ def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
 # ("Quantitative Developer, Backend" is quant); and software beats a generic
 # consultant ("DevOps Consultant" is software). The data_science row keeps its
 # "quant research" phrases, so a Quant Researcher is data_science as before.
+#
+# 2.5.3 adds finance last: M&A, investment and equity research, trading,
+# financial and credit analysts, energy and commodity market analysts. Every
+# earlier row still wins ("Quantitative Analyst" is quant, "Data Analyst,
+# Trading" is analytics_bi, "Software Engineer, Trading Systems" is software),
+# and "Marketing Analyst" or "Research Analyst" alone name no field.
 _FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
     (
         JobField.ai_llm,
@@ -776,6 +831,20 @@ _FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
         JobField.consulting,
         re.compile(
             r"\b(?:consultants?|consulting|advisory\s+(?:analysts?|associates?))\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        JobField.finance,
+        re.compile(
+            r"\b(?:m\s*&\s*a|mergers\s+and\s+acquisitions|investment\s+banking"
+            r"|investment\s+(?:analysts?|associates?|bankers?)|equity\s+research"
+            r"|private\s+equity|venture\s+capital|asset\s+management"
+            r"|portfolio\s+(?:analysts?|management)"
+            r"|(?:financial|finance|credit|valuation|treasury)\s+analysts?"
+            r"|market\s+analysts?"
+            r"|(?:energy|power|gas|oil|commodit(?:y|ies)|carbon)\s+(?:market\s+)?analysts?"
+            r"|traders?|trading)\b",
             re.IGNORECASE,
         ),
     ),

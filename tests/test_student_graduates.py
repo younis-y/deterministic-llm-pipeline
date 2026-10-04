@@ -248,3 +248,75 @@ def test_the_graduation_year_rule_is_unchanged_by_the_guard() -> None:
     verdict = decide(resolved, RULES.model_copy(update={"max_graduation_year": 2027}), 50)
     assert verdict.verdict == Verdict.SKIP
     assert verdict.reason == 'Skip: advert says "graduating in 2028"'
+
+
+# 2.5.3: the other direction. The local model left `student_only` unset on
+# adverts that restrict eligibility to current students in so many words, so
+# a graduate's profile scored them APPLY (Brevan Howard's 2027 Abu Dhabi
+# internships, 68). Real advert lines, 2026-10-03/04.
+BREVAN_INTERNSHIP = (
+    "The goal of our summer internship program is to convert top performing "
+    "interns to our 2028 Graduate Program. Qualifications & Requirements A "
+    "penultimate year undergraduate/junior or 1st year master's or PhD student "
+    "at a recognized University."
+)
+BLACKROCK_SUMMER = (
+    "Who can apply: Candidates should be in their penultimate year of studies "
+    "and graduating from an undergraduate or a master\u2019s degree program in 2028."
+)
+LLM_LAB_INTERN = (
+    "Qualifications Currently pursuing a Bachelor\u2019s, Master\u2019s, or PhD "
+    "degree in Computer Science, Artificial Intelligence, Machine Learning, Data "
+    "Science, or a related technical field."
+)
+FLEET_INTERN = (
+    "We are seeking a motivated student / fresh graduate for a 6 Months "
+    "internship. Qualifications Fresh graduate or final year student in Computer "
+    "Engineering, Computer Science, Artificial Intelligence."
+)
+ADVISORY_INTERN = (
+    "You will Need To Have The final stages of studies or a recent graduate. "
+    "Top academic performance in Economics, Finance, or a related discipline."
+)
+
+
+def _student_from(job: Job, student: StudentFact) -> StudentFact:
+    return resolve_student(verify_facts(_facts(student), job), job).student_only
+
+
+@pytest.mark.parametrize(
+    ("description", "says"),
+    [
+        (BREVAN_INTERNSHIP, "penultimate year"),
+        (BLACKROCK_SUMMER, "penultimate year"),
+        (LLM_LAB_INTERN, "Currently pursuing"),
+    ],
+    ids=["brevan-internship", "blackrock-summer", "llm-lab-intern"],
+)
+@pytest.mark.parametrize("model", [StudentFact(), StudentFact(value=False, quote="")])
+def test_a_students_only_advert_the_model_missed_becomes_student_only(
+    description: str, says: str, model: StudentFact
+) -> None:
+    job = _job(description)
+    got = _student_from(job, model)
+    assert got.value is True
+    assert says in got.quote
+    # The quote survives the quote guard it would meet on a cache replay.
+    assert verify_facts(_facts(got), job).student_only == got
+
+
+@pytest.mark.parametrize(
+    "description",
+    [FLEET_INTERN, ADVISORY_INTERN, ECONOMICS_INTERN,
+     "You do not need to be currently enrolled at a university.",
+     "We build data pipelines for the trading desk."],
+    ids=["fleet-intern", "advisory-intern", "economics-intern", "negated", "no-wording"],
+)
+def test_graduate_friendly_or_silent_adverts_are_not_made_student_only(description: str) -> None:
+    assert _student_from(_job(description), StudentFact()).value is not True
+
+
+def test_a_brevan_style_advert_is_skipped_under_student_only_skip() -> None:
+    job = _job(BREVAN_INTERNSHIP, title="2027 Summer Internship Program - AI & Quantitative Analyst")
+    facts = resolve_student(verify_facts(_facts(StudentFact()), job), job)
+    assert decide(facts, RULES, 50).verdict == Verdict.SKIP
