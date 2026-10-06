@@ -63,6 +63,10 @@ class Workday(Source):
     async def fetch(self) -> list[Job]:
         postings: list[dict[str, Any]] = []
         offset = 0
+        # Workday reports `total` on the first page only and 0 on every later
+        # one (live, Shell 2026-10-06: 140, then 0, 0), so the first page's
+        # figure is the one to page against; a per-page check stopped at 40.
+        total = 0
         for _ in range(_MAX_PAGES):
             try:
                 data = await self.fetcher.fetch_json(
@@ -108,7 +112,8 @@ class Workday(Source):
             page = data.get("jobPostings") or []
             postings.extend(page)
             offset += len(page)
-            if not page or offset >= int(data.get("total") or 0):
+            total = max(total, int(data.get("total") or 0))
+            if not page or offset >= total:
                 break
 
         jobs = [self._parse(p) for p in postings]

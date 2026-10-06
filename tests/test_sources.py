@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 import respx
@@ -210,6 +212,43 @@ async def test_workday_posts_and_enriches() -> None:
     assert jobs[0].description == "Python and SQL"
     assert jobs[0].posted is not None
     assert "/en-US/Careers/job/AD/DS_1" in jobs[0].url
+
+
+@respx.mock
+async def test_workday_pages_past_the_second_page() -> None:
+    """Workday reports `total` on the first page only; later pages say 0.
+
+    Checking `offset >= total` against each page's own total therefore stopped
+    after page two, capping every board at 40 jobs. Live 2026-10-06: Shell's
+    board said total=140 at offset 0 and total=0 at offsets 20 and 40, and
+    Baker Hughes (665 jobs) was read as 40.
+    """
+    base = "https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/Careers"
+
+    def page(request: httpx.Request) -> httpx.Response:
+        offset = json.loads(request.content)["offset"]
+        size = max(0, min(20, 45 - offset))
+        return httpx.Response(
+            200,
+            json={
+                "total": 45 if offset == 0 else 0,
+                "jobPostings": [
+                    {
+                        "title": f"Job {offset + i}",
+                        "externalPath": f"/job/X/J_{offset + i}",
+                    }
+                    for i in range(size)
+                ],
+            },
+        )
+
+    respx.post(f"{base}/jobs").mock(side_effect=page)
+    jobs = await _fetch(
+        SourceEntry(
+            kind="workday", slug="acme", site="Careers", host="wd3", details=False
+        )
+    )
+    assert len(jobs) == 45
 
 
 @respx.mock
