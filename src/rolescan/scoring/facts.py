@@ -71,7 +71,9 @@ __all__ = [
     "resolve_field",
     "resolve_level",
     "resolve_student",
+    "resolve_years",
     "verify_facts",
+    "years_required_stated",
 ]
 
 #: The longest quote any fact may carry. A local model asked for "the text
@@ -118,8 +120,7 @@ class LevelFact(BaseModel):
     value: Level = Field(
         default=Level.not_stated,
         description=(
-            "Career level the posting targets. not_stated if the posting "
-            "does not say."
+            "Career level the posting targets. not_stated if the posting does not say."
         ),
     )
     quote: _Quote = Field(
@@ -154,16 +155,14 @@ class YearsFact(BaseModel):
         default=None,
         ge=0,
         description=(
-            "The minimum years of experience the advert requires. None if "
-            "not stated."
+            "The minimum years of experience the advert requires. None if not stated."
         ),
     )
     quote: _Quote = Field(
         default="",
         max_length=QUOTE_CHARS,
         description=(
-            "Text copied verbatim from the posting that states the years "
-            "required."
+            "Text copied verbatim from the posting that states the years required."
         ),
     )
 
@@ -184,8 +183,7 @@ class StudentFact(BaseModel):
         default="",
         max_length=QUOTE_CHARS,
         description=(
-            "Text copied verbatim from the posting that states this "
-            "restriction."
+            "Text copied verbatim from the posting that states this restriction."
         ),
     )
 
@@ -213,8 +211,7 @@ class GraduationYearFact(BaseModel):
         default="",
         max_length=QUOTE_CHARS,
         description=(
-            "Text copied verbatim from the posting that states the graduation "
-            "year."
+            "Text copied verbatim from the posting that states the graduation year."
         ),
     )
 
@@ -232,8 +229,7 @@ class FieldFact(BaseModel):
         default="",
         max_length=QUOTE_CHARS,
         description=(
-            "Text copied verbatim from the posting that supports this "
-            "category."
+            "Text copied verbatim from the posting that supports this category."
         ),
     )
 
@@ -246,7 +242,7 @@ class HardBar(BaseModel):
     kind: BarKind = Field(description="The kind of structural bar this is.")
     quote: _Quote = Field(
         max_length=QUOTE_CHARS,
-        description="Text copied verbatim from the posting that states this bar."
+        description="Text copied verbatim from the posting that states this bar.",
     )
 
 
@@ -570,6 +566,105 @@ def graduates_eligible(text: str) -> str | None:
 def students_only(text: str) -> str | None:
     """The text's own words restricting it to current students, or None (2.5.3)."""
     return _unnegated_sentence(_STUDENTS_ONLY, text)
+
+
+# Years of experience an advert requires (2.5.5). The local model left this
+# fact null on 12 of 13 digest adverts that state it in so many words, so
+# code reads it after `verify_facts`, as `resolve_student` does for enrolment
+# wording. Three shapes: a count before the word ("3+ years of experience",
+# "2-4 years experience", "5 Years + experience", "4+ years in a data role",
+# "2 years working in a similar role"), a count after it ("experience (3+
+# years)"), and a labelled count ("Seniority: 5+ years", "Experience: 3
+# years"). The value is the low end of a range; "N+" and "over N" are N.
+_YEARS_COUNT = r"(?P<n>\d{1,2})\s*\+?(?:\s*(?:-|\u2013|\u2014|to)\s*\d{1,2}\s*\+?)?"
+_YEARS_WORD = r"(?:years?|yrs?)(?:\s*\+)?(?:['\u2019]s?)?"
+_YEARS_LEAD = (
+    r"(?:(?:a\s+)?minimum(?:\s+of)?|min\.?|at\s+least|more\s+than|over|"
+    r"no\s+less\s+than|you\s+have)?\s*"
+)
+_YEARS_TAIL = (
+    r"\s+(?:of\s+)?(?:[\w/&,'\u2019\-]+\s+){0,5}?"
+    r"(?:experience|exp\b|working\s+in\b|"
+    r"in\s+(?:a|an|the)\s+(?:[\w\-]+\s+){0,2}?(?:role|position)\b)"
+)
+_YEARS_STATED = (
+    re.compile(
+        rf"\b{_YEARS_LEAD}{_YEARS_COUNT}\s*{_YEARS_WORD}{_YEARS_TAIL}", re.IGNORECASE
+    ),
+    re.compile(
+        rf"\bexperience\s*\(\s*{_YEARS_COUNT}\s*{_YEARS_WORD}\s*\)", re.IGNORECASE
+    ),
+    re.compile(
+        rf"\b(?:seniority|experience(?:\s+level)?|years?\s+of\s+experience)\s*:\s*"
+        rf"{_YEARS_COUNT}\s*{_YEARS_WORD}",
+        re.IGNORECASE,
+    ),
+)
+#: A preference, not a requirement, when one of these opens the same clause:
+#: the prompt tells the model the same ("ideally", "preferred" are not required).
+_YEARS_SOFT = re.compile(
+    r"\b(?:ideally|preferabl[ey]|preferred|nice\s+to\s+have|bonus|desirable|"
+    r"a\s+plus|advantage(?:ous)?)\b",
+    re.IGNORECASE,
+)
+_CLAUSE_START = re.compile(r"[.;:!?\n()]")
+#: The company, or a person, describing itself: "28 years of experience, we".
+_YEARS_COMPANY = re.compile(r"^[^.;\n]{0,40}?,?\s+(?:we|our|us)\b", re.IGNORECASE)
+#: No advert aimed at this candidate asks for more; every such figure seen in
+#: 3,036 cached adverts was the company's own ("more than 25 years of
+#: experience with multiple offices").
+_YEARS_MAX = 14
+
+
+def years_required_stated(text: str) -> tuple[int, str] | None:
+    """The minimum years an advert requires and its own words, or None (2.5.5).
+
+    The first match that is a requirement wins; a match is not one when its
+    clause opens with a preference word, when the sentence goes on to talk
+    about "we" or "our", or when the count is zero or over `_YEARS_MAX`.
+    """
+    matches = sorted(
+        (m for pattern in _YEARS_STATED for m in pattern.finditer(text)),
+        key=lambda m: m.start(),
+    )
+    for m in matches:
+        n = int(m.group("n"))
+        if n == 0 or n > _YEARS_MAX:
+            continue
+        before = text[: m.start()]
+        boundary = max((b.end() for b in _CLAUSE_START.finditer(before)), default=0)
+        if _YEARS_SOFT.search(before[boundary:]):
+            continue
+        if _YEARS_COMPANY.search(text[m.end() : m.end() + 60]):
+            continue
+        return n, m.group(0).strip()[:QUOTE_CHARS]
+    return None
+
+
+def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
+    """Fill a null `years_required` from the advert's own words (2.5.5).
+
+    The 2026-10-05/06 digests rated Dubai and London roles APPLY whose
+    adverts said "3+ years of experience", "5+ years" and "3-7 years": the
+    model's reason text repeated the requirement, but its `years_required`
+    came back null in 12 of 13 such adverts, so the owner's
+    `max_years_required` rule never fired. When the model did state a value
+    it is kept - it has passed the quote guard - and only a null is filled,
+    from the title first, quoting the words `years_required_stated` matched,
+    which are verbatim and so would pass the guard themselves.
+
+    Pure and idempotent; never mutates `facts`. Expects `facts` to have been
+    through `verify_facts` already.
+    """
+    if facts.years_required.value is not None:
+        return facts
+    found = years_required_stated(job.title) or years_required_stated(job.description)
+    if found is None:
+        return facts
+    value, quote = found
+    return facts.model_copy(
+        update={"years_required": YearsFact(value=value, quote=quote)}
+    )
 
 
 def resolve_student(facts: PostingFacts, job: Job) -> PostingFacts:

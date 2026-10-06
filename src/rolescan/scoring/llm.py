@@ -28,6 +28,7 @@ from rolescan.scoring.facts import (
     resolve_field,
     resolve_level,
     resolve_student,
+    resolve_years,
     verify_facts,
 )
 from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
@@ -225,9 +226,7 @@ List up to 8 keywords_missing: skills or tools the posting asks for that are \
 not evidenced for this candidate."""
 
 
-def cache_key(
-    job: Job, mode: str, cfg: LLMConfig, *, examples_digest: str = ""
-) -> str:
+def cache_key(job: Job, mode: str, cfg: LLMConfig, *, examples_digest: str = "") -> str:
     """The verdict-cache key for this posting under this scoring mode.
 
     Facts mode and judge mode ask a different question of the same posting
@@ -286,9 +285,12 @@ def cache_key(
     one model must not be served (re-decided and enriched) for `cache_days`
     after the user switches to another, which is exactly the switch an
     evaluation of the two exists to inform. The judge-mode key is unchanged.
+    v11 (2.5.5) adds the deterministic years pass (`resolve_years`): a null
+    `years_required` is filled from the advert's own "N+ years of experience"
+    wording. A v10 row could replay a null the owner's years rule never sees.
     """
     if mode == "facts":
-        key = f"{job.content_hash}:facts-v10:{cfg.backend}:{cfg.model}"
+        key = f"{job.content_hash}:facts-v11:{cfg.backend}:{cfg.model}"
         return f"{key}:ex-{examples_digest}" if examples_digest else key
     return job.content_hash
 
@@ -635,7 +637,8 @@ class FitScorer:
         # skip generating prose for a role that will not clear the gate - buys
         # nothing here, and facts mode never runs it.
         verified = verify_facts(await judge.facts(system, user), job)
-        return resolve_field(resolve_level(resolve_student(verified, job), job), job)
+        facts = resolve_years(verified, job)
+        return resolve_field(resolve_level(resolve_student(facts, job), job), job)
 
     async def _call_judge(self, scored: ScoredJob) -> FitVerdict:
         job = scored.job
