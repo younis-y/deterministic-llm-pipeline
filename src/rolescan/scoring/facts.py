@@ -587,12 +587,16 @@ _YEARS_LEAD = (
     r"no\s+less\s+than|you\s+have)?\s*"
 )
 # Up to three describing words may sit between "years of" and "experience"
-# ("hands-on data engineering experience"); a pronoun, verb or joining word
-# there means the sentence is about something else ("2 years and gives you
-# hands-on experience", "over 2 years you will gain experience").
+# ("hands-on data engineering experience"); a pronoun, verb, joining word or
+# programme noun there means the sentence is about something else ("2 years
+# and gives you hands-on experience", "2 year graduate programme, gaining
+# experience", "2 years maximum experience").
 _YEARS_GAP_WORD = (
     r"(?!(?:you|your|will|and|with|gives?|giving|offer(?:s|ing)?|our|we|the|an?|"
-    r"to|in|on|at|for|that|which|is|are|gain|get)\b)[\w/&,'\u2019\-]+\s+"
+    r"to|in|on|at|for|that|which|is|are|gain|gaining|get|providing|provides?|"
+    r"covers?|covering|including|max\.?|maximum|programmes?|programs?|schemes?|"
+    r"apprenticeships?|rotations?|contracts?|placements?|internships?|graduate|"
+    r"training)\b)[\w/&,'\u2019\-]+\s+"
 )
 _YEARS_TAIL = (
     rf"\s+(?:of\s+)?(?:{_YEARS_GAP_WORD}){{0,3}}?"
@@ -623,31 +627,42 @@ _YEARS_STATED = (
 #: A clause is the text since the last of these; a colon is not one, so a
 #: heading ("Preferred qualifications:") speaks for the line it introduces.
 _CLAUSE_START = re.compile(r"[.;!?\n()]")
-#: The clause ends in a limit, not a minimum ("up to 2 years", "no more
-#: than 3 years", "within the last 2 years", "your first 2 years").
+#: How far back a count's clause is read. Real adverts need a sentence; the
+#: cap keeps an adversarial advert with thousands of rejected counts linear.
+_YEARS_LOOKBACK = 240
+#: The clause ends in a limit or a programme length, not a minimum ("up to 2
+#: years", "no more than 3 years", "within the last 2 years", "your first 2
+#: years", "spend 2 years as an Analyst", "gain 2 years of experience").
 _YEARS_CAP = re.compile(
     r"(?:\bup\s+to|\bless\s+than|\bfewer\s+than|\bunder|\bno\s+more\s+than|"
     r"\bnot\s+more\s+than|\bmaximum(?:\s+of)?|\bmax\.?|"
     r"\bwithin(?:\s+the)?(?:\s+last|\s+past)?|\bno|\bnot|"
-    r"\bfirst|\bnext|\blast|\bpast|\bprevious|\bfollowing)\s*$",
+    r"\bfirst|\bnext|\blast|\bpast|\bprevious|\bfollowing|\bafter|"
+    r"\bspen[dt]|\bserved?|\bgain(?:ing)?|\bgives?\s+you|\boffers?(?:\s+you)?|"
+    r"\bproviding|\bprovides?|\bcover(?:s|ing)?)\s*$",
     re.IGNORECASE,
 )
-#: A preference, not a requirement, before the count in the same clause
-#: ("ideally with 6+ years", "Preferred qualifications: 3+ years") ...
+#: "Max." ends a clause by its own full stop, so it is read across one.
+_YEARS_CAP_TIGHT = re.compile(r"\bmax\.?\s*$", re.IGNORECASE)
+#: A preference, not a requirement, before the count in the same clause or
+#: in a heading ("ideally with 6+ years", "Preferred qualifications:") ...
 _YEARS_SOFT = re.compile(
-    r"\b(?:ideally|preferabl[ey]|preferred|nice\s+to\s+have|bonus|desirable|"
-    r"a\s+plus|advantage(?:ous)?)\b",
+    r"\b(?:ideally|preferabl[ey]|preferred|desired|nice\s+to\s+have|"
+    r"good\s+to\s+have|bonus(?:\s+points)?|desirable|a\s+plus|advantage(?:ous)?)\b",
     re.IGNORECASE,
 )
 #: ... or shortly after it ("3+ years of experience with Spark is preferred").
+#: "Preferably in banking" after the count qualifies the field, not the years.
 _YEARS_SOFT_AFTER = re.compile(
-    r"^[^.;!?\n]{0,60}?\b(?:preferred|preferabl[ey]|a\s+plus|an?\s+advantage|"
-    r"advantageous|desirable|nice\s+to\s+have|bonus)\b",
+    r"^[^.;!?\n]{0,60}?\b(?:preferred|preferable|a\s+plus|an?\s+advantage|"
+    r"advantageous|desirable|desired|nice\s+to\s+have|bonus|beneficial|helpful|"
+    r"optional|welcome|valued|not\s+(?:required|essential|a\s+requirement)|"
+    r"preferably(?!\s+(?:in|within|with|from|across|at|for|on)\b))\b",
     re.IGNORECASE,
 )
-#: Someone other than the candidate ("mentored by an engineer with 8+ years",
-#: "reporting to the Head of Data, who has 12 years", "our team members
-#: average 7 years").
+#: Someone other than the candidate, named just before the count ("mentored
+#: by an engineer with 8+ years", "reporting to the Head of Data, who has 12
+#: years", "our team members average 7 years") ...
 _YEARS_OTHERS = re.compile(
     r"\b(?:led\s+by|mentored\s+by|managed\s+by|headed\s+by|report(?:s|ing)?\s+to|"
     r"who\s+ha(?:s|ve)|team\s+(?:of|members)|average|"
@@ -655,10 +670,26 @@ _YEARS_OTHERS = re.compile(
     r"people|staff))\b",
     re.IGNORECASE,
 )
+#: ... unless a requirement verb follows them ("reports to the CFO and
+#: requires 5+ years", "our team is looking for someone with 3+ years") ...
+_YEARS_REQ_VERB = re.compile(
+    r"\b(?:requires?|required|need(?:s|ed)?|looking\s+for|seeking|seeks?|wants?|"
+    r"must\s+have|should\s+have|and\s+have|will\s+have|have\s+at\s+least|brings?|"
+    r"with\s+at\s+least)\b",
+    re.IGNORECASE,
+)
+#: ... or "who has" follows the candidate ("someone who has 5 years").
+_YEARS_CANDIDATE = re.compile(
+    r"\b(?:someone|candidates?|applicants?|person|people|individuals?|you|those)\b"
+    r"[^.\n]{0,20}$",
+    re.IGNORECASE,
+)
 #: The company as the clause's subject ("Acme has 10+ years of experience"):
-#: a name in capitals, then has/brings. "The ideal candidate has" is not one.
+#: a name in capitals, then has/brings. "Must have" and "The ideal candidate
+#: has" are not one.
 _YEARS_COMPANY_SUBJECT = re.compile(
-    r"^\s*(?!(?i:candidates?|applicants?|you|the)\b)(?:[A-Z][\w&.'-]*\s+){1,4}"
+    r"^\s*(?!(?i:candidates?|applicants?|you|we|our|they|the|must|should|ideal|"
+    r"all|successful|strong)\b)(?:[A-Z][\w&.'-]*\s+){1,4}"
     r"(?:has|have|brings?|boasts|offers?)\s*$"
 )
 #: The sentence goes on about the company ("28 years of experience, we have",
@@ -668,11 +699,17 @@ _YEARS_COMPANY_AFTER = re.compile(
     r"|^[^.;\n]{0,40}?,\s+(?:[A-Z][\w&.'-]*\s+){1,3}"
     r"(?:is|has|was|offers?|provides?|delivers?|serves?)\b"
 )
-#: The years are one of two routes in ("2+ years of ML experience, or a
-#: Master's degree"); the candidate may hold the other, so nothing is filled.
+#: The years are one of two routes in, the other a degree ("2+ years of ML
+#: experience, or a Master's degree"); only an "or" right after the years.
 _YEARS_WAIVED = re.compile(
-    r"^[^.\n]{0,80}?\bor\b[^.\n]{0,80}?\b(?:master|msc|phd|doctorate|degree|"
+    r"^\s*[,;]?\s*or\b[^.\n]{0,60}?\b(?:master|msc|phd|doctorate|degree|"
     r"equivalent)\b",
+    re.IGNORECASE,
+)
+#: A career path, not a requirement ("3 years as an Associate leads to VP").
+_YEARS_CAREER_PATH = re.compile(
+    r"^[^.\n]{0,60}?\b(?:before\s+(?:being\s+)?promot|progress(?:ion|ing)?\s+to|"
+    r"you\s+will\s+(?:progress|move|be\s+promoted)|leads?\s+to|promotion\s+to)\b",
     re.IGNORECASE,
 )
 #: No advert aimed at this candidate asks for more; every such figure seen in
@@ -681,14 +718,42 @@ _YEARS_WAIVED = re.compile(
 _YEARS_MAX = 14
 
 
+def _years_third_party(clause: str) -> bool:
+    """Whether the words just before the count name someone else."""
+    near = clause[-70:]
+    for t in _YEARS_OTHERS.finditer(near):
+        if t.group(0).lower().startswith("who") and _YEARS_CANDIDATE.search(
+            near[: t.start()]
+        ):
+            continue
+        if _YEARS_REQ_VERB.search(near[t.end() :]):
+            continue
+        return True
+    return False
+
+
+def _years_soft_heading(text: str, start: int) -> bool:
+    """Whether the line above the count is a preference heading."""
+    nl = text.rfind("\n", max(0, start - _YEARS_LOOKBACK), start)
+    if nl < 0:
+        return False
+    prev = text[text.rfind("\n", 0, nl) + 1 : nl].strip()
+    if not prev or len(prev) > 60 or "." in prev:
+        return False
+    if not (prev.endswith(":") or len(prev.split()) <= 3):
+        return False
+    return _YEARS_SOFT.search(prev) is not None
+
+
 def years_required_stated(text: str) -> tuple[int, str] | None:
     """The minimum years an advert requires and its own words, or None (2.5.5).
 
     The first match that is a requirement wins. A match is not one when the
-    count is zero or over `_YEARS_MAX`; when its clause ends in a limit, opens
-    with a preference word, or names someone other than the candidate; when
-    the sentence goes on to prefer rather than require it, or to describe the
-    company; or when a degree is offered as an alternative to the years.
+    count is zero or over `_YEARS_MAX`; when its clause ends in a limit or a
+    programme length, opens with a preference word or sits under a preference
+    heading, or names someone other than the candidate; when the sentence
+    goes on to prefer rather than require it, to describe the company, or to
+    describe a career path; or when a degree is offered instead of the years.
     """
     matches = sorted(
         (m for pattern in _YEARS_STATED for m in pattern.finditer(text)),
@@ -700,18 +765,26 @@ def years_required_stated(text: str) -> tuple[int, str] | None:
             continue
         phrase = m.group(0).strip()
         start = m.start() + len(m.group(0)) - len(m.group(0).lstrip())
-        before = text[:start]
+        before = text[max(0, start - _YEARS_LOOKBACK) : start]
         boundary = max((b.end() for b in _CLAUSE_START.finditer(before)), default=0)
         clause = before[boundary:]
-        after = text[m.end() :]
+        after = text[m.end() : m.end() + 200]
+        candidate_is_subject = phrase.lower().startswith("you have")
         if (
             _YEARS_CAP.search(clause)
+            or _YEARS_CAP_TIGHT.search(before[-16:])
             or _YEARS_SOFT.search(clause)
-            or _YEARS_OTHERS.search(clause)
-            or _YEARS_COMPANY_SUBJECT.search(clause)
+            or _years_soft_heading(text, start)
+            or (
+                not candidate_is_subject
+                and (
+                    _years_third_party(clause) or _YEARS_COMPANY_SUBJECT.search(clause)
+                )
+            )
             or _YEARS_SOFT_AFTER.search(after)
             or _YEARS_COMPANY_AFTER.search(after)
             or _YEARS_WAIVED.search(after)
+            or _YEARS_CAREER_PATH.search(after)
         ):
             continue
         return n, phrase[:QUOTE_CHARS]

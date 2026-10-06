@@ -78,6 +78,23 @@ STATED = [
     ("Ideally a CS degree\n3+ years of experience in SQL", 3),
     ("3+ years of experience in the US market", 3),
     ("The ideal candidate has 3+ years of experience in Python", 3),
+    # second review: requirement verbs and "you" keep the candidate as subject
+    ("Must have 3+ years of experience", 3),
+    ("Should have 4+ years of experience in analytics", 4),
+    ("Skills\nMust have 3+ years of experience", 3),
+    ("Our team is looking for a Data Engineer with 3+ years of experience", 3),
+    ("Our engineers need 4 years of experience with Spark", 4),
+    ("We want someone who has 5 years of experience", 5),
+    ("candidates who have 3+ years of experience", 3),
+    ("This role reports to the CFO and requires 5+ years of experience", 5),
+    ("You will report to the Head of Data and have 4+ years of experience", 4),
+    ("Reporting to the CTO, you have 6 years of experience in data", 6),
+    # an "or" that is not the alternative to the years, and a domain qualifier
+    ("3+ years of experience with Python or SQL, and a degree in CS", 3),
+    ("3+ years of experience in banking or consulting, and a Bachelor's degree", 3),
+    ("3+ years of experience, preferably in banking", 3),
+    ("3+ years of experience, ideally within fintech", 3),
+    ("Bachelor's degree or 3+ years of experience in lieu of a degree", 3),
 ]
 
 NOT_A_REQUIREMENT = [
@@ -124,6 +141,28 @@ NOT_A_REQUIREMENT = [
     # a decimal below one, and an alternative that waives the years
     "0.5+ years of experience is enough for this role",
     "2+ years of post-Bachelor's machine learning experience, or a Master's degree in a relevant field",
+    # second review: a career path is not a requirement
+    "You will spend 2 years as an Analyst before being promoted to Associate",
+    "After 2 years as an Analyst you will progress to Associate",
+    "Join as an Analyst; 3 years as an Associate leads to VP",
+    # a preference heading on its own line
+    "Preferred Qualifications:\n- 3+ years of experience in SQL",
+    "Nice to have\n- 2+ years of experience with Airflow",
+    "Bonus points\n5+ years of experience with Kafka",
+    "Desired:\n3+ years of experience in dbt",
+    # more preference words after the count, and caps after the word
+    "3+ years of experience with Spark is beneficial",
+    "3+ years of experience in Kafka is helpful but not required",
+    "2 years maximum experience; this is a trainee role",
+    "Max. 2 years experience",
+    # programme wording with other verbs and nouns
+    "Join our 2 year graduate programme, gaining experience across three teams",
+    "A 2 year programme providing experience across four desks",
+    "Our 2 year programme covers experience in sales and trading",
+    "Our 3 year apprenticeship provides hands-on experience",
+    "We'll give you 2 years of structured experience",
+    "Gain 2 years of experience in 12 months",
+    "Our scheme offers 2 years of experience",
 ]
 
 
