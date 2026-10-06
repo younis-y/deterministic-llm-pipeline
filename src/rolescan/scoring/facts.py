@@ -634,7 +634,7 @@ _YEARS_LOOKBACK = 240
 #: years", "no more than 3 years", "within the last 2 years", "your first 2
 #: years", "spend 2 years as an Analyst", "gain 2 years of experience").
 _YEARS_CAP = re.compile(
-    r"(?:\bup\s+to|\bless\s+than|\bfewer\s+than|\bunder|\bno\s+more\s+than|"
+    r"(?:\bup[\s-]*to|\bless\s+than|\bfewer\s+than|\bunder|\bno\s+more\s+than|"
     r"\bnot\s+more\s+than|\bmaximum(?:\s+of)?|\bmax\.?|"
     r"\bwithin(?:\s+the)?(?:\s+last|\s+past)?|\bno|\bnot|"
     r"\bfirst|\bnext|\blast|\bpast|\bprevious|\bfollowing|\bafter|"
@@ -700,10 +700,16 @@ _YEARS_COMPANY_AFTER = re.compile(
     r"(?:is|has|was|offers?|provides?|delivers?|serves?)\b"
 )
 #: The years are one of two routes in, the other a degree ("2+ years of ML
-#: experience, or a Master's degree"); only an "or" right after the years.
+#: experience, or a Master's degree", "a degree, or 3+ years' experience",
+#: "... as an analyst, or equivalent"): an "or" right after the years, an
+#: "or equivalent" later in the clause, or a degree and "or" just before.
 _YEARS_WAIVED = re.compile(
     r"^\s*[,;]?\s*or\b[^.\n]{0,60}?\b(?:master|msc|phd|doctorate|degree|"
-    r"equivalent)\b",
+    r"equivalent)\b|^[^.;\n]{0,60}?\bor\s+equivalent\b",
+    re.IGNORECASE,
+)
+_YEARS_WAIVED_BEFORE = re.compile(
+    r"\b(?:degree|master'?s|msc|phd|doctorate|qualification|equivalent)\s*,?\s*or\s*$",
     re.IGNORECASE,
 )
 #: A career path, not a requirement ("3 years as an Associate leads to VP").
@@ -784,6 +790,7 @@ def years_required_stated(text: str) -> tuple[int, str] | None:
             or _YEARS_SOFT_AFTER.search(after)
             or _YEARS_COMPANY_AFTER.search(after)
             or _YEARS_WAIVED.search(after)
+            or _YEARS_WAIVED_BEFORE.search(clause)
             or _YEARS_CAREER_PATH.search(after)
         ):
             continue

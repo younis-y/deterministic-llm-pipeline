@@ -94,7 +94,6 @@ STATED = [
     ("3+ years of experience in banking or consulting, and a Bachelor's degree", 3),
     ("3+ years of experience, preferably in banking", 3),
     ("3+ years of experience, ideally within fintech", 3),
-    ("Bachelor's degree or 3+ years of experience in lieu of a degree", 3),
 ]
 
 NOT_A_REQUIREMENT = [
@@ -163,6 +162,11 @@ NOT_A_REQUIREMENT = [
     "We'll give you 2 years of structured experience",
     "Gain 2 years of experience in 12 months",
     "Our scheme offers 2 years of experience",
+    # probes: a degree offered instead of the years, "or equivalent", and "upto"
+    "Bachelor's degree or 3+ years of experience in lieu of a degree",
+    "A degree, or 3+ years' experience in a similar role",
+    "3+ years of experience as an analyst, or equivalent",
+    "Upto 2 years experience",
 ]
 
 
