@@ -571,20 +571,32 @@ def students_only(text: str) -> str | None:
 # Years of experience an advert requires (2.5.5). The local model left this
 # fact null on 12 of 13 digest adverts that state it in so many words, so
 # code reads it after `verify_facts`, as `resolve_student` does for enrolment
-# wording. Three shapes: a count before the word ("3+ years of experience",
+# wording. Shapes read: a count before the word ("3+ years of experience",
 # "2-4 years experience", "5 Years + experience", "4+ years in a data role",
-# "2 years working in a similar role"), a count after it ("experience (3+
-# years)"), and a labelled count ("Seniority: 5+ years", "Experience: 3
-# years"). The value is the low end of a range; "N+" and "over N" are N.
-_YEARS_COUNT = r"(?P<n>\d{1,2})\s*\+?(?:\s*(?:-|\u2013|\u2014|to)\s*\d{1,2}\s*\+?)?"
+# "3+ years as a Data Engineer", "2 years working in a similar role"), a count
+# after it ("experience (3+ years)", "experience of at least 3 years") and a
+# labelled count ("Seniority: 5+ years", "Years of experience: 3-5"). The
+# value is the low end of a range, rounded down; "N+" and "over N" are N.
+_YEARS_COUNT = (
+    r"(?<![\d.])(?P<n>\d{1,2})(?:\.\d+)?\s*\+?"
+    r"(?:\s*(?:-|\u2013|\u2014|to)\s*\d{1,2}(?:\.\d+)?\s*\+?)?"
+)
 _YEARS_WORD = r"(?:years?|yrs?)(?:\s*\+)?(?:['\u2019]s?)?"
 _YEARS_LEAD = (
     r"(?:(?:a\s+)?minimum(?:\s+of)?|min\.?|at\s+least|more\s+than|over|"
     r"no\s+less\s+than|you\s+have)?\s*"
 )
+# Up to three describing words may sit between "years of" and "experience"
+# ("hands-on data engineering experience"); a pronoun, verb or joining word
+# there means the sentence is about something else ("2 years and gives you
+# hands-on experience", "over 2 years you will gain experience").
+_YEARS_GAP_WORD = (
+    r"(?!(?:you|your|will|and|with|gives?|giving|offer(?:s|ing)?|our|we|the|an?|"
+    r"to|in|on|at|for|that|which|is|are|gain|get)\b)[\w/&,'\u2019\-]+\s+"
+)
 _YEARS_TAIL = (
-    r"\s+(?:of\s+)?(?:[\w/&,'\u2019\-]+\s+){0,5}?"
-    r"(?:experience|exp\b|working\s+in\b|"
+    rf"\s+(?:of\s+)?(?:{_YEARS_GAP_WORD}){{0,3}}?"
+    r"(?:experience\b|exp\b|working\s+(?:in|with)\b|as\s+an?\b|"
     r"in\s+(?:a|an|the)\s+(?:[\w\-]+\s+){0,2}?(?:role|position)\b)"
 )
 _YEARS_STATED = (
@@ -595,21 +607,74 @@ _YEARS_STATED = (
         rf"\bexperience\s*\(\s*{_YEARS_COUNT}\s*{_YEARS_WORD}\s*\)", re.IGNORECASE
     ),
     re.compile(
-        rf"\b(?:seniority|experience(?:\s+level)?|years?\s+of\s+experience)\s*:\s*"
-        rf"{_YEARS_COUNT}\s*{_YEARS_WORD}",
+        rf"\bexperience\s+of\s+(?:at\s+least\s+|a\s+minimum\s+of\s+|over\s+|"
+        rf"more\s+than\s+)?{_YEARS_COUNT}\s*{_YEARS_WORD}",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b(?:seniority|experience(?:\s+level)?)\s*:\s*{_YEARS_COUNT}\s*{_YEARS_WORD}",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\byears?\s+of\s+experience\s*:\s*{_YEARS_COUNT}(?:\s*{_YEARS_WORD})?",
         re.IGNORECASE,
     ),
 )
-#: A preference, not a requirement, when one of these opens the same clause:
-#: the prompt tells the model the same ("ideally", "preferred" are not required).
+#: A clause is the text since the last of these; a colon is not one, so a
+#: heading ("Preferred qualifications:") speaks for the line it introduces.
+_CLAUSE_START = re.compile(r"[.;!?\n()]")
+#: The clause ends in a limit, not a minimum ("up to 2 years", "no more
+#: than 3 years", "within the last 2 years", "your first 2 years").
+_YEARS_CAP = re.compile(
+    r"(?:\bup\s+to|\bless\s+than|\bfewer\s+than|\bunder|\bno\s+more\s+than|"
+    r"\bnot\s+more\s+than|\bmaximum(?:\s+of)?|\bmax\.?|"
+    r"\bwithin(?:\s+the)?(?:\s+last|\s+past)?|\bno|\bnot|"
+    r"\bfirst|\bnext|\blast|\bpast|\bprevious|\bfollowing)\s*$",
+    re.IGNORECASE,
+)
+#: A preference, not a requirement, before the count in the same clause
+#: ("ideally with 6+ years", "Preferred qualifications: 3+ years") ...
 _YEARS_SOFT = re.compile(
     r"\b(?:ideally|preferabl[ey]|preferred|nice\s+to\s+have|bonus|desirable|"
     r"a\s+plus|advantage(?:ous)?)\b",
     re.IGNORECASE,
 )
-_CLAUSE_START = re.compile(r"[.;:!?\n()]")
-#: The company, or a person, describing itself: "28 years of experience, we".
-_YEARS_COMPANY = re.compile(r"^[^.;\n]{0,40}?,?\s+(?:we|our|us)\b", re.IGNORECASE)
+#: ... or shortly after it ("3+ years of experience with Spark is preferred").
+_YEARS_SOFT_AFTER = re.compile(
+    r"^[^.;!?\n]{0,60}?\b(?:preferred|preferabl[ey]|a\s+plus|an?\s+advantage|"
+    r"advantageous|desirable|nice\s+to\s+have|bonus)\b",
+    re.IGNORECASE,
+)
+#: Someone other than the candidate ("mentored by an engineer with 8+ years",
+#: "reporting to the Head of Data, who has 12 years", "our team members
+#: average 7 years").
+_YEARS_OTHERS = re.compile(
+    r"\b(?:led\s+by|mentored\s+by|managed\s+by|headed\s+by|report(?:s|ing)?\s+to|"
+    r"who\s+ha(?:s|ve)|team\s+(?:of|members)|average|"
+    r"our\s+(?:team|founders?|engineers|members|leadership|experts|consultants|"
+    r"people|staff))\b",
+    re.IGNORECASE,
+)
+#: The company as the clause's subject ("Acme has 10+ years of experience"):
+#: a name in capitals, then has/brings. "The ideal candidate has" is not one.
+_YEARS_COMPANY_SUBJECT = re.compile(
+    r"^\s*(?!(?i:candidates?|applicants?|you|the)\b)(?:[A-Z][\w&.'-]*\s+){1,4}"
+    r"(?:has|have|brings?|boasts|offers?)\s*$"
+)
+#: The sentence goes on about the company ("28 years of experience, we have",
+#: "12 years of experience in the region, Acme is the market leader").
+_YEARS_COMPANY_AFTER = re.compile(
+    r"^[^.;\n]{0,40}?,?\s+(?i:we|our)\b"
+    r"|^[^.;\n]{0,40}?,\s+(?:[A-Z][\w&.'-]*\s+){1,3}"
+    r"(?:is|has|was|offers?|provides?|delivers?|serves?)\b"
+)
+#: The years are one of two routes in ("2+ years of ML experience, or a
+#: Master's degree"); the candidate may hold the other, so nothing is filled.
+_YEARS_WAIVED = re.compile(
+    r"^[^.\n]{0,80}?\bor\b[^.\n]{0,80}?\b(?:master|msc|phd|doctorate|degree|"
+    r"equivalent)\b",
+    re.IGNORECASE,
+)
 #: No advert aimed at this candidate asks for more; every such figure seen in
 #: 3,036 cached adverts was the company's own ("more than 25 years of
 #: experience with multiple offices").
@@ -619,9 +684,11 @@ _YEARS_MAX = 14
 def years_required_stated(text: str) -> tuple[int, str] | None:
     """The minimum years an advert requires and its own words, or None (2.5.5).
 
-    The first match that is a requirement wins; a match is not one when its
-    clause opens with a preference word, when the sentence goes on to talk
-    about "we" or "our", or when the count is zero or over `_YEARS_MAX`.
+    The first match that is a requirement wins. A match is not one when the
+    count is zero or over `_YEARS_MAX`; when its clause ends in a limit, opens
+    with a preference word, or names someone other than the candidate; when
+    the sentence goes on to prefer rather than require it, or to describe the
+    company; or when a degree is offered as an alternative to the years.
     """
     matches = sorted(
         (m for pattern in _YEARS_STATED for m in pattern.finditer(text)),
@@ -631,13 +698,23 @@ def years_required_stated(text: str) -> tuple[int, str] | None:
         n = int(m.group("n"))
         if n == 0 or n > _YEARS_MAX:
             continue
-        before = text[: m.start()]
+        phrase = m.group(0).strip()
+        start = m.start() + len(m.group(0)) - len(m.group(0).lstrip())
+        before = text[:start]
         boundary = max((b.end() for b in _CLAUSE_START.finditer(before)), default=0)
-        if _YEARS_SOFT.search(before[boundary:]):
+        clause = before[boundary:]
+        after = text[m.end() :]
+        if (
+            _YEARS_CAP.search(clause)
+            or _YEARS_SOFT.search(clause)
+            or _YEARS_OTHERS.search(clause)
+            or _YEARS_COMPANY_SUBJECT.search(clause)
+            or _YEARS_SOFT_AFTER.search(after)
+            or _YEARS_COMPANY_AFTER.search(after)
+            or _YEARS_WAIVED.search(after)
+        ):
             continue
-        if _YEARS_COMPANY.search(text[m.end() : m.end() + 60]):
-            continue
-        return n, m.group(0).strip()[:QUOTE_CHARS]
+        return n, phrase[:QUOTE_CHARS]
     return None
 
 

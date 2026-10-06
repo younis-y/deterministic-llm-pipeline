@@ -68,6 +68,16 @@ STATED = [
         "We\u2019re looking for someone with over 1 year of commercial experience who has",
         1,
     ),
+    # review round: decimals floor, phrasings without "of experience", a newline
+    # is a clause break, "US" is not "us", and a candidate described as "has"
+    ("At least 1.5+ years' experience in communications or PR", 1),
+    ("Requirements: 3+ years as a Data Engineer or Analytics Engineer", 3),
+    ("3+ years working with SQL and Python in production", 3),
+    ("Experience of at least 3 years in analytics engineering", 3),
+    ("Years of experience: 3-5", 3),
+    ("Ideally a CS degree\n3+ years of experience in SQL", 3),
+    ("3+ years of experience in the US market", 3),
+    ("The ideal candidate has 3+ years of experience in Python", 3),
 ]
 
 NOT_A_REQUIREMENT = [
@@ -86,6 +96,34 @@ NOT_A_REQUIREMENT = [
     "a 2 year fixed-term contract with a view to extension",
     "0 years of experience required - we train you",
     "",
+    # review round: an upper limit is not a minimum
+    "Fresh graduates or candidates with up to 2 years of experience are encouraged to apply",
+    "Candidates must have less than 2 years of professional experience",
+    "Maximum 2 years of experience; this is an early-career trainee role",
+    "no more than 3 years of work experience",
+    "Experience: Up to 2 years of professional experience. Graduated within the last 2 years",
+    # graduate-scheme wording: a programme length is not a requirement
+    "Our 2 year rotational programme gives you experience across the business",
+    "The programme lasts 2 years and gives you hands-on experience",
+    "Over 2 years you will gain experience in three teams",
+    "graduated within the last 2 years with some experience of Python",
+    "a 2 year fixed-term contract offering experience of live systems",
+    "Over the next 5 years our experienced team will double",
+    # a preference stated after the count, or in a heading
+    "3+ years of experience with Spark is preferred",
+    "2+ years of experience (preferred)",
+    "2-5 years financial planning experience preferred",
+    "Preferred Qualifications: 3+ years of experience with dbt",
+    "Nice to have: 2+ years of experience with Airflow",
+    # someone other than the candidate
+    "You will be mentored by a senior engineer with 8+ years of experience",
+    "Reporting to the Head of Data, who has 12 years of experience in analytics",
+    "Our team members average 7 years of experience",
+    "With 12 years of experience in the region, Acme is the market leader",
+    "Acme has 10+ years of experience delivering analytics platforms",
+    # a decimal below one, and an alternative that waives the years
+    "0.5+ years of experience is enough for this role",
+    "2+ years of post-Bachelor's machine learning experience, or a Master's degree in a relevant field",
 ]
 
 
@@ -103,8 +141,16 @@ def test_preferences_and_company_boilerplate_do_not_count(text: str) -> None:
     assert years_required_stated(text) is None
 
 
-def test_the_first_requirement_wins_over_later_boilerplate_and_vice_versa() -> None:
-    text = "About us: for over 50 years, we have led the market. Requirements: 3+ years of experience in SQL."
+@pytest.mark.parametrize(
+    "text",
+    [
+        "About us: for over 50 years, we have led the market. Requirements: 3+ years of experience in SQL.",
+        "Requirements: 3+ years of experience in SQL. About us: for over 50 years, we have led the market.",
+    ],
+)
+def test_the_requirement_is_read_whichever_side_of_the_boilerplate_it_sits(
+    text: str,
+) -> None:
     assert years_required_stated(text) == (3, "3+ years of experience")
 
 
@@ -149,11 +195,9 @@ def test_a_null_fact_is_filled_from_the_advert() -> None:
 
 
 def test_the_models_own_verified_value_is_kept() -> None:
-    facts = verify_facts(
-        _facts(years=1, quote="1 year of experience"),
-        _job("Needs 1 year of experience. Senior staff have 3+ years of experience."),
-    )
-    assert resolve_years(facts, _job(ADVERT)).years_required.value == 1
+    job = _job("Needs 1 year of experience. Senior staff have 3+ years of experience.")
+    facts = verify_facts(_facts(years=1, quote="1 year of experience"), job)
+    assert resolve_years(facts, job).years_required.value == 1
 
 
 def test_the_title_is_read_before_the_description() -> None:
