@@ -173,4 +173,4 @@ DEP002 = ["pytest", "pytest-asyncio", "respx", "ruff", "mypy", "types-PyYAML"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "--strict-markers"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 from pathlib import Path
 
 import httpx
@@ -93,6 +94,28 @@ def _no_ambient_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for var in _CREDENTIAL_VARS:
         monkeypatch.delenv(var, raising=False)
+
+
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse DNS for anything but localhost, so a test that reaches the real
+    network fails here rather than passing on a remote server's answer.
+
+    respx intercepts httpx at the transport, so mocked calls never get this
+    far; only an unmocked call does, which is exactly the case to catch."""
+
+    def refuse(host: object, *args: object, **kwargs: object) -> object:
+        name = host.decode() if isinstance(host, bytes) else str(host)
+        if name in _LOCAL_HOSTS or name == "":
+            return _REAL_GETADDRINFO(host, *args, **kwargs)  # type: ignore[arg-type]
+        msg = f"test tried to resolve {name!r}; the suite must not reach the network"
+        raise socket.gaierror(msg)
+
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
 
 
 @pytest.fixture
