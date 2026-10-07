@@ -108,6 +108,26 @@ class Adzuna(Source):
                 log.warning("adzuna %s/%s: %s", self.country, q, page)
                 continue
             out.extend(page)
+        failures = [p for p in pages if isinstance(p, BaseException)]
+        if failures and len(failures) == len(pages):
+            first = failures[0]
+            # FetchError is (url, detail) and renders "url: detail", so reuse
+            # the failed request's own url and detail rather than printing the
+            # same url twice in the digest line.
+            url, reason = (
+                (first.url, first.detail)
+                if isinstance(first, FetchError)
+                else ("", str(first))
+            )
+            msg = f"every Adzuna query failed; first: {reason}"
+            raise FetchError(url, msg) from first
+        if failures:
+            log.warning(
+                "adzuna %s: %d of %d queries failed",
+                self.country,
+                len(failures),
+                len(pages),
+            )
         return out
 
     async def _search(self, query: str) -> list[Job]:

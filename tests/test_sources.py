@@ -329,6 +329,65 @@ async def test_adzuna_parses() -> None:
     assert jobs[0].source == "adzuna:gb"
 
 
+@respx.mock
+async def test_adzuna_raises_when_every_query_fails() -> None:
+    """A revoked key answers 401 on every query; returning [] reported `ok`
+    with 0 jobs and the quiet alarm never named it (it had never returned
+    rows under that key). All-failed is a failure."""
+    respx.get(url__regex=r"https://api\.adzuna\.com/.*").mock(
+        return_value=httpx.Response(401)
+    )
+    with pytest.raises(FetchError, match="every Adzuna query failed"):
+        await _fetch(
+            SourceEntry(
+                kind="adzuna",
+                slug="gb",
+                app_id="x",
+                app_key="y",
+                queries=["energy", "python"],
+            )
+        )
+
+
+@respx.mock
+async def test_adzuna_keeps_going_when_one_query_fails() -> None:
+    respx.get(
+        "https://api.adzuna.com/v1/api/jobs/gb/search/1",
+        params__contains={"what": "energy"},
+    ).mock(return_value=httpx.Response(401))
+    respx.get(
+        "https://api.adzuna.com/v1/api/jobs/gb/search/1",
+        params__contains={"what": "python"},
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "1",
+                        "title": "Python Analyst",
+                        "company": {"display_name": "Acme"},
+                        "location": {"display_name": "London"},
+                        "redirect_url": "https://adzuna/1",
+                        "description": "python",
+                        "created": "2026-10-01T00:00:00Z",
+                    }
+                ]
+            },
+        )
+    )
+    jobs = await _fetch(
+        SourceEntry(
+            kind="adzuna",
+            slug="gb",
+            app_id="x",
+            app_key="y",
+            queries=["energy", "python"],
+        )
+    )
+    assert [j.title for j in jobs] == ["Python Analyst"]
+
+
 # --- fetcher behaviour -----------------------------------------------------
 
 
