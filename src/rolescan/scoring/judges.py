@@ -220,10 +220,7 @@ async def unusable_backend_reason(cfg: LLMConfig) -> str:
         # no email, a traceback in a launchd log nobody reads. Treated as
         # "this backend is unusable", which is what it is.
         log.warning("preflight for backend %s raised: %s", cfg.backend, e)
-        return (
-            f"backend {cfg.backend!r} could not be checked: "
-            f"{type(e).__name__}: {e}"
-        )
+        return f"backend {cfg.backend!r} could not be checked: {type(e).__name__}: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -499,8 +496,7 @@ class OllamaJudge(Judge):
             raise RuntimeError(msg) from e
         if not isinstance(fields, dict):
             msg = (
-                "ollama returned a triage body that was not an object: "
-                f"{content[:120]}"
+                f"ollama returned a triage body that was not an object: {content[:120]}"
             )
             raise RuntimeError(msg)
         # Named explicitly rather than splatted: a server that answers with the

@@ -147,8 +147,6 @@ async def test_ollama_base_url_is_configurable() -> None:
     assert (await get_judge("ollama", cfg).verdict("s", "u")).fit_score == 72
 
 
-
-
 @respx.mock
 async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
     """Temperature reaches the server, and defaults to zero.
@@ -176,6 +174,7 @@ async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
     cfg = LLMConfig(enabled=True, backend="ollama", temperature=0.7)
     await get_judge("ollama", cfg).verdict("s", "u")
     assert seen["options"]["temperature"] == 0.7
+
 
 # --- the scorer uses whichever backend is configured -----------------------
 
@@ -523,9 +522,7 @@ async def test_an_untagged_model_is_not_satisfied_by_a_different_tag() -> None:
 @respx.mock
 async def test_an_untagged_model_matches_the_latest_tag() -> None:
     respx.get("http://localhost:11434/api/tags").mock(
-        return_value=httpx.Response(
-            200, json={"models": [{"name": "llama3.1:latest"}]}
-        )
+        return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:latest"}]})
     )
     cfg = LLMConfig(enabled=True, backend="ollama", model="llama3.1")
     assert await get_judge("ollama", cfg).preflight() == ""
@@ -656,7 +653,9 @@ async def test_a_posting_below_the_gate_costs_one_call_not_two() -> None:
             200,
             json={
                 "message": {
-                    "content": __import__("json").dumps({**VERDICT_JSON, "fit_score": 20})
+                    "content": __import__("json").dumps(
+                        {**VERDICT_JSON, "fit_score": 20}
+                    )
                 }
             },
         )
