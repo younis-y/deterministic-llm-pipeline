@@ -477,7 +477,12 @@ def _rule_hidden(
     is listed all the same, or it would be in no list at all. Only those: a
     thin near-gate or weighted-term posting, or one whose only hit is an
     `excluded_locations` entry (`location: ...`, nothing for the reader to
-    check), would be listed again on every run until its text arrives.
+    check), would be listed again on every run until its text arrives. A
+    thin posting that is listed is listed again on every run too, for the
+    same reason: a deferred posting is not recorded.
+
+    A weighted or near-gate reject is returned as a copy with `hidden_as`
+    set (`"blockers"` / `"gate"`); the others are the objects passed in.
 
     Matched on identity, not equality: `_rank` filters and slices `judged`
     and `run_scan` copies only the postings it marks `digest_cap`, so the
@@ -488,12 +493,19 @@ def _rule_hidden(
     shown = {id(s) for s in reportable}
     caught = [s for s in judged if id(s) not in shown and _caught_by_a_rule(s)]
     gate = profile.min_keyword_score
+
+    def _charged(s: ScoredJob) -> int:
+        """What its `blocker_hits` terms cost it: only a term that was charged
+        (`keyword_penalties`) gives points back, since a `title_only_blockers`
+        term found only in the body costs nothing."""
+        return sum(
+            profile.blockers.get(t, 0)
+            for t in s.blocker_hits
+            if t in s.keyword_penalties
+        )
+
     pushed_under = [
-        s
-        for s in rejects
-        if s.blocker_hits
-        and s.keyword_score + sum(profile.blockers.get(t, 0) for t in s.blocker_hits)
-        >= gate
+        s for s in rejects if s.blocker_hits and s.keyword_score + _charged(s) >= gate
     ]
     thin_blocked = [
         s
@@ -521,7 +533,16 @@ def _rule_hidden(
         and profile.hidden_gate_margin
         and gate - profile.hidden_gate_margin <= s.keyword_score < gate
     ]
-    return caught + pushed_under + thin_blocked + weighted + near
+    # The group is decided here, where the weights are, and carried on a copy
+    # (`hidden_as`): the digest only has the posting, and "pushed under by"
+    # is a claim about what the weight did.
+    return (
+        caught
+        + pushed_under
+        + thin_blocked
+        + [s.model_copy(update={"hidden_as": "blockers"}) for s in weighted]
+        + [s.model_copy(update={"hidden_as": "gate"}) for s in near]
+    )
 
 
 async def _check_coverage(

@@ -362,6 +362,13 @@ class ScoredJob(BaseModel):
     all three were recorded with everything else and could never surface
     again (26 Sep: 382 of 982 candidates; 5-6 Oct: 15-17 reportable roles a
     day past the cap)."""
+    hidden_as: str = ""
+    """Which "Hidden by your rules" group a prefilter reject is listed under
+    (2.5.7): `"blockers"` or `"gate"`, or "".
+
+    Set by `_rule_hidden` on the copy of a reject it lists, so the digest
+    need not recompute weights to say why. "" means the group derives from
+    `fit` and `blocker_hits` as before."""
 
     @property
     def score(self) -> int:

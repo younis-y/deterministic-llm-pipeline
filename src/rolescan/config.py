@@ -155,7 +155,8 @@ class ProfileConfig(BaseModel):
     directors"), `military` ("military or veteran status", the US
     equal-opportunity line on every internship from a US employer). Measured
     2026-10-07: 82 cached adverts were rejected on weight alone, mostly these
-    three. A term here keeps its weight from `blockers`."""
+    three. A term here keeps its weight from `blockers`. Only the weight is
+    title-only: a term also in `hard_blockers` still bars on the whole text."""
     hidden_gate_margin: Annotated[int, Field(ge=0)] = 10
     """How far under `min_keyword_score` a reject may be and still be listed
     in "Hidden by your rules". 0 lists none. The gate is the stage that hides

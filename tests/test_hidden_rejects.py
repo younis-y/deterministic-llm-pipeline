@@ -14,7 +14,7 @@ import httpx
 import respx
 
 from rolescan.config import Config, ProfileConfig
-from rolescan.digest import render_markdown
+from rolescan.digest import render_html, render_markdown
 from rolescan.models import Job
 from rolescan.pipeline import ScanResult, _prefilter, _rule_hidden, run_scan
 from rolescan.scoring.keyword import score_keywords
@@ -63,7 +63,7 @@ def test_a_weighted_only_reject_is_listed_under_blockers() -> None:
     reject = score_keywords(_job("Data Analyst", "military or veteran status"), profile)
     assert reject.keyword_score < profile.min_keyword_score
     hidden = _rule_hidden([], [], [reject], profile)
-    assert hidden == [reject]
+    assert [(h.job, h.hidden_as) for h in hidden] == [(reject.job, "blockers")]
     text = render_markdown(ScanResult(rule_hidden=hidden))
     assert "Your weighted terms (blockers)" in text and '"military"' in text
 
@@ -74,7 +74,7 @@ def test_a_near_gate_reject_is_listed_under_gate() -> None:
     )
     reject = score_keywords(_job("Python Analyst", "python"), profile)  # 12 points
     hidden = _rule_hidden([], [], [reject], profile)
-    assert hidden == [reject]
+    assert [(h.job, h.hidden_as) for h in hidden] == [(reject.job, "gate")]
     text = render_markdown(ScanResult(rule_hidden=hidden, gate=20))
     assert "Just under your keyword gate" in text and "12 of 20" in text
 
@@ -85,6 +85,76 @@ def test_a_far_under_gate_reject_is_not_listed() -> None:
     )
     reject = score_keywords(_job("Python Analyst", "python"), profile)  # 3 points
     assert _rule_hidden([], [], [reject], profile) == []
+
+
+def test_a_small_penalty_that_could_not_have_cleared_the_gate_is_not_blamed() -> None:
+    """Gate 20, 19 without a 5-point `crypto`: still under, so "pushed under
+    the gate by crypto" would be false. The group is decided where the weights
+    are (`_rule_hidden`), not guessed from the penalty list."""
+    profile = _profile(keywords={"python": 4, "sql": 7}, blockers={"crypto": 5})
+    reject = score_keywords(_job("Python Analyst", "sql, crypto"), profile)
+    assert reject.keyword_score == 14 and reject.keyword_penalties == ["crypto"]
+    hidden = _rule_hidden([], [], [reject], profile)
+    assert [h.hidden_as for h in hidden] == ["gate"]
+    text = render_markdown(ScanResult(rule_hidden=hidden, gate=20))
+    assert "Just under your keyword gate" in text and "scored 14 of 20" in text
+    assert "Your weighted terms (blockers)" not in text
+    assert "pushed under" not in text
+
+
+def test_a_reject_both_weighted_and_near_the_gate_is_listed_once_under_blockers() -> (
+    None
+):
+    """Score 15 with a 10-point term: 25 without it, so the term did it, and
+    15 is also inside the margin. The `listed` check keeps it out of `near`."""
+    profile = _profile(
+        keywords={"data analyst": 8, "python": 1}, blockers={"head of": 10}
+    )
+    reject = score_keywords(_job("Head of Data Analyst", "python"), profile)
+    assert reject.keyword_score == 15 and reject.keyword_penalties == ["head of"]
+    hidden = _rule_hidden([], [], [reject], profile)
+    assert [h.hidden_as for h in hidden] == ["blockers"]
+    text = render_markdown(ScanResult(rule_hidden=hidden, gate=20))
+    assert text.count("Head of Data Analyst") == 1
+    assert "Just under your keyword gate" not in text
+
+
+def test_the_html_digest_lists_both_new_groups() -> None:
+    profile = _profile(blockers={"military": 50})
+    weighted = score_keywords(
+        _job("Data Analyst", "military or veteran status"), profile
+    )
+    near = score_keywords(_job("Python Analyst", "python"), profile)  # 12 points
+    hidden = _rule_hidden([], [], [weighted, near], profile)
+    assert [h.hidden_as for h in hidden] == ["blockers", "gate"]
+    html = render_html(ScanResult(rule_hidden=hidden, gate=20))
+    assert "Your weighted terms (blockers)" in html
+    assert "Just under your keyword gate" in html
+    assert "pushed under the gate by" in html and "scored 12 of 20" in html
+
+
+def test_a_title_only_term_found_only_in_the_body_gives_no_weight_back() -> None:
+    """`military` is weighted, title-only AND a hard blocker. In the body it
+    bars but costs nothing, so a reject that was low relevance to begin with
+    is not "pushed under" by a weight it was never charged."""
+    profile = _profile(
+        keywords={"data analyst": 8, "python": 4},
+        blockers={"military": 50},
+        hard_blockers=["military"],
+        title_only_blockers=["military"],
+    )
+    body = "python. military or veteran status."
+    in_body = score_keywords(_job("Intern", body), profile)
+    assert in_body.blocker_hits == ["military"] and in_body.keyword_penalties == []
+    assert in_body.keyword_score == 4
+    in_title = score_keywords(_job("Military Data Analyst", ""), profile)
+    assert in_title.blocker_hits == ["military"]
+    assert in_title.keyword_penalties == ["military"]
+    assert in_title.keyword_score == 24 - 50
+    hidden = _rule_hidden([], [], [in_body, in_title], profile)
+    assert [h.job.title for h in hidden] == ["Military Data Analyst"]
+    text = render_markdown(ScanResult(rule_hidden=hidden, gate=20))
+    assert 'blocked by "military"' in text
 
 
 def test_a_thin_posting_a_hard_blocker_term_caught_is_listed_but_no_other_thin_is() -> (

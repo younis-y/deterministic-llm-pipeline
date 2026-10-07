@@ -64,8 +64,10 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
     # what a term costs; this says what no application can get past. A term
     # can be in both (it costs its weight AND blocks), in `blockers` alone (a
     # preference, however heavy), or here alone (a bar that costs nothing).
-    # Both fields are normalised at load and matched identically, so the two
-    # can never disagree about whether a term is present.
+    # Both fields are normalised at load, so the same spelling of a term is
+    # in both. A term that is also in `title_only_blockers` is the exception
+    # to "matched identically": it costs its weight only from the title, but
+    # still bars from the whole text here.
     blockers = [t for t in profile.hard_blockers if _term_hit(t, blob)]
     blockers += [
         f"location: {t}"

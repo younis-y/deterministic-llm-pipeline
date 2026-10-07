@@ -122,11 +122,12 @@ def _hidden_group(item: ScoredJob, gate: int) -> tuple[str, str] | None:
     model's reason, ahead of any term it also matched. A term-only posting's
     reason is the term(s) that matched, as configured.
 
-    2.5.7: a reject the model never scored (`fit` is None) with no
-    `hard_blockers` hit is listed under `blockers` when a weighted term cost
-    it points, else under `gate` with its score against `gate`. The two
-    synthetic penalties (agency, location) are not terms: a near-gate reject
-    whose only penalty is one of them lands under `gate`.
+    2.5.7: a prefilter reject `_rule_hidden` listed carries `hidden_as`, which
+    decides the group after the branches above: `blockers` quotes the
+    configured terms that cost it points (the synthetic agency and location
+    penalties are not terms), `gate` gives its score against `gate`. It is
+    `_rule_hidden`, not this function, that knows the weights and so whether
+    a term really pushed the posting under.
     """
     fit = item.fit
     if fit is not None and fit.rule is not None:
@@ -136,21 +137,24 @@ def _hidden_group(item: ScoredJob, gate: int) -> tuple[str, str] | None:
     if item.blocker_hits:
         terms = ", ".join(f'"{t}"' for t in dict.fromkeys(item.blocker_hits))
         return _TERMS, f"blocked by {terms}"
-    weighted = [
-        t for t in dict.fromkeys(item.keyword_penalties) if t not in SYNTHETIC_PENALTIES
-    ]
-    if weighted and item.fit is None:
+    if item.hidden_as == "blockers":
+        costly = [
+            t
+            for t in dict.fromkeys(item.keyword_penalties)
+            if t not in SYNTHETIC_PENALTIES
+        ]
         return "blockers", "pushed under the gate by " + ", ".join(
-            f'"{t}"' for t in weighted
+            f'"{t}"' for t in costly
         )
-    if item.fit is None:
+    if item.hidden_as == "gate":
         return "gate", f"scored {item.keyword_score} of {gate}"
     return None
 
 
 def _rule_hidden_groups(result: ScanResult) -> list[tuple[str, list[tuple[Job, str]]]]:
     """(heading, [(posting, reason)]) per rule, in `decide`'s order, then the
-    `hard_blockers` terms group.
+    `hard_blockers` terms group, then (2.5.7) the weighted `blockers` group and
+    the just-under-the-gate group.
 
     A rule name this module has no label for (one added to `decide` without
     updating `_RULE_LABELS`) still renders, under its own name and after the

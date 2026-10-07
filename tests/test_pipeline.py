@@ -1420,7 +1420,12 @@ def test_rule_hidden_lists_a_term_blocked_posting_once(
 
     def _reject(url: str, score: int, hits: list[str]) -> ScoredJob:
         job = gated_job.model_copy(update={"url": url})
-        return ScoredJob(job=job, keyword_score=score, blocker_hits=hits)
+        # As `score_keywords` leaves it: a hit that has a `blockers` weight was
+        # charged, so it is in `keyword_penalties` too.
+        charged = [t for t in hits if t in config.profile.blockers]
+        return ScoredJob(
+            job=job, keyword_score=score, keyword_penalties=charged, blocker_hits=hits
+        )
 
     pushed_under = _reject("https://x/7", -42, ["uae national"])  # 18 without it
     under_anyway = _reject("https://x/6", -43, ["uae national"])  # 17 without it
