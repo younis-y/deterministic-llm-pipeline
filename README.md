@@ -105,8 +105,10 @@ case-insensitively on word boundaries (`crypto` does not match
 "cryptographic", `head of` does not match "head office"), a term in both
 lists keeps its weight, and a term in `hard_blockers` alone blocks and costs
 nothing. Whenever
-a posting is deleted this way the digest's stats line says how many, so a
-blocker matching the wrong thing shows up as a number rather than as silence.
+a posting is deleted this way the digest's stats line says how many, and its
+"Hidden by your rules" section lists the posting with the term that matched,
+so a blocker matching the wrong thing shows up rather than as silence. (A
+posting the keyword prefilter rejected is not listed there.)
 
 Hardness is deliberately not a weight threshold. A weight is retuned whenever
 you calibrate the prefilter; whether a clearance is a wall is a fact about you

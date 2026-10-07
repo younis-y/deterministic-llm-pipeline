@@ -693,3 +693,78 @@ def test_no_rule_hidden_section_when_nothing_was_hidden() -> None:
     for text in (render_markdown(result), render_html(result)):
         assert "Hidden by your rules" not in text
         assert "hidden by your rules" not in text
+
+
+def _term_blocked(company: str, terms: list[str], fit: FitVerdict | None) -> ScoredJob:
+    return ScoredJob(
+        job=Job(
+            source="greenhouse",
+            company=company,
+            title="Data Analyst",
+            location="Dubai",
+            url=f"https://x/{company.lower()}",
+            description="Analytics.",
+        ),
+        keyword_score=40,
+        blocker_hits=terms,
+        fit=fit,
+    )
+
+
+def test_hard_blockers_terms_are_the_last_group_with_their_terms() -> None:
+    """A posting a configured `hard_blockers` term removed is listed under its
+    own group, after every rule, with the term(s) that matched - whether the
+    model scored it (`fit.rule` None) or never did (`fit` None)."""
+    hidden = [
+        _ruled("Halian", "Data Engineer (m/f/d)", "years", _YEARS_REASON),
+        _term_blocked("Mubadala", ["uae nationals only"], _fit()),
+        _term_blocked("Emirates", ["emirati", "location: dubai"], None),
+    ]
+    result = _rule_hidden_result(rule_hidden=hidden, reports=[])
+    text = render_markdown(result)
+    body = text[text.index("## Hidden by your rules") :]
+    assert body.index("Years of experience") < body.index(
+        "**Your hard_blockers terms**"
+    )
+    terms = body[body.index("**Your hard_blockers terms**") :]
+    assert (
+        '- **Emirates** · [Data Analyst](https://x/emirates) · Dubai: blocked by "emirati", "location: dubai"'
+        in terms
+    )
+    assert (
+        '- **Mubadala** · [Data Analyst](https://x/mubadala) · Dubai: blocked by "uae nationals only"'
+        in terms
+    )
+    assert terms.index("**Emirates**") < terms.index("**Mubadala**")
+    assert "3 hidden by your rules" in text
+    html = render_html(result)
+    group = html[html.index("Your hard_blockers terms") :]
+    assert (
+        "Data Analyst</a> · Dubai: blocked by &quot;uae nationals only&quot;" in group
+    )
+    assert html.index("Years of experience") < html.index("Your hard_blockers terms")
+
+
+def test_a_posting_with_a_hard_bar_and_a_term_is_listed_once_under_hard_bar() -> None:
+    both = _ruled(
+        "ADNOC",
+        "Data Scientist",
+        "hard_bar",
+        'Blocked: advert says "UAE nationals only"',
+    ).model_copy(update={"blocker_hits": ["uae nationals only"]})
+    result = _rule_hidden_result(rule_hidden=[both], reports=[])
+    for text in (render_markdown(result), render_html(result)):
+        assert text.count("ADNOC") == 1
+        assert "Your hard_blockers terms" not in text
+        assert "Nationality, clearance or other hard bar" in text
+
+
+def test_an_unlabelled_rule_still_renders_before_the_terms_group() -> None:
+    """A rule added to `decide` without a label is listed under its own name,
+    never dropped, and the terms group stays last."""
+    hidden = [
+        _term_blocked("Mubadala", ["uae nationals only"], None),
+        _ruled("Acme", "Analyst", "zzz_new_rule", 'Skip: advert says "x"'),
+    ]
+    text = render_markdown(_rule_hidden_result(rule_hidden=hidden, reports=[]))
+    assert text.index("**zzz_new_rule**") < text.index("**Your hard_blockers terms**")

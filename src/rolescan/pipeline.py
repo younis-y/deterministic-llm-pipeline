@@ -124,16 +124,25 @@ class ScanResult:
     out by the block and is not counted here."""
     reportable: list[ScoredJob] = field(default_factory=list)
     rule_hidden: list[ScoredJob] = field(default_factory=list)
-    """Judged postings one of `profile.rules` fired on (`fit.rule` is set)
-    that are not in `reportable`, whichever way they left it: a rule skip's
-    score is capped below `min_report_score`, and a rule block is also
-    dropped by `output.show_blocked: false`.
+    """Judged postings the owner's rules kept out of `reportable`: one of
+    `profile.rules` fired (`fit.rule` is set), or a `profile.hard_blockers`
+    term (or excluded location) matched (`blocker_hits`), whichever way they
+    left it. A rule skip's score is capped below `min_report_score`; a block,
+    by the model's bar or by a term, is dropped by `output.show_blocked:
+    false`. Each posting appears once, however many of these caught it, and
+    `fit` is None for one the model never scored.
 
-    On 2026-10-06, 44 of 109 scored postings were hidden this way with no
+    On 2026-10-06, 44 of 109 scored postings were hidden by rules with no
     trace, so a mis-read advert or a rule bug that skipped a good role was
-    invisible. The digest lists these, one line each, so a wrong skip can be
-    spotted. A rule-fired posting that is still reportable (possible at
-    `min_report_score: 0`) is already in the digest and is not repeated."""
+    invisible; a wrong `hard_blockers` term (several nationality phrasings
+    were added that week) is the same mistake by another route. The digest
+    lists these, one line each, so a wrong skip can be spotted. A posting
+    that is still reportable (a rule skip at `min_report_score: 0`, a block
+    with `show_blocked: true`) is already in the digest and is not repeated.
+
+    Postings the keyword prefilter rejected are not included, even with a
+    term hit: they were never judged or ranked, and listing every low-scoring
+    advert that happens to contain a term would bury the ones that matter."""
     dry_run: bool = False
 
     @property
@@ -383,7 +392,8 @@ def _rank(judged: list[ScoredJob], cfg: Config) -> tuple[list[ScoredJob], int]:
 def _rule_hidden(
     judged: list[ScoredJob], reportable: list[ScoredJob]
 ) -> list[ScoredJob]:
-    """The judged postings a rule fired on that the digest does not show.
+    """The judged postings a rule or a `hard_blockers` term caught that the
+    digest does not show (see `ScanResult.rule_hidden`).
 
     Matched on identity, not equality: `_rank` filters and slices `judged`
     without copying, and two distinct postings can compare equal field for
@@ -393,7 +403,8 @@ def _rule_hidden(
     return [
         s
         for s in judged
-        if s.fit is not None and s.fit.rule is not None and id(s) not in shown
+        if id(s) not in shown
+        and (s.blocker_hits or (s.fit is not None and s.fit.rule is not None))
     ]
 
 

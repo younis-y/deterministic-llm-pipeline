@@ -1303,3 +1303,94 @@ def test_rule_hidden_never_repeats_a_posting_the_digest_already_shows(
     hidden = _scored(gated_job, verdict=Verdict.SKIP, fit_score=0, rule="level")
     unruled = _scored(energy_job.model_copy(update={"url": "https://x/9"}))
     assert _rule_hidden([shown, hidden, unruled], [shown]) == [hidden]
+
+
+@respx.mock
+async def test_rule_hidden_carries_postings_a_hard_blockers_term_removed(
+    tmp_path: Path,
+) -> None:
+    """A configured `hard_blockers` term forces `blocked` before (or without)
+    the model, so with `show_blocked: false` the posting is gone and only a
+    count said so. The owner added several nationality phrasings in one week;
+    a term that matches the wrong thing is exactly the mistake the digest's
+    "Hidden by your rules" section exists to surface, so the posting is
+    carried there with the term. Run keyword-only, so `fit` is None."""
+    bar = "UAE nationals only"
+    content = "Python, trading, energy, day-ahead forecasting."
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "id": jid,
+                        "title": title,
+                        "location": {"name": "Abu Dhabi"},
+                        "absolute_url": f"https://boards.greenhouse.io/acme/jobs/{jid}",
+                        "content": text,
+                        "updated_at": "2026-08-20T10:00:00Z",
+                    }
+                    for jid, title, text in (
+                        (1, "Energy Data Scientist", f"{content} {bar}."),
+                        (2, "Graduate Energy Data Scientist", content),
+                    )
+                ]
+            },
+        )
+    )
+    cfg = Config.model_validate(
+        {
+            "profile": {
+                "keywords": _KEYWORDS,
+                "hard_blockers": ["uae nationals only"],
+                "min_keyword_score": 18,
+                "min_report_score": 10,
+            },
+            "llm": {"enabled": False},
+            "output": {
+                "dir": str(tmp_path),
+                "db_path": str(tmp_path / "seen.db"),
+                "show_blocked": False,
+            },
+            "sources": [{"kind": "greenhouse", "slug": "acme", "label": "Acme"}],
+        }
+    )
+
+    result = await run_scan(cfg, dry_run=True, check_llm=False)
+
+    assert [s.job.title for s in result.reportable] == [
+        "Graduate Energy Data Scientist"
+    ]
+    assert result.hidden_blocked == 1, "the existing count is unchanged"
+    assert [(s.job.title, s.fit, s.blocker_hits) for s in result.rule_hidden] == [
+        ("Energy Data Scientist", None, ["uae nationals only"])
+    ]
+    text = render_markdown(result)
+    section = text[text.index("## Hidden by your rules") :]
+    assert "**Your hard_blockers terms**" in section
+    assert (
+        "- **Acme** · [Energy Data Scientist](https://boards.greenhouse.io/acme/jobs/1)"
+        ' · Abu Dhabi: blocked by "uae nationals only"'
+    ) in section
+    assert "1 hidden by your rules" in text and "1 blocked and hidden" in text
+
+
+def test_rule_hidden_lists_a_term_blocked_posting_once(
+    energy_job: Job, gated_job: Job
+) -> None:
+    """A posting both a rule and a `hard_blockers` term caught is one posting,
+    and a term-blocked posting the digest shows (`show_blocked: true`) is not
+    hidden at all."""
+    both = _scored(gated_job, verdict=Verdict.BLOCKED, fit_score=20, rule="hard_bar")
+    both = both.model_copy(update={"blocker_hits": ["uae national"]})
+    term_only = _scored(energy_job).model_copy(update={"blocker_hits": ["sc"]})
+    unscored = ScoredJob(
+        job=energy_job.model_copy(update={"url": "https://x/8"}),
+        blocker_hits=["dv"],
+    )
+    shown = ScoredJob(
+        job=energy_job.model_copy(update={"url": "https://x/9"}),
+        blocker_hits=["dv"],
+    )
+    judged = [both, term_only, unscored, shown]
+    assert _rule_hidden(judged, [shown]) == [both, term_only, unscored]

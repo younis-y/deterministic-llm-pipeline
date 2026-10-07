@@ -77,6 +77,10 @@ def _md_frags(frags: _Frags) -> str:
 #: A short heading per `FitVerdict.rule`. `hard_bar` also covers the skip an
 #: `other` bar gives (a driving licence, a sector background), so the label
 #: does not claim every one of them is a nationality or clearance bar.
+#: `_TERMS` is not a `decide` rule: it groups postings a configured
+#: `hard_blockers` term blocked (`ScoredJob.blocker_hits`) when no rule fired,
+#: and always comes last.
+_TERMS = "hard_blockers"
 _RULE_LABELS: dict[str, str] = {
     "hard_bar": "Nationality, clearance or other hard bar",
     "graduation_year": "Graduation year",
@@ -84,6 +88,7 @@ _RULE_LABELS: dict[str, str] = {
     "level": "Level",
     "years": "Years of experience",
     "field": "Field",
+    _TERMS: "Your hard_blockers terms",
 }
 
 _RULE_HIDDEN_LEAD = (
@@ -102,20 +107,38 @@ def _hidden_reason(reason: str) -> str:
     return reason
 
 
+def _hidden_group(item: ScoredJob) -> tuple[str, str] | None:
+    """The group a rule-hidden posting is listed under, and its reason.
+
+    The rule `decide` fired wins over a `hard_blockers` term, so a posting
+    both caught is listed once, under the rule: its reason quotes the advert,
+    which is what a reader checks a skip against. A term-only posting's
+    reason is the term(s) that matched, as configured.
+    """
+    if item.fit is not None and item.fit.rule is not None:
+        return item.fit.rule, _hidden_reason(item.fit.reason)
+    if item.blocker_hits:
+        terms = ", ".join(f'"{t}"' for t in dict.fromkeys(item.blocker_hits))
+        return _TERMS, f"blocked by {terms}"
+    return None
+
+
 def _rule_hidden_groups(result: ScanResult) -> list[tuple[str, list[tuple[Job, str]]]]:
-    """(heading, [(posting, reason)]) per rule, in `decide`'s order.
+    """(heading, [(posting, reason)]) per rule, in `decide`'s order, then the
+    `hard_blockers` terms group.
 
     A rule name this module has no label for (one added to `decide` without
     updating `_RULE_LABELS`) still renders, under its own name and after the
-    known ones, rather than vanishing from the one place it is reported.
+    known rules, rather than vanishing from the one place it is reported.
     """
     groups: dict[str, list[tuple[Job, str]]] = {}
     for item in result.rule_hidden:
-        if item.fit is None or item.fit.rule is None:
+        if (found := _hidden_group(item)) is None:
             continue
-        rows = groups.setdefault(item.fit.rule, [])
-        rows.append((item.job, _hidden_reason(item.fit.reason)))
+        group, reason = found
+        groups.setdefault(group, []).append((item.job, reason))
     rank = {rule: i for i, rule in enumerate(RULE_ORDER)}
+    rank[_TERMS] = len(RULE_ORDER) + 1
     return [
         (
             _RULE_LABELS.get(rule, rule),
@@ -124,7 +147,7 @@ def _rule_hidden_groups(result: ScanResult) -> list[tuple[str, list[tuple[Job, s
                 key=lambda row: (row[0].company.casefold(), row[0].title.casefold()),
             ),
         )
-        for rule in sorted(groups, key=lambda r: (rank.get(r, len(rank)), r))
+        for rule in sorted(groups, key=lambda r: (rank.get(r, len(RULE_ORDER)), r))
     ]
 
 
@@ -359,7 +382,8 @@ def _stats(result: ScanResult) -> str:
     if result.rule_hidden:
         # Only when it happened, for the same reason. Counted separately from
         # the clause above: that one is postings `show_blocked` removed, this
-        # one is postings any rule removed, and a rule block can be both.
+        # one is postings any rule or `hard_blockers` term removed by any
+        # route, so a block hidden by `show_blocked` is in both.
         bits.append(f"{len(result.rule_hidden)} hidden by your rules")
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
