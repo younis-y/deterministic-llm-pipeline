@@ -146,7 +146,7 @@ async def test_cache_key_is_mode_aware() -> None:
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
     assert cache_key(job, "facts", cfg) != cache_key(job, "judge", cfg)
     assert cache_key(job, "judge", cfg) == job.content_hash
-    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v11:ollama:qwen2.5:14b"
+    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v12:ollama:qwen2.5:14b"
 
 
 async def test_facts_cache_key_changes_with_backend_and_model() -> None:

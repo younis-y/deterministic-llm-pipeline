@@ -28,6 +28,7 @@ Two rules keep that check honest rather than merely convenient:
 from __future__ import annotations
 
 import re
+from bisect import bisect_left, bisect_right
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -67,8 +68,10 @@ __all__ = [
     "YearsFact",
     "field_from_text",
     "graduates_eligible",
+    "hard_bars_stated",
     "level_from_text",
     "resolve_field",
+    "resolve_hard_bars",
     "resolve_level",
     "resolve_student",
     "resolve_years",
@@ -98,6 +101,9 @@ def _trim_quote(v: object) -> object:
 
 
 _Quote = Annotated[str, BeforeValidator(_trim_quote)]
+
+#: The most hard bars one set of facts carries (`PostingFacts.hard_bars`).
+_HARD_BARS_MAX = 5
 
 
 def _normalise(text: str) -> str:
@@ -277,7 +283,7 @@ class PostingFacts(BaseModel):
     )
     hard_bars: list[HardBar] = Field(
         default_factory=list,
-        max_length=5,
+        max_length=_HARD_BARS_MAX,
         description=(
             "Structural eligibility bars stated in the posting, such as "
             "nationality, clearance, or work authorisation requirements. "
@@ -320,7 +326,9 @@ class PostingFacts(BaseModel):
         that was already paid for. The order the model gives is its own
         priority order.
         """
-        limit = {"hard_bars": 5, "keywords_missing": 8}[info.field_name or ""]
+        limit = {"hard_bars": _HARD_BARS_MAX, "keywords_missing": 8}[
+            info.field_name or ""
+        ]
         return v[:limit] if isinstance(v, list) else v
 
     @field_validator("reason", mode="before")
@@ -364,17 +372,20 @@ def _year_in_quote(year: int | None, quote: str) -> bool:
 # a place ("Saudi Arabia") is not a nationality requirement. "UAEN" (UAE
 # National) and "Family Book" (the Emirati citizenship record) are how Gulf
 # adverts often write the bar itself. SC and DV are matched in capitals only,
-# so the "Sc" of "MSc" is not a clearance.
+# so the "Sc" of "MSc" is not a clearance. 2.5.6 adds "Emiratized" (a title
+# qualifier, "Specialist, Group Strategy (Emiratized)"), "Saudis" (people, not
+# the place: "Nationality: Saudis only") and eDV (enhanced DV, in capitals
+# only), so `resolve_hard_bars` can quote them.
 _BAR_WORDS: dict[BarKind, re.Pattern[str]] = {
     BarKind.nationality: re.compile(
         r"\b(?:nationals?|nationality|nationalities|citizens?|citizenship"
-        r"|passports?|emiratis?|uaen|family\s+book"
+        r"|passports?|emiratis?|saudis|uaen|family\s+book|emirati[sz]ed"
         r"|(?:saudi|emirati|omani|qatari|kuwaiti|bahraini|national)i?[sz]ation)\b",
         re.IGNORECASE,
     ),
     BarKind.clearance: re.compile(
         r"\b(?:clearances?|cleared|vetting|vetted|bpss|nppv\d?|uksv"
-        r"|security\s+checks?|top\s+secret|ts/sci|polygraph|(?-i:SC|DV))\b",
+        r"|security\s+checks?|top\s+secret|ts/sci|polygraph|(?-i:SC|DV|eDV|EDV))\b",
         re.IGNORECASE,
     ),
 }
@@ -861,6 +872,307 @@ def resolve_student(facts: PostingFacts, job: Job) -> PostingFacts:
         return facts
     student = StudentFact(value=True, quote=enrolled[:QUOTE_CHARS])
     return facts.model_copy(update={"student_only": student})
+
+
+# Nationality and clearance bars an advert states (2.5.6). The local model
+# named a bar on 7 of the 26 evaluation adverts that state one, so code reads
+# them after `verify_facts`, as `resolve_years` does for years. A bar hides a
+# role for good, so only eligibility-shaped wording counts, every shape below
+# was seen in the owner's cached adverts, and anything softer is left to the
+# model and the keyword blockers.
+#
+# Nationality: "<N> nationals only", "only <N> nationals", "(UAE Nationals)",
+# "open/restricted/limited to" or "reserved for <N> nationals", "must be a
+# British citizen", "must hold British citizenship", "Saudi National required",
+# "Saudi passport required", "Nationality: Saudi", a Family Book (the Emirati
+# citizenship record), an Emiratisation programme or role, "aimed at preparing
+# UAE Nationals", "for UAE National students", "is seeking a motivated UAE
+# National fresh graduate", "the UAE National Graduate Analyst Programme"; and
+# in a title, "<N> National" or "Emirati" as a qualifier ("Data Analyst - UAE
+# National, ...", "Officer Regulatory Reporting - Emirati Talent") or any
+# Emiratisation word, unless it names the HR role that runs the programme
+# ("Emiratisation Manager"). "US" is matched in capitals only, so "us" (we) is
+# never a nationality.
+_NATION = (
+    r"(?:uae|emirati|saudi|ksa|qatari|kuwaiti|bahraini|omani|jordanian|gcc"
+    r"|british|uk|american|(?-i:US|U\.S\.))"
+)
+_NATIONS = rf"\b{_NATION}(?:\s*(?:,|/|&|\bor\b|\band\b)\s*{_NATION})*"
+_NATIONAL = r"(?:nationals?|citizens?)\b"
+_LOCALISATION = r"(?:emirati|saudi|qatari|omani|kuwaiti|bahraini)[sz]ation"
+#: Only these may sit between "seeking a" and the nationality, so "seeking a
+#: candidate to support UAE nationals" is not read as a bar.
+_RECRUIT_ADJECTIVE = (
+    r"(?:motivated|ambitious|talented|high-potential|young|dynamic|driven"
+    r"|qualified|analytical|passionate|enthusiastic|bright|exceptional|outstanding)"
+)
+_NATIONALITY_STATED = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        rf"(?:{_NATIONS}\s+{_NATIONAL}|\b(?:emiratis|saudis)\b)\s*-?\s*only\b",
+        rf"\bonly\s+(?:for\s+|to\s+)?{_NATIONS}\s+{_NATIONAL}",
+        rf"\(\s*{_NATIONS}\s+nationals?(?:\s+only)?\s*\)",
+        r"\b(?:open|restricted|limited|reserved)\s+(?:only\s+|exclusively\s+)?"
+        rf"(?:to|for)\s+(?:an?\s+)?{_NATIONS}\s+{_NATIONAL}"
+        r"(?:\s+(?:fresh\s+)?(?:graduates?|students?)\b)?",
+        r"\b(?:must|should|needs?\s+to|required\s+to|have\s+to|expected\s+to)\s+be\s+"
+        rf"(?:an?\s+)?(?:[\w-]+\s+)?{_NATIONS}\s+{_NATIONAL}",
+        r"\b(?:must|should)\s+(?:hold|have|possess)\s+(?:an?\s+)?(?:valid\s+)?"
+        rf"{_NATIONS}\s+(?:citizenship|nationality|passport)\b",
+        rf"{_NATIONS}\s+(?:nationals?|passport|citizenship|nationality)\s+"
+        r"(?:is\s+|are\s+)?(?:required|mandatory|holders?)\b",
+        rf"\bnationality\s*:\s*{_NATIONS}\b(?:\s+nationals?\b)?",
+        rf"(?:{_NATIONS}\s+nationals?\b[^.;\n]{{0,40}}?)?\bfamily\s+book\b",
+        rf"\b{_LOCALISATION}\s+(?:program(?:me)?s?|roles?|positions?|vacanc(?:y|ies)"
+        r"|hires?|hiring|opportunit(?:y|ies)|students?|trainees?)\b",
+        rf"\(\s*{_LOCALISATION}"
+        r"(?:\s+(?:program(?:me)?|role|hire|position|initiative))?\s*\)",
+        rf"\baimed\s+at\s+(?:preparing|developing|training)\s+{_NATIONS}\s+{_NATIONAL}",
+        rf"\bfor\s+(?:[\w-]+\s+)?{_NATIONS}\s+nationals?\s+(?:fresh\s+)?"
+        r"(?:students|graduates|undergraduates|trainees|interns)\b",
+        r"\b(?:seeking|seeks|looking\s+for|recruiting|hiring)\s+(?:an?\s+)?"
+        rf"(?:{_RECRUIT_ADJECTIVE}\s+(?:and\s+)?){{0,3}}{_NATIONS}\s+"
+        rf"(?:{_NATIONAL}|nationals?\s+(?:fresh\s+)?(?:graduates?|students?"
+        r"|candidates|talent)\b)",
+        rf"{_NATIONS}\s+national\s+(?:graduate|pre-graduate|trainee|internship"
+        r"|development)\s+(?:[\w-]+\s+)?program(?:me)?s?\b",
+    )
+)
+#: The end of a title or of one of its segments ("- UAE National, Supply chain").
+_TITLE_SEGMENT_END = r"(?=\s*(?:$|[-,/|:()\[\]_]))"
+_NATIONALITY_IN_TITLE = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        rf"{_NATIONS}\s+nationals?\b(?:{_TITLE_SEGMENT_END}|\s+(?:only|graduates?"
+        r"|pre-graduate|students?|trainees?|talents?|candidates?|hires?|hiring"
+        r"|opportunit(?:y|ies)|fresh)\b)",
+        rf"\bemiratis?\b(?:{_TITLE_SEGMENT_END}|\s+(?:talent|nationals?|graduates?"
+        r"|students?|fresh|hiring|future|program(?:me)?|only|candidates"
+        r"|professionals|trainees?|interns?)\b)",
+        r"\bfor\s+emiratis?\b",
+        rf"(?<!head\sof\s)\b(?:{_LOCALISATION}|emirati[sz]ed)\b(?!\s+(?:manager"
+        r"|specialist|officer|lead|advis[eo]r|consultant|coordinator|partner"
+        r"|executive|director|analyst|head)\b)",
+    )
+)
+
+# Clearance: "security clearance" or "security vetting", "SC/DV clearance",
+# "cleared", "clearable" or "eligible", "eDV", "active/current/valid SC, DV,
+# eDV or clearance", "BPSS", "UKSV", "NPPV", "developed vetting", "eligible to
+# obtain/for SC or DV". SC and DV in capitals only, as in `_BAR_WORDS`, so
+# "SC-200" (a certificate) and "DV Commodities" (a firm) are not clearances,
+# and "clearance" alone (a trade, a shipment, the police) never is.
+_SC_DV = r"(?-i:SC|DV|eDV|EDV)"
+_CLEARANCE_STATED = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\bsecurity[\s-]+(?:clearances?|cleared|vetting)\b",
+        rf"\b{_SC_DV}(?:[\s-]+level)?[\s-]+(?:clearances?|cleared|clearable"
+        r"|eligib(?:le|ility))\b",
+        r"(?-i:\beDV\b)",
+        rf"\b(?:active|current|valid)\s+(?:{_SC_DV}(?:[\s-]+clearance)?\b"
+        r"|(?:security\s+)?clearance\b)",
+        r"\b(?:bpss|uksv|nppv\s?\d?)\b",
+        r"\bdeveloped\s+vetting\b",
+        r"\beligib(?:le|ility)\s+(?:to\s+(?:obtain|attain|gain|achieve|hold)|for)\s+"
+        rf"(?:an?\s+)?(?:UK\s+)?{_SC_DV}\b",
+    )
+)
+
+# What turns a bar shape into something softer, read in the shape's own
+# sentence. A negation in the three words before it or a "not required" just
+# after ("no security clearance required", "you do not need to be a British
+# citizen", "Security clearance: Not required") ...
+_BAR_NEGATED_BEFORE = re.compile(
+    r"(?:\b(?:no|not|never|without|nor)\b|n't\b)(?:\s+[\w/-]+){0,3}\s*$",
+    re.IGNORECASE,
+)
+_BAR_NEGATED_AFTER = re.compile(
+    r"^\s*(?:[:(-]\s*|(?:is|are|will\s+be)\s+)(?:not|none|n/a|no)\b"
+    r"|^\s*(?:is|are)n't\b"
+    r"|^[^.;\n]{0,30}?\bnot\s+(?:required|needed|necessary|essential|mandatory"
+    r"|a\s+requirement)\b",
+    re.IGNORECASE,
+)
+#: ... a preference in the clause before it ("ideally hold active SC",
+#: "Desired Skills: Must be eligible for Security Clearance") or attached
+#: after it ("UAE nationals are encouraged to apply", "UAE Nationals
+#: Preferred") - attached, so "Saudi nationals only We welcome both current
+#: students and fresh graduates" is still a bar ...
+_BAR_SOFT_WORDS = (
+    r"(?:ideally|prefer(?:red|ably|able|ence)?|desirable|desired|nice\s+to\s+have"
+    r"|bonus|a\s+plus|advantage(?:ous)?|encourage[ds]?|welcome[ds]?|priority"
+    r"|prioriti[sz]e[ds]?|particularly|especially)"
+)
+_BAR_SOFT_BEFORE = re.compile(rf"\b{_BAR_SOFT_WORDS}\b", re.IGNORECASE)
+_BAR_SOFT_AFTER = re.compile(
+    r"^\s*[()]?\s*(?:(?:is|are|would|will|be|also|highly|strongly|particularly"
+    r"|especially|very|much|an?|given|significant|real|big|definite)\s+){0,4}"
+    rf"{_BAR_SOFT_WORDS}\b",
+    re.IGNORECASE,
+)
+#: ... or close after it, for the words that only ever weaken a requirement
+#: ("Current SC clearance is highly desirable", "an advantage but not essential").
+_BAR_SOFT_NEAR_AFTER = re.compile(
+    r"^[^.;\n]{0,30}?\b(?:preferred|preferable|desirable|desired|advantage(?:ous)?"
+    r"|a\s+plus|nice\s+to\s+have|beneficial|bonus|not\s+essential)\b",
+    re.IGNORECASE,
+)
+#: A hedge about other roles: "some of our UK roles require a UK security
+#: clearance", "You may also need to gain ... depending on the role", "Many
+#: roles also require higher levels of National Security Vetting"; a
+#: clearance given only as the reason for a residency rule ("as this is the
+#: prerequisite for a security clearance"); or a preference stated earlier in
+#: a long sentence ("preference will be given to the designated groups in
+#: accordance with the United Arab Emirates Emiratization Program").
+_BAR_HEDGED_BEFORE = re.compile(
+    r"\b(?:(?:some|many|certain|most)\s+(?:of\s+(?:our|the)\s+)?(?:[\w-]+\s+){0,2}?"
+    r"roles|depending\s+on|(?:may|might|could)\s+(?:also\s+)?(?:need|require"
+    r"|be\s+(?:required|needed|asked|subject))|(?:if|where)\s+(?:required"
+    r"|applicable|necessary)|prerequisite\s+for"
+    r"|preference\s+(?:will|may|shall|is)\s+(?:be\s+)?given)\b",
+    re.IGNORECASE,
+)
+_BAR_HEDGED_AFTER = re.compile(
+    r"^[^.;\n]{0,40}?\b(?:(?:may|might|could)\s+(?:also\s+)?(?:be\s+)?(?:required"
+    r"|needed|necessary)|(?:if|where)\s+(?:required|applicable|necessary)"
+    r"|depending\s+on)\b",
+    re.IGNORECASE,
+)
+#: A nationality with a residency alternative the owner can satisfy ("Valid
+#: UAE residence visa, or be a UAE or GCC national", "for UAE National students
+#: and students who hold a valid UAE residence visa") is not a bar.
+_BAR_ALTERNATIVE = re.compile(
+    r"\b(?:visas?|residen(?:ce|cy|ts?)|expat(?:riate)?s?"
+    r"|(?:any|all|other)\s+nationalit(?:y|ies)|non[\s-]nationals?)\b",
+    re.IGNORECASE,
+)
+#: A sentence ends at its punctuation, a line break or a bullet; a clause
+#: also at a comma or bracket. Scraped adverts often run lines together with
+#: no punctuation at all, which is why every window below is also capped.
+_BAR_SENTENCE_END = re.compile(r"[.!?;](?=\s|$)|[\n\u2022\u00b7]")
+_BAR_CLAUSE_START = re.compile(r"[.;!?\n(),\u2022\u00b7]")
+_BAR_REACH = 60
+#: The bar's whole sentence is quoted when it is this short, else the shape's
+#: own words, so the blocked reason reads as the advert's requirement.
+_BAR_SENTENCE_CHARS = 120
+_BAR_TRIM = " \t\r\n\u2022\u00b7"
+
+
+def _bar_waived(kind: BarKind, before: str, after: str) -> bool:
+    """Whether the words around a bar shape make it something softer (2.5.6).
+
+    `before` and `after` are the shape's sentence on each side, up to twice
+    `_BAR_REACH` characters.
+    """
+    clause = before[-_BAR_REACH:]
+    cut = max((b.end() for b in _BAR_CLAUSE_START.finditer(clause)), default=0)
+    clause, near = clause[cut:], after[:_BAR_REACH]
+    wide_before, wide_after = before[-2 * _BAR_REACH :], after[: 2 * _BAR_REACH]
+    if (
+        _BAR_NEGATED_BEFORE.search(clause)
+        or _BAR_NEGATED_AFTER.search(near)
+        or _BAR_SOFT_BEFORE.search(clause)
+        or _BAR_SOFT_AFTER.search(near)
+        or _BAR_SOFT_NEAR_AFTER.search(near)
+        or _BAR_HEDGED_BEFORE.search(wide_before)
+        or _BAR_HEDGED_AFTER.search(near)
+    ):
+        return True
+    return kind == BarKind.nationality and bool(
+        _BAR_ALTERNATIVE.search(wide_before) or _BAR_ALTERNATIVE.search(wide_after)
+    )
+
+
+def _stated_bar(
+    kind: BarKind, text: str, patterns: tuple[re.Pattern[str], ...]
+) -> HardBar | None:
+    """The first bar of `kind` that `text` states, quoted verbatim, or None.
+
+    Quotes the shape's sentence when it is short, else the shape's own words,
+    either way sliced from the original text (folding is one character for
+    one, so offsets hold) and trimmed to `QUOTE_CHARS`, so the quote guard
+    and `_bar_supported` both pass it.
+    """
+    folded = text.translate(_TYPO_FOLD)
+    ends = [m.end() for m in _BAR_SENTENCE_END.finditer(folded)]  # ascending
+    matches = sorted(
+        (m for pattern in patterns for m in pattern.finditer(folded)),
+        key=lambda m: m.start(),
+    )
+    for m in matches:
+        i = bisect_right(ends, m.start())
+        start = ends[i - 1] if i else 0
+        j = bisect_left(ends, m.end())
+        end = ends[j] if j < len(ends) else len(folded)
+        # Windows are capped, so a long run-on advert stays linear.
+        before = folded[max(start, m.start() - 2 * _BAR_REACH) : m.start()]
+        after = folded[m.end() : min(end, m.end() + 2 * _BAR_REACH)]
+        if _bar_waived(kind, before, after):
+            continue
+        quote = text[start:end].strip(_BAR_TRIM)
+        if len(quote) > _BAR_SENTENCE_CHARS:
+            quote = text[m.start() : m.end()]
+        bar = HardBar(kind=kind, quote=quote[:QUOTE_CHARS])
+        if _bar_supported(bar):
+            return bar
+    return None
+
+
+def hard_bars_stated(title: str, description: str) -> list[HardBar]:
+    """The nationality and clearance bars an advert states, at most one each.
+
+    The title is read first, with the title-only shapes as well; then the
+    description. Every bar quotes the advert verbatim (2.5.6).
+    """
+    bars = []
+    for kind, in_title, anywhere in (
+        (BarKind.nationality, _NATIONALITY_IN_TITLE, _NATIONALITY_STATED),
+        (BarKind.clearance, (), _CLEARANCE_STATED),
+    ):
+        bar = _stated_bar(kind, title, in_title + anywhere) or _stated_bar(
+            kind, description, anywhere
+        )
+        if bar is not None:
+            bars.append(bar)
+    return bars
+
+
+def resolve_hard_bars(facts: PostingFacts, job: Job) -> PostingFacts:
+    """Add a nationality or clearance bar the model left out (2.5.6).
+
+    On the owner's 200-posting evaluation the local model named a bar on only
+    7 of the 26 adverts that state one, and adverts the keyword blockers do
+    not catch reached the digest as APPLY: titles "Data Analyst - UAE
+    National, ICQA/LND Analytics Team" and "Officer Regulatory Reporting -
+    Emirati Talent", "aimed at preparing UAE Nationals for successful
+    careers", "we require all candidates to hold an active eDV clearance".
+    A bar is added only for a kind the model did not name - its own bar has
+    passed the quote guard and is kept - quoting the words
+    `hard_bars_stated` matched, which are verbatim and name their kind, so
+    they would pass `verify_facts` themselves.
+
+    The list keeps the schema's cap: when it would overflow, the model's bars
+    that do not block (`work_auth`, `other`) give way first, so a cached copy
+    reloads with the same bars.
+
+    Pure and idempotent; never mutates `facts`. Expects `facts` to have been
+    through `verify_facts` already.
+    """
+    named = {bar.kind for bar in facts.hard_bars}
+    found = [
+        bar
+        for bar in hard_bars_stated(job.title, job.description)
+        if bar.kind not in named
+    ]
+    if not found:
+        return facts
+    kept = facts.hard_bars
+    room = _HARD_BARS_MAX - len(found)
+    if len(kept) > room:
+        # `_BAR_WORDS` names exactly the kinds that block; sorting is stable.
+        kept = sorted(kept, key=lambda bar: bar.kind not in _BAR_WORDS)[:room]
+    return facts.model_copy(update={"hard_bars": [*kept, *found]})
 
 
 # Level words. Whole words only, so "Internal", "Headcount", "Staffing" and
