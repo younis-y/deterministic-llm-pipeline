@@ -601,7 +601,10 @@ class FitScorer:
             if cached_facts is not None:
                 self.last_facts[job.url] = cached_facts
                 verdict = decide(
-                    cached_facts, self.profile.rules, self.profile.min_report_score
+                    cached_facts,
+                    self.profile.rules,
+                    self.profile.min_report_score,
+                    company=job.company,
                 )
                 verdict = await self._maybe_enrich(job, verdict)
                 await self.store.put_verdict(final_key(job), verdict)
@@ -619,7 +622,12 @@ class FitScorer:
         self.last_facts[job.url] = facts
         if self.store is not None:
             await self.store.put_verdict(key, facts)
-        verdict = decide(facts, self.profile.rules, self.profile.min_report_score)
+        verdict = decide(
+            facts,
+            self.profile.rules,
+            self.profile.min_report_score,
+            company=job.company,
+        )
         verdict = await self._maybe_enrich(job, verdict)
         if self.store is not None:
             await self.store.put_verdict(final_key(job), verdict)

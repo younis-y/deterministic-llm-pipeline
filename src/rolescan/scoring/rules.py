@@ -17,8 +17,11 @@ from or where the verdict is going.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
+
 from rolescan.config import RulesConfig
-from rolescan.models import BarKind, Confidence, FitVerdict, Level, Verdict
+from rolescan.models import BarKind, Confidence, FitVerdict, JobField, Level, Verdict
 from rolescan.scoring.facts import PostingFacts
 
 APPLY_AT = 65
@@ -61,6 +64,29 @@ _STRUCTURAL_BARS = frozenset({BarKind.nationality, BarKind.clearance})
 #: evaluation can keep measuring extraction, but it neither blocks nor skips.
 _IGNORED_BARS = frozenset({BarKind.work_auth})
 
+#: Levels that make a posting a programme (an internship, placement or graduate
+#: scheme) rather than a role in one field. `Level` has no `intern` member:
+#: `resolve_level` maps an internship to `graduate_entry`, so that is the only
+#: member here. On 2026-10-07 three programmes the owner wanted (a 2027
+#: internship, a business transformation placement year, a finance project
+#: analyst) were hidden by the field rule because their field read as `other`;
+#: an unknown field on a programme is not a wrong field.
+_PROGRAMME_LEVELS = frozenset({Level.graduate_entry})
+
+
+def _company_exempt(company: str, exempt: Sequence[str]) -> bool:
+    """True when an `exempt` name appears in `company` as a whole word run.
+
+    Both sides are casefolded and reduced to alphanumeric words, so "Example
+    Bank Ltd" matches "Example Bank" and "Example Banking" does not. Observed
+    2026-10-07: one software role was wanted at one named employer, whatever
+    its field, which no field list can express.
+    """
+    name = f" {re.sub(r'[^a-z0-9]+', ' ', company.casefold()).strip()} "
+    return any(
+        f" {re.sub(r'[^a-z0-9]+', ' ', e.casefold()).strip()} " in name for e in exempt
+    )
+
 
 def _quote_reason(prefix: str, quote: str) -> str:
     """Build `"<prefix>: <lead-in> \"<quote>\""`, truncating the quote to fit.
@@ -75,7 +101,9 @@ def _quote_reason(prefix: str, quote: str) -> str:
     return f'{prefix}"{q}"'
 
 
-def _rule_skip(facts: PostingFacts, rules: RulesConfig) -> tuple[str, str] | None:
+def _rule_skip(
+    facts: PostingFacts, rules: RulesConfig, *, company: str = ""
+) -> tuple[str, str] | None:
     """The name and reason of the first of rules 2-6 that fires, or None.
 
     Split out of `decide` so the rule order reads top to bottom in one place.
@@ -118,13 +146,22 @@ def _rule_skip(facts: PostingFacts, rules: RulesConfig) -> tuple[str, str] | Non
         facts.field.value is not None
         and rules.allowed_fields is not None
         and facts.field.value not in rules.allowed_fields
+        and not (
+            facts.field.value is JobField.other and level.value in _PROGRAMME_LEVELS
+        )
+        and not _company_exempt(company, rules.field_exempt_companies)
     ):
         return "field", _quote_reason("Skip: advert is for ", facts.field.quote)
     return None
 
 
 def decide(
-    facts: PostingFacts, rules: RulesConfig | None, min_report_score: int
+    facts: PostingFacts,
+    rules: RulesConfig | None,
+    min_report_score: int,
+    *,
+    company: str = "",
+    nationalities: Sequence[str] = (),  # noqa: ARG001  wired in 2.5.7
 ) -> FitVerdict:
     """Turn verified facts into a verdict, applying `rules` in a fixed order.
 
@@ -143,7 +180,8 @@ def decide(
       5. `years_required` is stated and exceeds `rules.max_years_required`
          (when that cap is set) -> skip.
       6. `field` is stated and `rules.allowed_fields` is set and excludes it
-         -> skip.
+         -> skip. `other` does not fire for a graduate-entry role, and a
+         company in `rules.field_exempt_companies` passes any field (2.5.7).
       7. Otherwise, the model's `fit_score` decides: apply at `APPLY_AT` or
          above, consider at `CONSIDER_AT` or above, else skip.
 
@@ -162,6 +200,10 @@ def decide(
     for 1 and 1b), and is None when rule 7 decided. The digest lists
     rule-hidden postings from it: on 2026-10-06, 44 of 109 scored postings
     were hidden by these rules with no trace, so a wrong skip was invisible.
+
+    `company` is the posting's employer, read by the field rule's exemption.
+    `nationalities` is accepted for 2.5.7's nationality handling and is not
+    read yet.
     """
     bars = [b for b in facts.hard_bars if b.kind not in _IGNORED_BARS]
     structural = [b for b in bars if b.kind in _STRUCTURAL_BARS]
@@ -181,7 +223,7 @@ def decide(
         skip = "hard_bar", _quote_reason("Skip: advert requires ", bars[0].quote)
 
     if rules is not None and skip is None:
-        skip = _rule_skip(facts, rules)
+        skip = _rule_skip(facts, rules, company=company)
 
     if skip is not None:
         rule, skip_reason = skip

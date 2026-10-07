@@ -87,6 +87,14 @@ class RulesConfig(BaseModel):
             "quote is copied from the title."
         ),
     )
+    field_exempt_companies: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Employers whose postings pass the field rule whatever their field "
+            "(matched on the company name, case-insensitive, as a whole word "
+            "run). For the few firms where any entry role is wanted."
+        ),
+    )
 
 
 class SourceEntry(BaseModel):

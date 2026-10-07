@@ -1655,6 +1655,12 @@ def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
 # earlier row still wins ("Quantitative Analyst" is quant, "Data Analyst,
 # Trading" is analytics_bi, "Software Engineer, Trading Systems" is software),
 # and "Marketing Analyst" or "Research Analyst" alone name no field.
+#
+# 2.5.7, from the owner's rulings of 2026-10-07 (three wanted roles were hidden
+# as "other"): "business transformation" and "digital transformation" are
+# consulting ("Business Transformation Placement Year"), and one word may sit
+# between finance and analyst ("Finance Project Analyst"). "Project Analyst",
+# "Marketing Analyst" and "Digital Analyst" alone still name no field.
 _FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
     (
         JobField.ai_llm,
@@ -1723,7 +1729,8 @@ _FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
     (
         JobField.consulting,
         re.compile(
-            r"\b(?:consultants?|consulting|advisory\s+(?:analysts?|associates?))\b",
+            r"\b(?:consultants?|consulting|advisory\s+(?:analysts?|associates?)"
+            r"|(?:business|digital)\s+transformation)\b",
             re.IGNORECASE,
         ),
     ),
@@ -1734,7 +1741,7 @@ _FIELD_WORDS: tuple[tuple[JobField, re.Pattern[str]], ...] = (
             r"|investment\s+(?:analysts?|associates?|bankers?)|equity\s+research"
             r"|private\s+equity|venture\s+capital|asset\s+management"
             r"|portfolio\s+(?:analysts?|management)"
-            r"|(?:financial|finance|credit|valuation|treasury)\s+analysts?"
+            r"|(?:financial|finance|credit|valuation|treasury)\s+(?:\w+\s+)?analysts?"
             r"|market\s+analysts?"
             r"|(?:energy|power|gas|oil|commodit(?:y|ies)|carbon)\s+(?:market\s+)?analysts?"
             r"|traders?|trading)\b",
