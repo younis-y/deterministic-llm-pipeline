@@ -21,6 +21,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 __all__ = [
     "BarKind",
@@ -260,6 +261,21 @@ class FitVerdict(BaseModel):
             "not evidence. Drives what to learn next."
         ),
     )
+    rule: SkipJsonSchema[str | None] = None
+    """Which of `rolescan.scoring.rules.decide`'s rules fired, by its name in
+    `RULE_ORDER`, or None when the fit score decided.
+
+    Set by code, never by a model, so it is kept out of the JSON schema:
+    `FitVerdict` is also judge mode's output schema on both backends, and a
+    `rule` property there would invite the model to name a rule `decide`
+    never ran. Optional with a default because cached verdicts written before
+    it existed lack the key, and `Store.get_verdict` deletes and re-scores a
+    row that fails to parse.
+
+    It exists for the digest. On 2026-10-06, 44 of 109 scored postings were
+    hidden by rules with no trace, so a wrong skip was invisible; the digest
+    now lists them grouped by this name rather than re-deriving the rule from
+    the wording of `reason`."""
 
     @field_validator("blockers", "keywords_missing", mode="before")
     @classmethod

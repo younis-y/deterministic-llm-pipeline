@@ -19,10 +19,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from rolescan.config import Config, SourceEntry
+from rolescan.config import Config, ProfileConfig, SourceEntry
 from rolescan.dedup import merge_near_duplicates
 from rolescan.http import Fetcher
-from rolescan.models import Job, ScoredJob
+from rolescan.models import Job, ScoredJob, Verdict
 from rolescan.scoring import (
     FitScorer,
     score_keywords,
@@ -123,6 +123,36 @@ class ScanResult:
     made". A blocked posting that fell short of min_report_score was not kept
     out by the block and is not counted here."""
     reportable: list[ScoredJob] = field(default_factory=list)
+    rule_hidden: list[ScoredJob] = field(default_factory=list)
+    """Postings the owner's rules kept out of `reportable`: one of
+    `profile.rules` fired (`fit.rule` is set), the model blocked it in judge
+    mode (`fit.verdict` is blocked with no rule), or a `profile.hard_blockers`
+    term or `excluded_locations` entry matched (`blocker_hits`), whichever way
+    they left it. A rule skip's score is capped below `min_report_score`; a
+    block, by the model's bar or by a term, is dropped by
+    `output.show_blocked: false`; and a term hit is usually a prefilter
+    reject, never judged at all, because the owner's config carries the same
+    phrases as 60-point `blockers` too. Each posting appears once, however
+    many of these caught it, and `fit` is None for one the model never scored.
+
+    On 2026-10-06, 44 of 109 scored postings were hidden by rules with no
+    trace, so a mis-read advert or a rule bug that skipped a good role was
+    invisible; a wrong `hard_blockers` term (several nationality phrasings
+    were added that week) is the same mistake by another route. The digest
+    lists these, one line each, so a wrong skip can be spotted. A posting
+    that is still reportable (a rule skip at `min_report_score: 0`, a block
+    with `show_blocked: true`) is already in the digest and is not repeated.
+
+    A prefilter reject is included only when its terms are what put it under
+    the gate: its keyword score plus the `blockers` weights of its
+    `blocker_hits` clears `min_keyword_score`. A reject that fails the gate
+    either way is low relevance, not a rule hide. An `excluded_locations`
+    entry carries no weight, so an irrelevant posting in an excluded location
+    is not listed (about seven US postings a day on the owner's store), while
+    a relevant one clears the gate, is judged, and is listed from there.
+    Rejects are still recorded as seen, so a wrongly hidden posting is listed
+    once, on the run it is first seen, and not again (a `--dry` run records
+    nothing, so it lists it every time)."""
     dry_run: bool = False
 
     @property
@@ -275,9 +305,7 @@ def _drop_stale(jobs: list[Job], max_age_days: int) -> tuple[list[Job], int]:
     kept = [
         j
         for j in jobs
-        if j.posted is None
-        or j.posted >= cutoff
-        or not _ages_meaningfully(j.source)
+        if j.posted is None or j.posted >= cutoff or not _ages_meaningfully(j.source)
     ]
     return kept, len(jobs) - len(kept)
 
@@ -300,9 +328,7 @@ async def _judge(
     candidates: list[ScoredJob], cfg: Config, store: Store
 ) -> tuple[list[ScoredJob], FitScorer]:
     """LLM fit score, cached on the posting's content hash."""
-    scorer = FitScorer(
-        cfg.llm, cfg.profile, store, extra_prompt=cfg.llm.extra_prompt
-    )
+    scorer = FitScorer(cfg.llm, cfg.profile, store, extra_prompt=cfg.llm.extra_prompt)
     judged = await scorer.score_all(candidates)
     return judged, scorer
 
@@ -373,6 +399,42 @@ def _rank(judged: list[ScoredJob], cfg: Config) -> tuple[list[ScoredJob], int]:
     return keep[: cfg.output.max_roles], hidden
 
 
+def _caught_by_a_rule(item: ScoredJob) -> bool:
+    """Whether a rule, the model's own block, or a blocking term caught it."""
+    fit = item.fit
+    model_caught = fit is not None and (
+        fit.rule is not None or fit.verdict is Verdict.BLOCKED
+    )
+    return model_caught or bool(item.blocker_hits)
+
+
+def _rule_hidden(
+    judged: list[ScoredJob],
+    reportable: list[ScoredJob],
+    rejects: list[ScoredJob],
+    profile: ProfileConfig,
+) -> list[ScoredJob]:
+    """The postings a rule or a blocking term caught that the digest does not
+    show (see `ScanResult.rule_hidden`): judged ones, then prefilter rejects
+    whose terms' `blockers` weights are what put them under the gate.
+
+    Matched on identity, not equality: `_rank` filters and slices `judged`
+    without copying, and two distinct postings can compare equal field for
+    field. Reads only what is already in memory, so `--dry` stays dry.
+    """
+    shown = {id(s) for s in reportable}
+    caught = [s for s in judged if id(s) not in shown and _caught_by_a_rule(s)]
+    gate = profile.min_keyword_score
+    pushed_under = [
+        s
+        for s in rejects
+        if s.blocker_hits
+        and s.keyword_score + sum(profile.blockers.get(t, 0) for t in s.blocker_hits)
+        >= gate
+    ]
+    return caught + pushed_under
+
+
 async def _check_coverage(
     reports: list[SourceReport], store: Store
 ) -> list[tuple[str, int]]:
@@ -400,9 +462,7 @@ async def _check_coverage(
                     report.label or report.slug,
                     previous,
                 )
-    await store.record_source_counts(
-        {_source_key(r): r.count for r in reports if r.ok}
-    )
+    await store.record_source_counts({_source_key(r): r.count for r in reports if r.ok})
     return quiet
 
 
@@ -456,4 +516,5 @@ async def run_scan(
             )
 
     result.reportable, result.hidden_blocked = _rank(judged, cfg)
+    result.rule_hidden = _rule_hidden(judged, result.reportable, rejects, cfg.profile)
     return result

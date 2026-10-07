@@ -147,8 +147,6 @@ async def test_ollama_base_url_is_configurable() -> None:
     assert (await get_judge("ollama", cfg).verdict("s", "u")).fit_score == 72
 
 
-
-
 @respx.mock
 async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
     """Temperature reaches the server, and defaults to zero.
@@ -176,6 +174,7 @@ async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
     cfg = LLMConfig(enabled=True, backend="ollama", temperature=0.7)
     await get_judge("ollama", cfg).verdict("s", "u")
     assert seen["options"]["temperature"] == 0.7
+
 
 # --- the scorer uses whichever backend is configured -----------------------
 
@@ -523,9 +522,7 @@ async def test_an_untagged_model_is_not_satisfied_by_a_different_tag() -> None:
 @respx.mock
 async def test_an_untagged_model_matches_the_latest_tag() -> None:
     respx.get("http://localhost:11434/api/tags").mock(
-        return_value=httpx.Response(
-            200, json={"models": [{"name": "llama3.1:latest"}]}
-        )
+        return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:latest"}]})
     )
     cfg = LLMConfig(enabled=True, backend="ollama", model="llama3.1")
     assert await get_judge("ollama", cfg).preflight() == ""
@@ -656,7 +653,9 @@ async def test_a_posting_below_the_gate_costs_one_call_not_two() -> None:
             200,
             json={
                 "message": {
-                    "content": __import__("json").dumps({**VERDICT_JSON, "fit_score": 20})
+                    "content": __import__("json").dumps(
+                        {**VERDICT_JSON, "fit_score": 20}
+                    )
                 }
             },
         )
@@ -800,6 +799,14 @@ class _FakeMessages:
         return SimpleNamespace(
             parsed_output=fmt(fit_score=self.score, verdict="skip", confidence="high")
         )
+
+
+class _EchoingMessages(_FakeMessages):
+    """A model that fills in `rule` anyway, as if the schema had offered it."""
+
+    async def parse(self, **kw: Any) -> SimpleNamespace:
+        self.calls.append(kw)
+        return SimpleNamespace(parsed_output=FitVerdict(**VERDICT_JSON, rule="years"))
 
 
 def _anthropic(fake: _FakeMessages) -> AnthropicJudge:
@@ -946,3 +953,18 @@ def test_triage_fit_score_bounds_match_fitverdict() -> None:
     full = FitVerdict.model_json_schema()["properties"]["fit_score"]
     assert triage["minimum"] == full["minimum"]
     assert triage["maximum"] == full["maximum"]
+
+
+@respx.mock
+async def test_a_model_cannot_name_the_rule_that_hid_a_posting() -> None:
+    """Only `decide` names a rule. A judge-mode model echoing `rule` would
+    otherwise mark the posting rule-hidden in the digest on its own say-so."""
+    echoed = {**VERDICT_JSON, "rule": "years"}
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"content": __import__("json").dumps(echoed)}}
+        )
+    )
+    ollama = get_judge("ollama", LLMConfig(enabled=True, backend="ollama", model="m"))
+    assert (await ollama.verdict("s", "u")).rule is None
+    assert (await _anthropic(_EchoingMessages()).verdict("s", "u")).rule is None

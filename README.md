@@ -105,8 +105,13 @@ case-insensitively on word boundaries (`crypto` does not match
 "cryptographic", `head of` does not match "head office"), a term in both
 lists keeps its weight, and a term in `hard_blockers` alone blocks and costs
 nothing. Whenever
-a posting is deleted this way the digest's stats line says how many, so a
-blocker matching the wrong thing shows up as a number rather than as silence.
+a posting is deleted this way the digest's stats line says how many, and its
+"Hidden by your rules" section lists the posting with the term that matched,
+so a blocker matching the wrong thing shows up rather than as silence. That
+includes a posting the term's `blockers` weight took under the prefilter; one
+that would have failed the prefilter without the term is not listed, and an
+`excluded_locations` entry, which has no weight, never lists a prefiltered
+posting. It is listed once, on the run that first sees it.
 
 Hardness is deliberately not a weight threshold. A weight is retuned whenever
 you calibrate the prefilter; whether a clearance is a wall is a fact about you
@@ -198,7 +203,10 @@ posting (a fact whose quote is not there is dropped), then applies your
 
 A fact the advert does not state never fires a rule, so an advert that says
 nothing about level or years is decided on fit alone. Every rule skip names
-the rule and quotes the advert. The `rules` keys and their defaults:
+the rule and quotes the advert, and the digest lists every posting a rule
+kept out of it under "Hidden by your rules", one line each grouped by rule,
+so a wrong skip shows up rather than vanishing. The `rules` keys and their
+defaults:
 
 | Key | Default | Meaning |
 |---|---|---|

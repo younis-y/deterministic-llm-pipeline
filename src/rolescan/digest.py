@@ -13,6 +13,7 @@ from rolescan.config import EmailConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
 from rolescan.pipeline import ScanResult, SourceReport
 from rolescan.scoring.judges import available_judges
+from rolescan.scoring.rules import RULE_ORDER
 
 __all__ = ["render_html", "render_markdown", "send_email", "write_digest"]
 
@@ -62,6 +63,114 @@ _DISCOVER_FRAGS: _Frags = [
 
 def _md_frags(frags: _Frags) -> str:
     return "".join(f"`{text}`" if code else text for text, code in frags)
+
+
+# --- Hidden by your rules ---------------------------------------------------
+#
+# On 2026-10-06, 44 of 109 scored postings were hidden by `profile.rules` with
+# no trace: a rule skip is capped below `min_report_score` and a rule block is
+# dropped by `show_blocked: false`, so a mis-read advert or a rule bug that
+# skipped a good role was invisible. This section lists them, one line each,
+# grouped by the rule that fired, so a wrong skip can be spotted. Both
+# renderers build from `_rule_hidden_groups`, so only the markup can differ.
+
+#: A short heading per `FitVerdict.rule`. `hard_bar` also covers the skip an
+#: `other` bar gives (a driving licence, a sector background), so the label
+#: does not claim every one of them is a nationality or clearance bar.
+#: `_TERMS` is not a `decide` rule: it groups postings a configured
+#: `hard_blockers` term or `excluded_locations` entry blocked
+#: (`ScoredJob.blocker_hits`, where a location reads "location: dubai") when
+#: no rule fired, and always comes last.
+_TERMS = "hard_blockers"
+_RULE_LABELS: dict[str, str] = {
+    "hard_bar": "Nationality, clearance or other hard bar",
+    "graduation_year": "Graduation year",
+    "student_only": "Students only",
+    "level": "Level",
+    "years": "Years of experience",
+    "field": "Field",
+    _TERMS: "Your blocking terms (hard_blockers, excluded_locations)",
+}
+
+_RULE_HIDDEN_LEAD = (
+    "Skipped or blocked by one of your rules, so not listed above. One line "
+    "each, so a wrong skip can be spotted."
+)
+
+_REASON_PREFIXES = ("Skip: ", "Blocked: ")
+
+
+def _hidden_reason(reason: str) -> str:
+    """`reason` without its verdict prefix: the heading already says why."""
+    for prefix in _REASON_PREFIXES:
+        if reason.startswith(prefix):
+            return reason.removeprefix(prefix)
+    return reason
+
+
+def _hidden_group(item: ScoredJob) -> tuple[str, str] | None:
+    """The group a rule-hidden posting is listed under, and its reason.
+
+    The rule `decide` fired wins over a `hard_blockers` term, so a posting
+    both caught is listed once, under the rule: its reason quotes the advert,
+    which is what a reader checks a skip against. A judge-mode model block
+    has no rule (`decide` never ran) and goes under `hard_bar` with the
+    model's reason, ahead of any term it also matched. A term-only posting's
+    reason is the term(s) that matched, as configured.
+    """
+    fit = item.fit
+    if fit is not None and fit.rule is not None:
+        return fit.rule, _hidden_reason(fit.reason)
+    if fit is not None and fit.verdict is Verdict.BLOCKED:
+        return "hard_bar", _hidden_reason(fit.reason)
+    if item.blocker_hits:
+        terms = ", ".join(f'"{t}"' for t in dict.fromkeys(item.blocker_hits))
+        return _TERMS, f"blocked by {terms}"
+    return None
+
+
+def _rule_hidden_groups(result: ScanResult) -> list[tuple[str, list[tuple[Job, str]]]]:
+    """(heading, [(posting, reason)]) per rule, in `decide`'s order, then the
+    `hard_blockers` terms group.
+
+    A rule name this module has no label for (one added to `decide` without
+    updating `_RULE_LABELS`) still renders, under its own name and after the
+    known rules, rather than vanishing from the one place it is reported.
+    """
+    groups: dict[str, list[tuple[Job, str]]] = {}
+    for item in result.rule_hidden:
+        if (found := _hidden_group(item)) is None:
+            continue
+        group, reason = found
+        groups.setdefault(group, []).append((item.job, reason))
+    rank = {rule: i for i, rule in enumerate(RULE_ORDER)}
+    rank[_TERMS] = len(RULE_ORDER) + 1
+    return [
+        (
+            _RULE_LABELS.get(rule, rule),
+            sorted(
+                groups[rule],
+                key=lambda row: (row[0].company.casefold(), row[0].title.casefold()),
+            ),
+        )
+        for rule in sorted(groups, key=lambda r: (rank.get(r, len(RULE_ORDER)), r))
+    ]
+
+
+def _rule_hidden_section(result: ScanResult) -> list[str]:
+    groups = _rule_hidden_groups(result)
+    if not groups:
+        return []
+    lines = ["## Hidden by your rules", "", _RULE_HIDDEN_LEAD, ""]
+    for heading, rows in groups:
+        lines += [f"**{heading}**", ""]
+        for job, reason in rows:
+            bits = [f"**{job.company}**", f"[{job.title}]({job.url})"]
+            if job.location:
+                bits.append(job.location)
+            lines.append(f"- {' · '.join(bits)}: {reason}")
+        lines.append("")
+    return lines
 
 
 def _role(item: ScoredJob) -> list[str]:
@@ -175,6 +284,7 @@ def render_markdown(
             _stats(result),
             "",
         ]
+        out += _rule_hidden_section(result)
         out += _failures(result)
         if shortlist:
             out += _shortlist_section(shortlist, config_path)
@@ -206,6 +316,7 @@ def render_markdown(
         for item in blocked:
             out += _role(item)
 
+    out += _rule_hidden_section(result)
     out += _failures(result)
     if shortlist:
         out += _shortlist_section(shortlist, config_path)
@@ -272,9 +383,17 @@ def _stats(result: ScanResult) -> str:
         # they are already recorded as seen, so this is the reader's only
         # chance to notice a blocker term that is matching the wrong thing.
         bits.append(
-            f"{result.hidden_blocked} blocked and hidden "
-            "(output.show_blocked is false)"
+            f"{result.hidden_blocked} blocked and hidden (output.show_blocked is false)"
         )
+    if listed := sum(len(rows) for _, rows in _rule_hidden_groups(result)):
+        # Only when it happened, for the same reason. Counted separately from
+        # the clause above: that one is postings `show_blocked` removed, this
+        # one is postings any rule or `hard_blockers` term removed by any
+        # route, so a block hidden by `show_blocked` is in both - hence
+        # "listed below", so the two numbers do not read as two postings. It
+        # counts the rows the section renders, so the number and the list
+        # can never disagree.
+        bits.append(f"{listed} hidden by your rules (listed below)")
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
 
@@ -595,7 +714,7 @@ def _fit_html(item: ScoredJob, fit: FitVerdict) -> list[str]:
     if fit.keywords_missing:
         sub.append(
             f'<div style="{_SUB_LINE}">Gaps: '
-            f'{_esc(", ".join(fit.keywords_missing))}</div>'
+            f"{_esc(', '.join(fit.keywords_missing))}</div>"
         )
     out.append(f'<div style="{_SUB}">{"".join(sub)}</div>')
     return out
@@ -628,9 +747,7 @@ def _apply_html(item: ScoredJob) -> str:
     # exists to prevent, so the link stays and the invitation does not.
     label = "View posting" if item.is_blocked else "Apply"
     style = _BTN_MUTED if item.is_blocked else _BTN
-    return (
-        f'<div style="{_BTN_ROW}"><a href="{href}" style="{style}">{label}</a></div>'
-    )
+    return f'<div style="{_BTN_ROW}"><a href="{href}" style="{style}">{label}</a></div>'
 
 
 def _role_html(item: ScoredJob) -> str:
@@ -786,11 +903,42 @@ def _shortlist_html(
             f'<div style="{_SL_HEAD}">{_esc(headline or url)}</div>'
             f'<div style="{_SL_URL}">{link}</div>'
             f'<div style="{_SL_CMD}">'
-            f'{_code(f"rolescan mark {url} applied{flag}")}</div>'
+            f"{_code(f'rolescan mark {url} applied{flag}')}</div>"
             f'<div style="{_SL_CMD}">'
-            f'{_code(f"rolescan mark {url} dismissed{flag}")}</div>'
+            f"{_code(f'rolescan mark {url} dismissed{flag}')}</div>"
             "</div>"
         )
+    return out
+
+
+def _rule_hidden_line_html(job: Job, reason: str) -> str:
+    title = _esc(job.title)
+    if href := _href(job.url):
+        title = f'<a href="{href}" style="{_LINK}">{title}</a>'
+    bits = [f"<strong>{_esc(job.company)}</strong>", title]
+    if job.location:
+        bits.append(_esc(job.location))
+    return f"{' · '.join(bits)}: {_esc(reason)}"
+
+
+def _rule_hidden_html(result: ScanResult) -> list[str]:
+    """The HTML counterpart of `_rule_hidden_section`."""
+    groups = _rule_hidden_groups(result)
+    if not groups:
+        return []
+    out = [
+        f'<h2 style="{_H2}">Hidden by your rules</h2>',
+        f'<div style="{_LEAD}">{_esc(_RULE_HIDDEN_LEAD)}</div>',
+    ]
+    for heading, rows in groups:
+        items = "".join(
+            f'<li style="{_LI}">{_rule_hidden_line_html(job, reason)}</li>'
+            for job, reason in rows
+        )
+        out += [
+            f'<div style="{_SUB_LABEL}">{_esc(heading)}</div>',
+            f'<ul style="{_UL}">{items}</ul>',
+        ]
     return out
 
 
@@ -836,6 +984,7 @@ def render_html(
     if result.dry_run:
         body.append(f'<div style="{_DRY}">Dry run: nothing was marked as seen.</div>')
     body += _roles_html(result)
+    body += _rule_hidden_html(result)
     body += _failures_html(result)
     if shortlist:
         body += _shortlist_html(shortlist, config_path)
