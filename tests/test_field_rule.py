@@ -91,3 +91,52 @@ def test_an_exempt_company_matches_whole_words_only() -> None:
         company="Example Banking Group",
     )
     assert verdict.rule == "field"
+
+
+def test_finance_data_analyst_stays_analytics_bi() -> None:
+    # The finance row's widening must not outrank the earlier data-analyst row.
+    assert field_from_text("Finance Data Analyst") is JobField.analytics_bi
+
+
+def _hidden(company: str, exempt: list[str]) -> bool:
+    rules = RulesConfig(
+        allowed_fields=[JobField.data_science], field_exempt_companies=exempt
+    )
+    verdict = decide(
+        _facts(JobField.software, Level.graduate_entry), rules, 40, company=company
+    )
+    return verdict.rule == "field"
+
+
+ARABIC = "شركة المثال"
+OTHER_ARABIC = "شركة أخرى"
+
+
+def test_an_empty_or_blank_entry_exempts_nothing() -> None:
+    for exempt in ([""], [" "], ["-"]):
+        assert _hidden("", exempt), exempt
+        assert _hidden("Acme Ltd", exempt), exempt
+        assert _hidden(ARABIC, exempt), exempt
+
+
+def test_an_empty_company_is_never_exempt() -> None:
+    assert _hidden("", ["Example Bank"])
+    assert _hidden("", [ARABIC])
+    assert _hidden("", ["Example Bank", ""])
+
+
+def test_a_non_latin_entry_exempts_only_the_same_company() -> None:
+    assert not _hidden(ARABIC, [ARABIC])
+    assert not _hidden(f"{ARABIC} ذ.م.م", [ARABIC])
+    assert _hidden(OTHER_ARABIC, [ARABIC])
+    assert _hidden("Acme Ltd", [ARABIC])
+    assert _hidden("12345", [ARABIC])
+
+
+def test_accents_case_and_width_are_folded() -> None:
+    assert not _hidden("SOCIÉTÉ GÉNÉRALE SA", ["Société Générale"])
+    fullwidth = "Example Bank".translate({c: c + 0xFEE0 for c in range(0x21, 0x7F)})
+    assert fullwidth != "Example Bank"
+    assert not _hidden(fullwidth, ["Example Bank"])
+    assert not _hidden("Example-Bank, Ltd.", ["Example Bank"])
+    assert _hidden("Societe Generale SA", ["Société Générale"])

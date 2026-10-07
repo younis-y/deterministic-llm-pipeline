@@ -388,6 +388,62 @@ async def test_cached_facts_hold_the_resolved_field(tmp_path: Path) -> None:
     assert cached.field.quote == "Data Engineer"
 
 
+# --- the field-exempt company reaches `decide` on both scorer paths (2.5.7) --
+
+
+_EXEMPT = RulesConfig(
+    allowed_fields=["data_science"], field_exempt_companies=["Example Bank"]
+)
+
+
+def _software_job(company: str) -> ScoredJob:
+    """A graduate software role: hidden by the field rule unless exempt."""
+    return ScoredJob(
+        job=Job(
+            source="test",
+            company=company,
+            title="Graduate Software Engineer",
+            url="https://x/12",
+            description="Graduate programme.",
+        ),
+        keyword_score=40,
+    )
+
+
+async def test_an_exempt_company_passes_the_field_rule_on_a_fresh_call() -> None:
+    scorer, _judge = _facts_scorer(_facts(fit_score=75), rules=_EXEMPT)
+    [out] = await scorer.score_all([_software_job("Example Bank Ltd")])
+    assert out.fit is not None and out.fit.verdict == Verdict.APPLY
+    assert out.fit.rule is None
+
+    scorer, _judge = _facts_scorer(_facts(fit_score=75), rules=_EXEMPT)
+    [other] = await scorer.score_all([_software_job("Other Co")])
+    assert other.fit is not None and other.fit.verdict == Verdict.SKIP
+    assert other.fit.rule == "field"
+
+
+async def test_an_exempt_company_passes_the_field_rule_on_a_cached_hit(
+    tmp_path: Path,
+) -> None:
+    job = _software_job("Example Bank Ltd")
+    async with Store(tmp_path / "store.db") as store:
+        scorer1, judge1 = _facts_scorer(
+            _facts(fit_score=75), rules=_EXEMPT, store=store
+        )
+        await scorer1.score_all([job])
+        assert len(judge1.facts_calls) == 1
+
+        scorer2, judge2 = _facts_scorer(
+            _facts(fit_score=75), rules=_EXEMPT, store=store
+        )
+        [out] = await scorer2.score_all([job])
+
+    assert len(judge2.facts_calls) == 0, "this must be the cached-facts path"
+    assert out.llm_cached is True
+    assert out.fit is not None and out.fit.verdict == Verdict.APPLY
+    assert out.fit.rule is None
+
+
 # --- extra_prompt is not sent in facts mode; say so once (fix E) -----------
 
 

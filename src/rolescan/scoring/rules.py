@@ -18,6 +18,7 @@ from or where the verdict is going.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Sequence
 
 from rolescan.config import RulesConfig
@@ -74,18 +75,33 @@ _IGNORED_BARS = frozenset({BarKind.work_auth})
 _PROGRAMME_LEVELS = frozenset({Level.graduate_entry})
 
 
+def _words(text: str) -> str:
+    """`text` as lower-case words joined by single spaces, in any script.
+
+    NFKC folds width and compatibility forms (fullwidth letters to ASCII) and
+    `\\w` keeps letters and digits of every script, so an Arabic or accented
+    name survives instead of being erased to nothing.
+    """
+    return re.sub(r"\W+", " ", unicodedata.normalize("NFKC", text).casefold()).strip()
+
+
 def _company_exempt(company: str, exempt: Sequence[str]) -> bool:
     """True when an `exempt` name appears in `company` as a whole word run.
 
-    Both sides are casefolded and reduced to alphanumeric words, so "Example
-    Bank Ltd" matches "Example Bank" and "Example Banking" does not. Observed
-    2026-10-07: one software role was wanted at one named employer, whatever
-    its field, which no field list can express.
+    "Example Bank Ltd" matches "Example Bank" and "Example Banking" does not.
+    Observed 2026-10-07: one software role was wanted at one named employer,
+    whatever its field, which no field list can express. This must fail
+    closed: an exemption exists only for a name that really matched, so a
+    company or an entry that reduces to no words never exempts anything.
+    Reducing names to ASCII letters would turn an Arabic entry into an empty
+    needle that exempted every employer whose name is not Latin script, and
+    the empty default `company` as well.
     """
-    name = f" {re.sub(r'[^a-z0-9]+', ' ', company.casefold()).strip()} "
-    return any(
-        f" {re.sub(r'[^a-z0-9]+', ' ', e.casefold()).strip()} " in name for e in exempt
-    )
+    name = _words(company)
+    if not name:
+        return False
+    needles = [n for n in (_words(e) for e in exempt) if n]
+    return any(f" {n} " in f" {name} " for n in needles)
 
 
 def _quote_reason(prefix: str, quote: str) -> str:
