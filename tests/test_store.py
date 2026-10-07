@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 import rolescan.store as store_module
@@ -395,3 +397,126 @@ async def test_reason_column_migrates_onto_a_version_four_store(
         await store.record(ScoredJob(job=energy_job, keyword_score=4), reason="judged")
         reasons = await store.db.execute_fetchall("SELECT reason FROM seen")
         assert [r[0] for r in reasons] == ["judged"]
+
+
+# --- migrations are atomic with their version bump (2.5.7) -------------------
+# Migration 5 is `ALTER TABLE ... ADD COLUMN`, which SQLite cannot make
+# `IF NOT EXISTS`. The runner used to execute the script and then set
+# `user_version` as two separate statements, so two processes opening a
+# version-4 store at once both ran the ALTER (the loser died with "duplicate
+# column name: reason"), and a crash between the ALTER and the pragma left a
+# store that could never be opened again.
+
+
+async def _make_version_four_store(
+    path: Path, monkeypatch: pytest.MonkeyPatch, job: Job, *, with_reason: bool
+) -> None:
+    """Create `path` at `user_version` 4. `with_reason` adds the migration-5
+    column by hand, as a crash between the ALTER and the pragma would have."""
+    with monkeypatch.context() as m:
+        m.setattr(store_module, "_MIGRATIONS", store_module._MIGRATIONS[:4])
+        async with Store(path) as store:
+            await _insert_old_seen_row(store, job)
+            if with_reason:
+                await store.db.execute(
+                    "ALTER TABLE seen ADD COLUMN reason TEXT NOT NULL DEFAULT ''"
+                )
+            await store.db.commit()
+
+
+async def _user_version_and_columns(path: Path) -> tuple[int, list[str]]:
+    async with Store(path) as store:
+        cur = await store.db.execute("PRAGMA user_version")
+        row = await cur.fetchone()
+        assert row is not None
+        columns = [
+            r[1] for r in await store.db.execute_fetchall("PRAGMA table_info(seen)")
+        ]
+        return int(row[0]), columns
+
+
+async def test_a_store_that_already_has_the_reason_column_still_opens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, energy_job: Job
+) -> None:
+    """The crash case: the ALTER committed but `user_version` is still 4.
+    Opening must not die on "duplicate column name"; it finishes the upgrade."""
+    path = tmp_path / "s.db"
+    await _make_version_four_store(path, monkeypatch, energy_job, with_reason=True)
+
+    version, columns = await _user_version_and_columns(path)
+
+    assert version == len(_MIGRATIONS)
+    assert columns.count("reason") == 1
+
+
+async def test_two_stores_opening_a_version_four_file_at_once_both_succeed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, energy_job: Job
+) -> None:
+    """Two processes opening the same old store: one wins the lock and runs
+    migration 5, the other must see version 5 under the lock and skip it."""
+    path = tmp_path / "s.db"
+    await _make_version_four_store(path, monkeypatch, energy_job, with_reason=False)
+
+    async def open_and_close() -> int:
+        async with Store(path) as store:
+            return await store.count()
+
+    counts = await asyncio.gather(*(open_and_close() for _ in range(4)))
+
+    assert counts == [1, 1, 1, 1]
+    version, columns = await _user_version_and_columns(path)
+    assert version == len(_MIGRATIONS)
+    assert columns.count("reason") == 1
+
+
+async def test_a_store_that_loses_the_migration_race_skips_the_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, energy_job: Job
+) -> None:
+    """Deterministic version of the race: a rival holds the write lock, the
+    store reads version 4 and waits, then the rival finishes migration 5 and
+    commits. The store must re-read the version under the lock and skip the
+    step, not run the ALTER a second time."""
+    path = tmp_path / "s.db"
+    await _make_version_four_store(path, monkeypatch, energy_job, with_reason=False)
+
+    async with aiosqlite.connect(path) as rival:
+        await rival.execute("BEGIN IMMEDIATE")
+        opening = asyncio.ensure_future(_user_version_and_columns(path))
+        await asyncio.sleep(0.3)
+        assert not opening.done(), "the store must be waiting on the rival's lock"
+        await rival.execute(
+            "ALTER TABLE seen ADD COLUMN reason TEXT NOT NULL DEFAULT ''"
+        )
+        await rival.execute("PRAGMA user_version=5")
+        await rival.commit()
+        version, columns = await opening
+
+    assert version == len(_MIGRATIONS)
+    assert columns.count("reason") == 1
+
+
+async def test_a_failing_migration_rolls_back_and_leaves_the_version_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A script that dies half way must not leave its first statement behind
+    or bump `user_version`: the store reopens at the same version, ready to be
+    migrated again once the fault is fixed."""
+    path = tmp_path / "s.db"
+    broken = (
+        *_MIGRATIONS,
+        "CREATE TABLE half_done (x INTEGER); SELECT * FROM no_such_table;",
+    )
+    with monkeypatch.context() as m:
+        m.setattr(store_module, "_MIGRATIONS", broken)
+        with pytest.raises(aiosqlite.OperationalError):
+            async with Store(path):
+                pass
+
+    async with Store(path) as store:
+        cur = await store.db.execute("PRAGMA user_version")
+        row = await cur.fetchone()
+        assert row is not None and int(row[0]) == len(_MIGRATIONS)
+        tables = await store.db.execute_fetchall(
+            "SELECT name FROM sqlite_master WHERE name='half_done'"
+        )
+        assert list(tables) == []

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import sqlite3
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -102,6 +104,31 @@ _MIGRATIONS: tuple[str, ...] = (
 )
 
 
+#: `ALTER TABLE <table> ADD COLUMN <column> ...` at the start of a statement.
+_ADD_COLUMN = re.compile(
+    r"\s*ALTER\s+TABLE\s+(?P<table>\w+)\s+ADD\s+COLUMN\s+(?P<column>\w+)",
+    re.IGNORECASE,
+)
+
+
+def _statements(script: str) -> list[str]:
+    """Split a migration script into its complete statements, in order.
+
+    Uses SQLite's own `complete_statement`, so a `;` inside a string or a
+    trigger body does not split a statement in two."""
+    out: list[str] = []
+    start = 0
+    for m in re.finditer(";", script):
+        chunk = script[start : m.end()]
+        if sqlite3.complete_statement(chunk):
+            out.append(chunk.strip())
+            start = m.end()
+    tail = script[start:].strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
 class Store:
     """Async SQLite store. Use as an async context manager."""
 
@@ -118,7 +145,14 @@ class Store:
         # WAL lets a long scan run while you read the digest from another shell.
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
-        await self._migrate()
+        try:
+            await self._migrate()
+        except BaseException:
+            # A failed migration used to leave the connection open, and its
+            # worker thread kept the process alive after the error.
+            await self._db.close()
+            self._db = None
+            raise
         return self
 
     async def __aexit__(
@@ -139,14 +173,60 @@ class Store:
             raise RuntimeError(msg)
         return self._db
 
-    async def _migrate(self) -> None:
+    async def _user_version(self) -> int:
         cur = await self.db.execute("PRAGMA user_version")
         row = await cur.fetchone()
-        version = int(row[0]) if row else 0
-        for i, script in enumerate(_MIGRATIONS[version:], start=version):
-            await self.db.executescript(script)
-            await self.db.execute(f"PRAGMA user_version={i + 1}")
-        await self.db.commit()
+        return int(row[0]) if row else 0
+
+    async def _migrate(self) -> None:
+        """Bring the file up to `len(_MIGRATIONS)`, one step at a time.
+
+        Each step runs inside its own `BEGIN IMMEDIATE` ... `COMMIT`, together
+        with its `user_version` bump, so a step is either wholly applied and
+        counted or not applied at all. The version is read again once the
+        write lock is held: a second process that opened the same old file at
+        the same moment waits on the lock, then sees the winner's version and
+        skips the step.
+
+        Migrations 1 to 4 are `CREATE ... IF NOT EXISTS` and could simply be
+        re-run. Migrations after 4 may not be re-runnable statements (5 is
+        `ALTER TABLE ... ADD COLUMN`, which SQLite cannot make `IF NOT
+        EXISTS`), so the runner guards them: it skips an `ADD COLUMN` whose
+        column is already there (a store left half-migrated by a crash under
+        the old runner, which executed the script and set the version as two
+        separate statements).
+
+        Statements are executed one at a time, not through `executescript`,
+        because `executescript` commits first and so cannot join a
+        transaction.
+        """
+        for i in range(await self._user_version(), len(_MIGRATIONS)):
+            script = _MIGRATIONS[i]
+            await self.db.execute("BEGIN IMMEDIATE")
+            try:
+                if await self._user_version() > i:
+                    # Lost the race: another opener applied this step while
+                    # this one waited for the lock.
+                    await self.db.rollback()
+                    continue
+                for statement in _statements(script):
+                    if not await self._column_exists(statement):
+                        await self.db.execute(statement)
+                await self.db.execute(f"PRAGMA user_version={i + 1}")
+                await self.db.commit()
+            except BaseException:
+                await self.db.rollback()
+                raise
+
+    async def _column_exists(self, statement: str) -> bool:
+        """True when `statement` is an `ALTER TABLE ... ADD COLUMN` whose
+        column is already on the table. Anything else is False."""
+        m = _ADD_COLUMN.match(statement)
+        if m is None:
+            return False
+        # `table` is `\w+` from this module's own migration text, not input.
+        info = await self.db.execute_fetchall(f"PRAGMA table_info({m['table']})")
+        return any(row[1].lower() == m["column"].lower() for row in info)
 
     # -- seen ---------------------------------------------------------------
 
