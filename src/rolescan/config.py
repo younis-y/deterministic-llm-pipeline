@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
@@ -91,8 +92,9 @@ class RulesConfig(BaseModel):
         default_factory=list,
         description=(
             "Employers whose postings pass the field rule whatever their field "
-            "(matched on the company name, case-insensitive, as a whole word "
-            "run). For the few firms where any entry role is wanted."
+            "(matched on the company name, ignoring case, width and accents, "
+            "as a whole word run). For the few firms where any entry role is "
+            "wanted."
         ),
     )
 
@@ -321,7 +323,35 @@ class ProfileConfig(BaseModel):
             "nationalities",
             [n.strip().casefold() for n in self.nationalities if n.strip()],
         )
+
+        self._warn_inert_settings()
         return self
+
+    def _warn_inert_settings(self) -> None:
+        """Warn about two settings that load fine and then do nothing, or not
+        what was meant. Warnings, not errors: neither can delete a role, and
+        either may be deliberate while the config is being edited."""
+        for term in self.title_only_blockers:
+            if term not in self.blockers:
+                log.warning(
+                    "profile.title_only_blockers: %r has no weight in "
+                    "profile.blockers, so it does nothing. Give it a weight in "
+                    "blockers (it then counts in the job title only).",
+                    term,
+                )
+        for term in self.hard_blockers:
+            for nationality in self.nationalities:
+                if re.search(rf"(?<!\w){re.escape(nationality)}(?!\w)", term):
+                    log.warning(
+                        "profile.hard_blockers: %r names %r, a nationality you "
+                        "hold in profile.nationalities, but a hard_blockers "
+                        "term blocks at the keyword stage regardless of "
+                        "nationalities. Remove it to let the nationality rule "
+                        "decide.",
+                        term,
+                        nationality,
+                    )
+                    break
 
 
 class LLMConfig(BaseModel):

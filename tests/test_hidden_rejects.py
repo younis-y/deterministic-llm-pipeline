@@ -8,14 +8,16 @@ labelled set scored under the gate by a few points and were recorded."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import httpx
+import pytest
 import respx
 
 from rolescan.config import Config, ProfileConfig
 from rolescan.digest import render_html, render_markdown
-from rolescan.models import Job
+from rolescan.models import Job, ScoredJob
 from rolescan.pipeline import ScanResult, _prefilter, _rule_hidden, run_scan
 from rolescan.scoring.keyword import score_keywords
 
@@ -48,6 +50,27 @@ def test_title_only_term_costs_its_weight_only_in_the_title() -> None:
     assert in_body.keyword_score == 8 * 3 and in_body.keyword_penalties == []
     in_title = score_keywords(_job("Head of Data Analyst", body), profile)
     assert "head of" in in_title.keyword_penalties
+
+
+def test_a_title_only_term_with_no_blockers_weight_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`title_only_blockers` only restricts where a `blockers` weight counts,
+    so a term with no weight there does nothing, and used to say nothing."""
+    with caplog.at_level(logging.WARNING, logger="rolescan.config"):
+        profile = _profile(title_only_blockers=["head of", "Director", "military"])
+    inert = [r.message for r in caplog.records if "does nothing" in r.message]
+    assert len(inert) == 1 and "'director'" in inert[0]
+    assert "Give it a weight in blockers" in inert[0]
+    assert profile.title_only_blockers == ["head of", "director", "military"]
+
+
+def test_a_title_only_term_with_a_weight_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="rolescan.config"):
+        _profile(title_only_blockers=["head of", "military"])
+    assert "does nothing" not in caplog.text
 
 
 def test_title_only_terms_are_normalised_like_blockers() -> None:
@@ -155,6 +178,51 @@ def test_a_title_only_term_found_only_in_the_body_gives_no_weight_back() -> None
     assert [h.job.title for h in hidden] == ["Military Data Analyst"]
     text = render_markdown(ScanResult(rule_hidden=hidden, gate=20))
     assert 'blocked by "military"' in text
+
+
+def test_a_reject_with_an_unweighted_hit_and_weighted_penalties_is_listed_once() -> (
+    None
+):
+    """Score -11 after `director` (40) and `10+ years` (20); 49 without them.
+    The `hard_blockers` hit `security clearance` has no `blockers` weight, so
+    it is not what was charged. Listed nowhere before: `pushed_under` counted
+    only the hit's own charge and `weighted` required no hits at all. Now
+    either kind of push lists it, once, under the terms group."""
+    profile = _profile(
+        keywords={"python": 4},
+        blockers={"director": 40, "10+ years": 20},
+        hard_blockers=["security clearance"],
+        min_keyword_score=18,
+    )
+    reject = ScoredJob(
+        job=_job("Director of Python", "10+ years, security clearance"),
+        keyword_score=-11,
+        keyword_penalties=["director", "10+ years"],
+        blocker_hits=["security clearance"],
+    )
+    hidden = _rule_hidden([], [], [reject], profile)
+    assert [h.job for h in hidden] == [reject.job], "listed once"
+    text = render_markdown(ScanResult(rule_hidden=hidden, gate=18))
+    assert text.count("Director of Python") == 1
+    assert "Your blocking terms" in text and 'blocked by "security clearance"' in text
+
+
+def test_an_unweighted_hit_with_no_push_is_still_not_listed() -> None:
+    """The fix lists a reject only when the weights did put it under the gate:
+    a far-under reject with an unweighted hit and nothing charged stays out."""
+    profile = _profile(
+        keywords={"python": 4},
+        blockers={},
+        hard_blockers=["security clearance"],
+        min_keyword_score=18,
+        hidden_gate_margin=0,
+    )
+    reject = ScoredJob(
+        job=_job("Analyst", "security clearance"),
+        keyword_score=0,
+        blocker_hits=["security clearance"],
+    )
+    assert _rule_hidden([], [], [reject], profile) == []
 
 
 def test_a_thin_posting_a_hard_blocker_term_caught_is_listed_but_no_other_thin_is() -> (

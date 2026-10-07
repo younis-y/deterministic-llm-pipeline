@@ -178,7 +178,11 @@ def _deliver(
 def scan(
     config: ConfigOpt = Path("config.yaml"),
     dry: Annotated[
-        bool, typer.Option("--dry", help="Do not mark anything seen.")
+        bool,
+        typer.Option(
+            "--dry",
+            help="Do not mark anything seen; write digest-dry.md, not latest.md.",
+        ),
     ] = False,
     no_llm: Annotated[
         bool, typer.Option("--no-llm", help="Keyword scoring only.")

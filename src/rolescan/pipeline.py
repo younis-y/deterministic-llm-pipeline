@@ -512,6 +512,18 @@ def _caught_by_a_rule(item: ScoredJob) -> bool:
     return model_caught or bool(item.blocker_hits)
 
 
+def _weight(s: ScoredJob, profile: ProfileConfig) -> int:
+    """What its configured terms cost a posting: the `blockers` weight of every
+    penalty it was actually charged (`keyword_penalties`), bar the synthetic
+    agency and location ones. A `title_only_blockers` term found only in the
+    body is not charged, so it gives nothing back."""
+    return sum(
+        profile.blockers.get(t, 0)
+        for t in s.keyword_penalties
+        if t not in SYNTHETIC_PENALTIES
+    )
+
+
 def _rule_hidden(
     judged: list[ScoredJob],
     reportable: list[ScoredJob],
@@ -548,18 +560,16 @@ def _rule_hidden(
     caught = [s for s in judged if id(s) not in shown and _caught_by_a_rule(s)]
     gate = profile.min_keyword_score
 
-    def _charged(s: ScoredJob) -> int:
-        """What its `blocker_hits` terms cost it: only a term that was charged
-        (`keyword_penalties`) gives points back, since a `title_only_blockers`
-        term found only in the body costs nothing."""
-        return sum(
-            profile.blockers.get(t, 0)
-            for t in s.blocker_hits
-            if t in s.keyword_penalties
-        )
-
+    # A reject with a term hit is listed under the terms group when the
+    # weighted penalties it was charged are what put it under the gate, those
+    # of the hit's own term or any other: the term is what the reader has to
+    # check. It used to count only the hit's own charge, so a reject whose hit
+    # was unweighted (a `hard_blockers` phrase with no `blockers` entry) and
+    # whose weighted `director` and `10+ years` pushed it under was in no list.
     pushed_under = [
-        s for s in rejects if s.blocker_hits and s.keyword_score + _charged(s) >= gate
+        s
+        for s in rejects
+        if s.blocker_hits and s.keyword_score + _weight(s, profile) >= gate
     ]
     thin_blocked = [
         s
@@ -567,17 +577,12 @@ def _rule_hidden(
         if any(not hit.startswith("location: ") for hit in s.blocker_hits)
     ]
 
-    def _weight(s: ScoredJob) -> int:
-        return sum(
-            profile.blockers.get(t, 0)
-            for t in s.keyword_penalties
-            if t not in SYNTHETIC_PENALTIES
-        )
-
     weighted = [
         s
         for s in rejects
-        if not s.blocker_hits and _weight(s) and s.keyword_score + _weight(s) >= gate
+        if not s.blocker_hits
+        and _weight(s, profile)
+        and s.keyword_score + _weight(s, profile) >= gate
     ]
     listed = {id(s) for s in caught + pushed_under + weighted}
     near = [

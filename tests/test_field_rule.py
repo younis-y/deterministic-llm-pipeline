@@ -139,4 +139,10 @@ def test_accents_case_and_width_are_folded() -> None:
     assert fullwidth != "Example Bank"
     assert not _hidden(fullwidth, ["Example Bank"])
     assert not _hidden("Example-Bank, Ltd.", ["Example Bank"])
-    assert _hidden("Societe Generale SA", ["Société Générale"])
+
+
+def test_an_accented_company_matches_its_unaccented_spelling() -> None:
+    """The same employer is spelt both ways across adverts and in a config."""
+    assert not _hidden("Société Générale", ["Societe Generale"])
+    assert not _hidden("Societe Generale SA", ["Société Générale"])
+    assert _hidden("Societe Generali", ["Société Générale"])

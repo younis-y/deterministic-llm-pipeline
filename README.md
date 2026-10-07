@@ -224,11 +224,12 @@ recorded as seen, so it comes round again. A posting with no text is held back
 only `output.thin_unread_after` times (default 3): after that many runs without
 text it is listed once under "Unread (no text after N runs)", with its link,
 and recorded, so a source that never sends descriptions cannot hold it back for
-ever. To bring back a posting a wrong
-rule or term hid, run `rolescan unsee URL` (or its uid); the next scan reports
-it again. Four keys tune what gets hidden. On `profile`: `nationalities`
-(the demonyms and countries you hold, so a nationality bar that names one is
-not a bar for you), `title_only_blockers` (`blockers` terms such as
+ever. To bring back a posting a wrong rule or term hid, run `rolescan unsee
+URL` (or its uid); the next scan reports it again. Four keys tune what gets
+hidden. On `profile`: `nationalities` (the demonyms and countries you hold, so
+a nationality bar that names one is not a bar for you; it acts in facts mode,
+through the rules, and does nothing in judge mode or against a `hard_blockers`
+term), `title_only_blockers` (`blockers` terms such as
 `head of`, `director` or `military` whose weight counts only in the job title,
 not in boilerplate in the body) and `hidden_gate_margin` (how far under
 `min_keyword_score` a reject may fall and still be listed under "Hidden by
@@ -331,6 +332,7 @@ rolescan backends     every registered LLM backend, and which need a key
 rolescan cvs          which CV variants were found and how they parse
 rolescan scan         fetch, score, write the digest   (--dry, --no-llm, --no-email)
 rolescan mark URL S   record what you did with a posting: shortlist, applied, dismissed
+rolescan unsee URL    forget a posting (url or uid) so the next scan can report it again
 rolescan show         reprint the latest digest
 rolescan stats        how many postings the store has seen
 rolescan prune        drop stale cached verdicts
@@ -343,6 +345,11 @@ yesterday's email. `applied` clears it from that section. `dismissed` clears it
 too, and additionally stops the posting ever being reported again, however many
 boards go on listing it. Every shortlist row in the digest carries the exact
 `mark` command to clear it, with the config path already filled in.
+
+`scan --dry` marks nothing seen and writes `digest-dry.md`, leaving `latest.md`
+as the last real run's digest. `unsee` takes a posting's URL (as the digest
+prints it) or its uid and removes it from the seen list, so the next scan can
+report it again.
 
 `discover` distinguishes five outcomes on purpose. `EMPTY` means a real board
 with no openings; `UNKNOWN` means an API that cannot tell an empty board from a

@@ -80,9 +80,16 @@ def _words(text: str) -> str:
 
     NFKC folds width and compatibility forms (fullwidth letters to ASCII) and
     `\\w` keeps letters and digits of every script, so an Arabic or accented
-    name survives instead of being erased to nothing.
+    name survives instead of being erased to nothing. Combining marks are then
+    dropped, so "Societe Generale" matches "Société Générale": an accent is how
+    one advert spells a name, not a different employer. Both sides of a
+    comparison pass through here, so the fold is the same for each.
     """
-    return re.sub(r"\W+", " ", unicodedata.normalize("NFKC", text).casefold()).strip()
+    folded = unicodedata.normalize("NFKC", text).casefold()
+    bare = "".join(
+        c for c in unicodedata.normalize("NFD", folded) if not unicodedata.combining(c)
+    )
+    return re.sub(r"\W+", " ", unicodedata.normalize("NFC", bare)).strip()
 
 
 def _company_exempt(company: str, exempt: Sequence[str]) -> bool:

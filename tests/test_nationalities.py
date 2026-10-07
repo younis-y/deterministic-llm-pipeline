@@ -5,7 +5,12 @@ Freedonian, while a bar naming some other nationality still does."""
 
 from __future__ import annotations
 
-from rolescan.config import ProfileConfig
+import logging
+from pathlib import Path
+
+import pytest
+
+from rolescan.config import Config, ProfileConfig
 from rolescan.models import BarKind, Verdict
 from rolescan.scoring.facts import HardBar, PostingFacts
 from rolescan.scoring.rules import decide
@@ -71,3 +76,45 @@ def test_freedonia_does_not_match_freedonian() -> None:
         _facts("Freedonian nationals only"), None, 40, nationalities=["freedonia"]
     )
     assert verdict.verdict is Verdict.BLOCKED
+
+
+# --- a hard_blockers term that names a held nationality is warned about ------
+# `hard_blockers` blocks at the keyword stage, before the nationality rule can
+# see the bar, so "freedonian nationals only" kept there still hides the role
+# from a Freedonian however `nationalities` is set.
+
+
+def test_a_hard_blocker_naming_a_held_nationality_warns_at_load(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "profile:\n"
+        "  nationalities: [Freedonian, Freedonia]\n"
+        "  hard_blockers: [Freedonian nationals only, security clearance]\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING, logger="rolescan.config"):
+        cfg = Config.load(path)
+    assert cfg.profile.hard_blockers == [
+        "freedonian nationals only",
+        "security clearance",
+    ], "a warning, not an error: the term is kept"
+    warned = [r for r in caplog.records if "regardless of nationalities" in r.message]
+    assert len(warned) == 1
+    assert "'freedonian nationals only'" in warned[0].message
+    assert "security clearance" not in warned[0].message
+
+
+def test_a_hard_blocker_naming_another_nationality_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Word boundary, as in the rule itself: "sylvanian" is not "sylvania"."""
+    with caplog.at_level(logging.WARNING, logger="rolescan.config"):
+        ProfileConfig.model_validate(
+            {
+                "nationalities": ["sylvania"],
+                "hard_blockers": ["Sylvanian nationals only", "Ruritanian citizens"],
+            }
+        )
+    assert "regardless of nationalities" not in caplog.text

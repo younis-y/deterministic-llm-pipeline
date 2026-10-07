@@ -5,6 +5,7 @@ All notable changes to rolescan. Newest first.
 ## 2.5.7
 
 ### Added
+- A warning at load for a `title_only_blockers` entry with no `blockers` weight, and for a `hard_blockers` term that names a nationality listed in `profile.nationalities`.
 - Digest stats line reports "N deferred to the next run" with the reason (over the LLM budget, over the digest cap, no description text yet), and "K listed as unread"; a deferred posting is not recorded as seen.
 - "Hidden by your rules" gains "Your weighted terms (blockers)" and "Just under your keyword gate" groups.
 - `profile.title_only_blockers`: `blockers` terms whose weight counts only in the job title.
@@ -26,5 +27,8 @@ All notable changes to rolescan. Newest first.
 - Facts cache key bumped to `facts-v13`: cached facts are re-extracted once.
 
 ### Fixed
+- A reject pushed under the keyword gate by weighted penalties while an unweighted `hard_blockers` term also matched was listed nowhere; it is now listed under "Your blocking terms".
+- Migrations run inside one transaction with their `user_version` bump, and migration 5 skips a column that already exists, so two processes opening an old store at once, or a crash mid-upgrade, no longer leave it unopenable.
+- Company matching for `rules.field_exempt_companies` ignores accents ("Societe Generale" matches "Société Générale").
 - Adzuna now raises when every query fails, instead of reporting ok with nothing.
 - `config.example.yaml` and `examples/energy-trading.yaml` no longer carry the removed `cv_dir` key, and a test now loads every shipped YAML.
