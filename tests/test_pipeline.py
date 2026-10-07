@@ -538,7 +538,8 @@ async def test_a_healthy_run_still_records_what_it_judged(tmp_path: Path) -> Non
         )
     )
     cfg = _cfg(
-        tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"}
+        tmp_path,
+        {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"},
     )
     result = await run_scan(cfg)
     assert len(result.reportable) == 1
@@ -789,7 +790,8 @@ async def test_a_dismissed_url_does_not_reappear(tmp_path: Path) -> None:
         )
     )
     cfg = _cfg(
-        tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"}
+        tmp_path,
+        {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"},
     )
     first = await run_scan(cfg, dry_run=True)
     assert len(first.reportable) == 1
@@ -879,7 +881,11 @@ def test_stale_postings_are_dropped_but_undated_ones_are_kept() -> None:
     dated 2024-02-15 - but a handful of feeds give no date at all, and treating
     those as stale would delete a whole source rather than its old rows.
     """
-    jobs = [_job_posted(5, "fresh"), _job_posted(400, "ancient"), _job_posted(None, "undated")]
+    jobs = [
+        _job_posted(5, "fresh"),
+        _job_posted(400, "ancient"),
+        _job_posted(None, "undated"),
+    ]
     kept, dropped = _drop_stale(jobs, 90)
     assert dropped == 1
     assert {j.title for j in kept} == {"fresh", "undated"}
@@ -895,11 +901,15 @@ def test_a_zero_max_age_keeps_everything() -> None:
 async def test_a_source_that_goes_quiet_is_reported(tmp_path: Path) -> None:
     """The alarm for this project's one recurring defect: a source that stops
     returning rows without raising, leaving a run that still exits 0."""
-    worked = SourceReport(kind="greenhouse", slug="janestreet", label="Jane Street", count=228)
+    worked = SourceReport(
+        kind="greenhouse", slug="janestreet", label="Jane Street", count=228
+    )
     async with Store(tmp_path / "s.db") as store:
         assert await _check_coverage([worked], store) == []
 
-        silent = SourceReport(kind="greenhouse", slug="janestreet", label="Jane Street", count=0)
+        silent = SourceReport(
+            kind="greenhouse", slug="janestreet", label="Jane Street", count=0
+        )
         quiet = await _check_coverage([silent], store)
     assert quiet == [("Jane Street", 228)]
 
@@ -919,11 +929,15 @@ async def test_a_failed_source_is_not_also_called_quiet(tmp_path: Path) -> None:
     ok = SourceReport(kind="lever", slug="prima", label="Prima", count=97)
     async with Store(tmp_path / "s.db") as store:
         await _check_coverage([ok], store)
-        broke = SourceReport(kind="lever", slug="prima", label="Prima", count=0, error="HTTP 500")
+        broke = SourceReport(
+            kind="lever", slug="prima", label="Prima", count=0, error="HTTP 500"
+        )
         assert await _check_coverage([broke], store) == []
 
 
-async def test_two_entries_sharing_a_slug_keep_separate_histories(tmp_path: Path) -> None:
+async def test_two_entries_sharing_a_slug_keep_separate_histories(
+    tmp_path: Path,
+) -> None:
     """The Adzuna config has one entry per location, so kind and slug alone
     would make the two overwrite each other and hide a real outage."""
     london = SourceReport(kind="adzuna", slug="gb", label="Adzuna London", count=203)
@@ -933,7 +947,9 @@ async def test_two_entries_sharing_a_slug_keep_separate_histories(tmp_path: Path
         quiet = await _check_coverage(
             [
                 SourceReport(kind="adzuna", slug="gb", label="Adzuna London", count=0),
-                SourceReport(kind="adzuna", slug="gb", label="Adzuna UK-wide", count=12),
+                SourceReport(
+                    kind="adzuna", slug="gb", label="Adzuna UK-wide", count=12
+                ),
             ],
             store,
         )
@@ -1173,4 +1189,6 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
         "run_scan must have made its own two fresh ollama calls against the "
         "new db, not silently read the FitScorer pass's cache"
     )
-    assert [s.job.title for s in result.reportable] == ["Graduate Energy Data Scientist"]
+    assert [s.job.title for s in result.reportable] == [
+        "Graduate Energy Data Scientist"
+    ]

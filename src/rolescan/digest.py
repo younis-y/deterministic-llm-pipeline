@@ -272,8 +272,7 @@ def _stats(result: ScanResult) -> str:
         # they are already recorded as seen, so this is the reader's only
         # chance to notice a blocker term that is matching the wrong thing.
         bits.append(
-            f"{result.hidden_blocked} blocked and hidden "
-            "(output.show_blocked is false)"
+            f"{result.hidden_blocked} blocked and hidden (output.show_blocked is false)"
         )
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
@@ -595,7 +594,7 @@ def _fit_html(item: ScoredJob, fit: FitVerdict) -> list[str]:
     if fit.keywords_missing:
         sub.append(
             f'<div style="{_SUB_LINE}">Gaps: '
-            f'{_esc(", ".join(fit.keywords_missing))}</div>'
+            f"{_esc(', '.join(fit.keywords_missing))}</div>"
         )
     out.append(f'<div style="{_SUB}">{"".join(sub)}</div>')
     return out
@@ -628,9 +627,7 @@ def _apply_html(item: ScoredJob) -> str:
     # exists to prevent, so the link stays and the invitation does not.
     label = "View posting" if item.is_blocked else "Apply"
     style = _BTN_MUTED if item.is_blocked else _BTN
-    return (
-        f'<div style="{_BTN_ROW}"><a href="{href}" style="{style}">{label}</a></div>'
-    )
+    return f'<div style="{_BTN_ROW}"><a href="{href}" style="{style}">{label}</a></div>'
 
 
 def _role_html(item: ScoredJob) -> str:
@@ -786,9 +783,9 @@ def _shortlist_html(
             f'<div style="{_SL_HEAD}">{_esc(headline or url)}</div>'
             f'<div style="{_SL_URL}">{link}</div>'
             f'<div style="{_SL_CMD}">'
-            f'{_code(f"rolescan mark {url} applied{flag}")}</div>'
+            f"{_code(f'rolescan mark {url} applied{flag}')}</div>"
             f'<div style="{_SL_CMD}">'
-            f'{_code(f"rolescan mark {url} dismissed{flag}")}</div>'
+            f"{_code(f'rolescan mark {url} dismissed{flag}')}</div>"
             "</div>"
         )
     return out

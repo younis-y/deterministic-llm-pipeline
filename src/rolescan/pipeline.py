@@ -275,9 +275,7 @@ def _drop_stale(jobs: list[Job], max_age_days: int) -> tuple[list[Job], int]:
     kept = [
         j
         for j in jobs
-        if j.posted is None
-        or j.posted >= cutoff
-        or not _ages_meaningfully(j.source)
+        if j.posted is None or j.posted >= cutoff or not _ages_meaningfully(j.source)
     ]
     return kept, len(jobs) - len(kept)
 
@@ -300,9 +298,7 @@ async def _judge(
     candidates: list[ScoredJob], cfg: Config, store: Store
 ) -> tuple[list[ScoredJob], FitScorer]:
     """LLM fit score, cached on the posting's content hash."""
-    scorer = FitScorer(
-        cfg.llm, cfg.profile, store, extra_prompt=cfg.llm.extra_prompt
-    )
+    scorer = FitScorer(cfg.llm, cfg.profile, store, extra_prompt=cfg.llm.extra_prompt)
     judged = await scorer.score_all(candidates)
     return judged, scorer
 
@@ -400,9 +396,7 @@ async def _check_coverage(
                     report.label or report.slug,
                     previous,
                 )
-    await store.record_source_counts(
-        {_source_key(r): r.count for r in reports if r.ok}
-    )
+    await store.record_source_counts({_source_key(r): r.count for r in reports if r.ok})
     return quiet
 
 

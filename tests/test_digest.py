@@ -150,7 +150,11 @@ def test_digest_does_not_call_a_skipped_source_a_failure() -> None:
     result = ScanResult(
         reports=[
             SourceReport(
-                kind="adzuna", slug="x", label="Adzuna", skipped=True, error="no API key"
+                kind="adzuna",
+                slug="x",
+                label="Adzuna",
+                skipped=True,
+                error="no API key",
             ),
             SourceReport(
                 kind="linkedin",
@@ -169,8 +173,16 @@ def test_digest_does_not_call_a_skipped_source_a_failure() -> None:
 def test_digest_reports_a_mix_of_errors_and_skips_truthfully() -> None:
     result = ScanResult(
         reports=[
-            SourceReport(kind="adzuna", slug="x", label="Adzuna", skipped=True, error="no API key"),
-            SourceReport(kind="linkedin", slug="y", label="LinkedIn", error="challenge page"),
+            SourceReport(
+                kind="adzuna",
+                slug="x",
+                label="Adzuna",
+                skipped=True,
+                error="no API key",
+            ),
+            SourceReport(
+                kind="linkedin", slug="y", label="LinkedIn", error="challenge page"
+            ),
         ]
     )
     text = render_markdown(result)
@@ -185,9 +197,7 @@ def test_shortlist_row_with_blank_company_and_title_falls_back_to_url() -> None:
     """The Task 6 defect: `mark shortlist` on an unscanned url leaves company
     and title blank. The digest must never render an empty bullet for it —
     it must fall back to something a human can act on, here the url."""
-    text = render_markdown(
-        _empty_result(), shortlist=[("https://x/9", "", "")]
-    )
+    text = render_markdown(_empty_result(), shortlist=[("https://x/9", "", "")])
     assert "- https://x/9" in text
     assert "**" + " — " + "**" not in text
     assert "-  \n" not in text
@@ -205,9 +215,7 @@ def test_shortlist_row_with_only_company_still_renders() -> None:
 def _one(job: Job | None = None, fit: FitVerdict | None = None) -> ScanResult:
     """A scan carrying one scored role, so a block can be inspected."""
     return ScanResult(
-        reportable=[
-            ScoredJob(job=job or _job(), keyword_score=40, fit=fit or _fit())
-        ]
+        reportable=[ScoredJob(job=job or _job(), keyword_score=40, fit=fit or _fit())]
     )
 
 
@@ -266,9 +274,7 @@ def test_a_javascript_url_never_becomes_a_live_link() -> None:
 def test_a_url_cannot_break_out_of_the_href_attribute() -> None:
     """`quote=True` is the whole reason the escape helper exists: without it
     a quote in the url closes the attribute and the rest becomes markup."""
-    job = _job().model_copy(
-        update={"url": 'https://x/7"onmouseover="alert(1)'}
-    )
+    job = _job().model_copy(update={"url": 'https://x/7"onmouseover="alert(1)'})
     html = render_html(_one(job=job))
     assert 'onmouseover="alert(1)' not in html
     assert "&quot;onmouseover=&quot;alert(1)" in html
@@ -303,7 +309,9 @@ def test_the_four_verdicts_do_not_look_alike() -> None:
             ]
         )
     )
-    seen.add(blocked[blocked.index("border-left:") : blocked.index("border-left:") + 30])
+    seen.add(
+        blocked[blocked.index("border-left:") : blocked.index("border-left:") + 30]
+    )
     assert len(seen) == 4, "each verdict needs its own colour"
 
 
@@ -350,7 +358,11 @@ def test_html_keeps_the_failures_and_skipped_blocks() -> None:
         reports=[
             SourceReport(kind="lever", slug="acme", label="Acme", error="timeout"),
             SourceReport(
-                kind="adzuna", slug="x", label="Adzuna", skipped=True, error="no API key"
+                kind="adzuna",
+                slug="x",
+                label="Adzuna",
+                skipped=True,
+                error="no API key",
             ),
         ]
     )
@@ -377,8 +389,7 @@ def test_html_keeps_the_unusable_backend_note() -> None:
 # judge-backend failure text for a merely misspelt `llm.enricher`.
 
 _ENRICHER_REASON = (
-    "llm.enricher 'not-a-real-enricher' is not a registered enricher "
-    "(registered: none)"
+    "llm.enricher 'not-a-real-enricher' is not a registered enricher (registered: none)"
 )
 
 
@@ -437,7 +448,9 @@ def test_html_keeps_the_shortlist_and_its_commands() -> None:
     )
     assert "Shortlist" in html
     assert "Glencore" in html
-    assert "rolescan mark https://x/1 applied --config /etc/rolescan/config.yaml" in html
+    assert (
+        "rolescan mark https://x/1 applied --config /etc/rolescan/config.yaml" in html
+    )
     assert "rolescan mark https://x/1 dismissed" in html
 
 

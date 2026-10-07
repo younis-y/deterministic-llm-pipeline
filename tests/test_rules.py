@@ -41,7 +41,11 @@ def _f(fit: int = 80, **kw: object) -> PostingFacts:
     ("facts", "verdict", "reason_part"),
     [
         (
-            _f(hard_bars=[HardBar(kind=BarKind.clearance, quote="SC clearance required")]),
+            _f(
+                hard_bars=[
+                    HardBar(kind=BarKind.clearance, quote="SC clearance required")
+                ]
+            ),
             "blocked",
             "SC clearance required",
         ),
@@ -56,7 +60,11 @@ def _f(fit: int = 80, **kw: object) -> PostingFacts:
             "Senior Data Engineer",
         ),
         (_f(years_required=YearsFact(value=5, quote="5+ years")), "skip", "5+ years"),
-        (_f(field=FieldFact(value=JobField.other, quote="Front desk")), "skip", "Front desk"),
+        (
+            _f(field=FieldFact(value=JobField.other, quote="Front desk")),
+            "skip",
+            "Front desk",
+        ),
         (_f(fit=80), "apply", "Model sentence."),
         (_f(fit=50), "consider", "Model sentence."),
         (_f(fit=30), "skip", "Model sentence."),
@@ -85,11 +93,15 @@ def test_all_facts_not_stated_is_decided_by_fit_alone() -> None:
 
 def test_years_at_the_limit_pass_and_above_skip() -> None:
     assert (
-        decide(_f(years_required=YearsFact(value=2, quote="2 years")), RULES, 50).verdict.value
+        decide(
+            _f(years_required=YearsFact(value=2, quote="2 years")), RULES, 50
+        ).verdict.value
         == "apply"
     )
     assert (
-        decide(_f(years_required=YearsFact(value=3, quote="3 years")), RULES, 50).verdict.value
+        decide(
+            _f(years_required=YearsFact(value=3, quote="3 years")), RULES, 50
+        ).verdict.value
         == "skip"
     )
 
@@ -97,18 +109,29 @@ def test_years_at_the_limit_pass_and_above_skip() -> None:
 def test_student_only_allowed_when_configured() -> None:
     rules = RULES.model_copy(update={"student_only": "allow"})
     assert (
-        decide(_f(student_only=StudentFact(value=True, quote="Students only")), rules, 50).verdict.value
+        decide(
+            _f(student_only=StudentFact(value=True, quote="Students only")), rules, 50
+        ).verdict.value
         == "apply"
     )
 
 
 def test_no_rules_block_means_no_rule_fires() -> None:
-    assert decide(_f(level=LevelFact(value=Level.senior, quote="Senior")), None, 50).verdict.value == "apply"
+    assert (
+        decide(
+            _f(level=LevelFact(value=Level.senior, quote="Senior")), None, 50
+        ).verdict.value
+        == "apply"
+    )
 
 
 def test_scores_are_capped_so_skips_and_blocks_never_reach_the_digest() -> None:
-    skip = decide(_f(fit=90, years_required=YearsFact(value=5, quote="5+ years")), RULES, 50)
-    block = decide(_f(fit=90, hard_bars=[HardBar(kind=BarKind.clearance, quote="DV")]), RULES, 50)
+    skip = decide(
+        _f(fit=90, years_required=YearsFact(value=5, quote="5+ years")), RULES, 50
+    )
+    block = decide(
+        _f(fit=90, hard_bars=[HardBar(kind=BarKind.clearance, quote="DV")]), RULES, 50
+    )
     assert skip.fit_score == 49 and block.fit_score == 20
     assert block.blockers == ["DV"]
 
@@ -126,7 +149,9 @@ FS_QUOTE = (
 
 
 def test_a_verified_other_bar_is_a_rule_skip_not_a_block() -> None:
-    v = decide(_f(fit=90, hard_bars=[HardBar(kind=BarKind.other, quote=FS_QUOTE)]), RULES, 50)
+    v = decide(
+        _f(fit=90, hard_bars=[HardBar(kind=BarKind.other, quote=FS_QUOTE)]), RULES, 50
+    )
     assert v.verdict.value == "skip"
     assert v.reason.startswith('Skip: advert requires "')
     assert "financial" in v.reason
@@ -136,7 +161,11 @@ def test_a_verified_other_bar_is_a_rule_skip_not_a_block() -> None:
 
 
 def test_an_other_bar_skips_even_with_no_rules_block() -> None:
-    v = decide(_f(fit=90, hard_bars=[HardBar(kind=BarKind.other, quote="UK driving licence")]), None, 50)
+    v = decide(
+        _f(fit=90, hard_bars=[HardBar(kind=BarKind.other, quote="UK driving licence")]),
+        None,
+        50,
+    )
     assert v.verdict.value == "skip" and v.fit_score == 49
 
 
@@ -148,10 +177,12 @@ def test_structural_bars_still_block(kind: BarKind) -> None:
 
 def test_a_structural_bar_listed_after_an_other_bar_still_blocks() -> None:
     v = decide(
-        _f(hard_bars=[
-            HardBar(kind=BarKind.other, quote="UK driving licence"),
-            HardBar(kind=BarKind.clearance, quote="SC clearance required"),
-        ]),
+        _f(
+            hard_bars=[
+                HardBar(kind=BarKind.other, quote="UK driving licence"),
+                HardBar(kind=BarKind.clearance, quote="SC clearance required"),
+            ]
+        ),
         RULES,
         50,
     )
@@ -185,10 +216,12 @@ def test_a_work_auth_bar_alone_with_no_rules_is_decided_by_fit_score() -> None:
 
 def test_nationality_still_blocks_next_to_a_work_auth_bar() -> None:
     v = decide(
-        _f(hard_bars=[
-            HardBar(kind=BarKind.work_auth, quote="No visa sponsorship"),
-            HardBar(kind=BarKind.nationality, quote="UK nationals only"),
-        ]),
+        _f(
+            hard_bars=[
+                HardBar(kind=BarKind.work_auth, quote="No visa sponsorship"),
+                HardBar(kind=BarKind.nationality, quote="UK nationals only"),
+            ]
+        ),
         RULES,
         50,
     )
@@ -199,10 +232,13 @@ def test_nationality_still_blocks_next_to_a_work_auth_bar() -> None:
 
 def test_an_other_bar_still_skips_next_to_a_work_auth_bar() -> None:
     v = decide(
-        _f(fit=90, hard_bars=[
-            HardBar(kind=BarKind.work_auth, quote="No visa sponsorship"),
-            HardBar(kind=BarKind.other, quote="UK driving licence"),
-        ]),
+        _f(
+            fit=90,
+            hard_bars=[
+                HardBar(kind=BarKind.work_auth, quote="No visa sponsorship"),
+                HardBar(kind=BarKind.other, quote="UK driving licence"),
+            ],
+        ),
         RULES,
         50,
     )
