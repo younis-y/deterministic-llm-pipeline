@@ -406,10 +406,18 @@ def _bar_supported(bar: HardBar) -> bool:
 
 #: A graduation year's quote must say graduation (2.5.7). "2027 Summer
 #: Intern" passed `_year_in_quote` and switched the student rule off for a
-#: programme year that says nothing about when the applicant graduates.
+#: programme year that says nothing about when the applicant graduates. A
+#: programme's own name does not say it either: "2027 Graduate Programme",
+#: "2027 Graduate Scheme" and "Summer 2027 Graduate Analyst" name the
+#: programme, so "graduate" followed by a programme noun is not a graduation
+#: word ("graduates in 2029", "Graduation date", "graduating in 2028" are).
 _GRADUATION_WORD = re.compile(
-    r"\b(?:graduat\w*|class\s+of|completion|complet(?:e|ing)\s+(?:your|the|a|their)\s+"
-    r"(?:degree|studies|programme|program|course)|degree\s+(?:by|in|before|between|no\s+later))\b",
+    r"\b(?:graduat(?:ing|ion|ed|es?)\b(?!\s+(?:programme|program|scheme|analyst"
+    r"|trainee|role|position|hire|opportunit\w*|intake))"
+    r"|class\s+of|completion"
+    r"|complet(?:e|ing)\s+(?:your|the|a|their)\s+"
+    r"(?:degree|studies|programme|program|course)"
+    r"|degree\s+(?:by|in|before|between|no\s+later))\b",
     re.IGNORECASE,
 )
 
@@ -601,13 +609,21 @@ def graduates_eligible(text: str) -> str | None:
 
 
 #: Enrolment wording that also offers a route to graduates in the same
-#: sentence ("Currently pursuing OR holding a degree", "(or expected for
-#: those in their penultimate year)", "studying for, or have recently
-#: completed"). Seen on Tikehau Capital and LCCC adverts the owner wanted
-#: (2026-10-07); the sentence names students, but does not restrict to them.
+#: sentence ("Currently pursuing OR holding a degree", "A 2:1 degree (or
+#: expected for those in their penultimate year)", "studying for, or have
+#: recently completed, a Master's degree"). Seen on Tikehau Capital and LCCC
+#: adverts the owner wanted (2026-10-07); the sentence names students, but
+#: does not restrict to them. Deliberately narrow: "or expected to graduate"
+#: names a student too ("currently enrolled, or expected to graduate in
+#: 2027"), so "expected" counts only in the LCCC shape, in brackets right
+#: after a degree word; "or completed" only when a degree word follows within
+#: the clause ("or completed 2 years of study" is still a student).
 _ALTERNATIVE_ROUTE = re.compile(
-    r"\b(?:or\s+(?:holding|hold|have\s+(?:completed|obtained|held|recently\s+completed)"
-    r"|completed|recently\s+completed|graduated|expected)|\(\s*or\s+expected)\b",
+    r"\bor\s+(?:holding|hold|graduated)\b"
+    r"|\bor\s+(?:have\s+(?:completed|obtained|held|recently\s+completed)"
+    r"|completed|recently\s+completed)\b[^.!?;\n]{0,30}?"
+    r"\b(?:degree|master|bachelor|studies|msc|bsc|mba|ph\.?\s?d)"
+    r"|\bdegree\s*\(\s*or\s+expected\b",
     re.IGNORECASE,
 )
 
@@ -851,21 +867,29 @@ def years_required_stated(text: str) -> tuple[int, str] | None:
     return None
 
 
+#: "lo-hi" with an optional decimal on either end and, since the labelled
+#: shape ("Years of experience: 0-2") has no years word, no trailing word.
 _YEARS_RANGE = re.compile(
-    r"(?<![\d.])(?P<lo>\d{1,2})\s*(?:-|\u2013|\u2014|to)\s*(?P<hi>\d{1,2})\s*\+?\s*(?:years?|yrs?)",
+    r"(?<![\d.])(?P<lo>\d{1,2}(?:\.\d+)?)\s*(?:-|\u2013|\u2014|to)\s*"
+    r"(?P<hi>\d{1,2}(?:\.\d+)?)(?!\d)",
     re.IGNORECASE,
 )
 
 
 def _range_bounds(quote: str) -> tuple[int, int] | None:
-    """The (low, high) of a "lo-hi years" range in `quote`, or None if it has none.
+    """The (low, high) of a "lo-hi" range in `quote`, or None if it has none.
 
     The model answered 2 for "0-2 years" (the eval's Quantcast ML Engineer,
     a good role hidden by `max_years_required: 1`). A range's requirement is
-    its low end, and a low end of 0 is no requirement at all.
+    its low end, and a low end of 0 is no requirement at all. Decimals round
+    down ("0.5-2" is 0 to 2), and a "range" whose low end is not below its
+    high end ("7 - 5") is not one.
     """
     m = _YEARS_RANGE.search(quote)
-    return (int(m.group("lo")), int(m.group("hi"))) if m else None
+    if m is None:
+        return None
+    low, high = int(float(m.group("lo"))), int(float(m.group("hi")))
+    return (low, high) if low < high else None
 
 
 def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
@@ -875,16 +899,19 @@ def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
     adverts said "3+ years of experience", "5+ years" and "3-7 years": the
     model's reason text repeated the requirement, but its `years_required`
     came back null in 12 of 13 such adverts, so the owner's
-    `max_years_required` rule never fired. When the model did state a value
-    it is kept - it has passed the quote guard - and only a null is filled,
-    from the title first, quoting the words `years_required_stated` matched,
-    which are verbatim and so would pass the guard themselves.
+    `max_years_required` rule never fired. A null is filled from the title
+    first, quoting the words `years_required_stated` matched, which are
+    verbatim and so would pass the guard themselves. A value the model did
+    state is kept - it has passed the quote guard - except as follows.
 
     2.5.7: a stated value that is the high end of a range in its own quote
     (the model picked the top of it) is corrected to the low end ("0-2 years"
     answered as 2 becomes no requirement; "3-5 years" answered as 5 becomes
     3). Any other value is kept, so a quote with an unrelated range in it
-    ("5+ years overall, 2-3 years in Python" answered as 5) is left alone.
+    ("5+ years overall, 2-3 years in Python" answered as 5) is left alone. A
+    value cleared because its range starts at 0 is then read like a null, in
+    the same pass, so a later requirement in the advert ("0-2 years ... You
+    will also need 3+ years") is found now and not only on a rerun.
 
     Pure and idempotent; never mutates `facts`. Expects `facts` to have been
     through `verify_facts` already.
@@ -895,12 +922,10 @@ def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
         if bounds is None or bounds[1] != stated.value:
             return facts
         low = bounds[0]
-        fixed = (
-            YearsFact(value=None, quote="")
-            if low == 0
-            else YearsFact(value=low, quote=stated.quote)
-        )
-        return facts.model_copy(update={"years_required": fixed})
+        if low > 0:
+            fixed = YearsFact(value=low, quote=stated.quote)
+            return facts.model_copy(update={"years_required": fixed})
+        facts = facts.model_copy(update={"years_required": YearsFact()})
     found = years_required_stated(job.title) or years_required_stated(job.description)
     if found is None:
         return facts

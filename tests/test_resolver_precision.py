@@ -60,6 +60,24 @@ def test_plain_enrolment_wording_is_still_students_only() -> None:
     assert students_only("You must be in your penultimate year of study.") is not None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Currently pursuing a degree or expected to graduate in 2027.",
+        "Candidates must be currently enrolled, or expected to graduate in 2027.",
+        "Candidates must be in their penultimate year, or expected to graduate in 2028.",
+        "Penultimate year students or completed 2 years of study.",
+    ],
+)
+def test_expected_to_graduate_is_still_a_student(text: str) -> None:
+    """ "Or expected to graduate" names a student, not a graduate route; only
+    the LCCC shape (a degree word, then "(or expected ...") does. "Or
+    completed" is a route only when it completes a degree."""
+    assert students_only(text) is not None
+    facts = resolve_student(_facts(), _job(text))
+    assert facts.student_only.value is True
+
+
 def test_zero_to_two_years_is_not_a_requirement() -> None:
     """Review focus 4."""
     job = _job("0-2 years of experience in machine learning.")
@@ -72,6 +90,42 @@ def test_a_range_is_read_at_its_low_end() -> None:
     job = _job("3-5 years of experience in data engineering.")
     facts = _facts(years_required=YearsFact(value=5, quote="3-5 years of experience"))
     assert resolve_years(verify_facts(facts, job), job).years_required.value == 3
+
+
+@pytest.mark.parametrize(
+    ("text", "stated", "expected"),
+    [
+        ("Years of experience: 0-2", 2, None),
+        ("Years of experience: 3-5", 5, 3),
+        ("Experience: 0.5-2 years", 2, None),
+    ],
+)
+def test_a_labelled_or_decimal_range_is_read_like_the_null_path(
+    text: str, stated: int, expected: int | None
+) -> None:
+    quote = text
+    job = _job(text)
+    facts = _facts(years_required=YearsFact(value=stated, quote=quote))
+    assert resolve_years(verify_facts(facts, job), job).years_required.value == expected
+
+
+def test_an_inverted_range_does_not_correct_the_value() -> None:
+    """ "7 - 5" is not a range with a low end of 7."""
+    job = _job("7 - 5 years of experience.")
+    facts = _facts(years_required=YearsFact(value=5, quote="7 - 5 years of experience"))
+    assert resolve_years(verify_facts(facts, job), job).years_required.value == 5
+
+
+def test_a_cleared_range_reads_a_later_requirement_in_the_same_pass() -> None:
+    """ "0-2 years" clears the model's 2; the advert's own "3+ years" is then
+    read at once, not on a rerun."""
+    job = _job(
+        "0-2 years of experience. You will also need 3+ years of experience in Python."
+    )
+    facts = _facts(years_required=YearsFact(value=2, quote="0-2 years of experience"))
+    once = resolve_years(verify_facts(facts, job), job)
+    assert once.years_required.value == 3
+    assert resolve_years(once, job) == once
 
 
 def test_a_stated_low_end_or_single_figure_is_left_alone() -> None:
@@ -121,17 +175,34 @@ def test_a_programme_year_is_not_a_graduation_year() -> None:
 
 
 @pytest.mark.parametrize(
-    "quote",
+    ("quote", "year"),
     [
-        "Graduation date January 2028 - September 2028",
-        "You must be graduating in 2028",
-        "expected graduation date of December 2027",
-        "with a completion time frame of 2028",
-        "Class of 2027 candidates",
+        ("Graduation date January 2028 - September 2028", 2028),
+        ("You must be graduating in 2028", 2028),
+        ("expected graduation date of December 2027", 2027),
+        ("with a completion time frame of 2028", 2028),
+        ("Class of 2027 candidates", 2027),
+        ("graduates in 2029", 2029),
+        ("Graduation date January 2028", 2028),
+        ("recent graduates (class of 2027)", 2027),
     ],
 )
-def test_a_graduation_year_needs_a_graduation_word(quote: str) -> None:
+def test_a_graduation_year_needs_a_graduation_word(quote: str, year: int) -> None:
     job = _job(quote)
-    year = 2028 if "2028" in quote else 2027
     facts = _facts(graduation_year=GraduationYearFact(value=year, quote=quote))
     assert verify_facts(facts, job).graduation_year.value == year
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "2027 Graduate Programme",
+        "2027 Graduate Scheme",
+        "Summer 2027 Graduate Analyst",
+    ],
+)
+def test_a_graduate_programme_name_is_not_a_graduation_word(quote: str) -> None:
+    """The word names the programme, not when the applicant graduates."""
+    job = _job(quote, title=quote)
+    facts = _facts(graduation_year=GraduationYearFact(value=2027, quote=quote))
+    assert verify_facts(facts, job).graduation_year.value is None
