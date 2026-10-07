@@ -13,6 +13,7 @@ from rolescan.config import EmailConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
 from rolescan.pipeline import ScanResult, SourceReport
 from rolescan.scoring.judges import available_judges
+from rolescan.scoring.rules import RULE_ORDER
 
 __all__ = ["render_html", "render_markdown", "send_email", "write_digest"]
 
@@ -62,6 +63,85 @@ _DISCOVER_FRAGS: _Frags = [
 
 def _md_frags(frags: _Frags) -> str:
     return "".join(f"`{text}`" if code else text for text, code in frags)
+
+
+# --- Hidden by your rules ---------------------------------------------------
+#
+# On 2026-10-06, 44 of 109 scored postings were hidden by `profile.rules` with
+# no trace: a rule skip is capped below `min_report_score` and a rule block is
+# dropped by `show_blocked: false`, so a mis-read advert or a rule bug that
+# skipped a good role was invisible. This section lists them, one line each,
+# grouped by the rule that fired, so a wrong skip can be spotted. Both
+# renderers build from `_rule_hidden_groups`, so only the markup can differ.
+
+#: A short heading per `FitVerdict.rule`. `hard_bar` also covers the skip an
+#: `other` bar gives (a driving licence, a sector background), so the label
+#: does not claim every one of them is a nationality or clearance bar.
+_RULE_LABELS: dict[str, str] = {
+    "hard_bar": "Nationality, clearance or other hard bar",
+    "graduation_year": "Graduation year",
+    "student_only": "Students only",
+    "level": "Level",
+    "years": "Years of experience",
+    "field": "Field",
+}
+
+_RULE_HIDDEN_LEAD = (
+    "Skipped or blocked by one of your rules, so not listed above. One line "
+    "each, so a wrong skip can be spotted."
+)
+
+_REASON_PREFIXES = ("Skip: ", "Blocked: ")
+
+
+def _hidden_reason(reason: str) -> str:
+    """`reason` without its verdict prefix: the heading already says why."""
+    for prefix in _REASON_PREFIXES:
+        if reason.startswith(prefix):
+            return reason.removeprefix(prefix)
+    return reason
+
+
+def _rule_hidden_groups(result: ScanResult) -> list[tuple[str, list[tuple[Job, str]]]]:
+    """(heading, [(posting, reason)]) per rule, in `decide`'s order.
+
+    A rule name this module has no label for (one added to `decide` without
+    updating `_RULE_LABELS`) still renders, under its own name and after the
+    known ones, rather than vanishing from the one place it is reported.
+    """
+    groups: dict[str, list[tuple[Job, str]]] = {}
+    for item in result.rule_hidden:
+        if item.fit is None or item.fit.rule is None:
+            continue
+        rows = groups.setdefault(item.fit.rule, [])
+        rows.append((item.job, _hidden_reason(item.fit.reason)))
+    rank = {rule: i for i, rule in enumerate(RULE_ORDER)}
+    return [
+        (
+            _RULE_LABELS.get(rule, rule),
+            sorted(
+                groups[rule],
+                key=lambda row: (row[0].company.casefold(), row[0].title.casefold()),
+            ),
+        )
+        for rule in sorted(groups, key=lambda r: (rank.get(r, len(rank)), r))
+    ]
+
+
+def _rule_hidden_section(result: ScanResult) -> list[str]:
+    groups = _rule_hidden_groups(result)
+    if not groups:
+        return []
+    lines = ["## Hidden by your rules", "", _RULE_HIDDEN_LEAD, ""]
+    for heading, rows in groups:
+        lines += [f"**{heading}**", ""]
+        for job, reason in rows:
+            bits = [f"**{job.company}**", f"[{job.title}]({job.url})"]
+            if job.location:
+                bits.append(job.location)
+            lines.append(f"- {' · '.join(bits)}: {reason}")
+        lines.append("")
+    return lines
 
 
 def _role(item: ScoredJob) -> list[str]:
@@ -175,6 +255,7 @@ def render_markdown(
             _stats(result),
             "",
         ]
+        out += _rule_hidden_section(result)
         out += _failures(result)
         if shortlist:
             out += _shortlist_section(shortlist, config_path)
@@ -206,6 +287,7 @@ def render_markdown(
         for item in blocked:
             out += _role(item)
 
+    out += _rule_hidden_section(result)
     out += _failures(result)
     if shortlist:
         out += _shortlist_section(shortlist, config_path)
@@ -274,6 +356,11 @@ def _stats(result: ScanResult) -> str:
         bits.append(
             f"{result.hidden_blocked} blocked and hidden (output.show_blocked is false)"
         )
+    if result.rule_hidden:
+        # Only when it happened, for the same reason. Counted separately from
+        # the clause above: that one is postings `show_blocked` removed, this
+        # one is postings any rule removed, and a rule block can be both.
+        bits.append(f"{len(result.rule_hidden)} hidden by your rules")
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
 
@@ -791,6 +878,37 @@ def _shortlist_html(
     return out
 
 
+def _rule_hidden_line_html(job: Job, reason: str) -> str:
+    title = _esc(job.title)
+    if href := _href(job.url):
+        title = f'<a href="{href}" style="{_LINK}">{title}</a>'
+    bits = [f"<strong>{_esc(job.company)}</strong>", title]
+    if job.location:
+        bits.append(_esc(job.location))
+    return f"{' · '.join(bits)}: {_esc(reason)}"
+
+
+def _rule_hidden_html(result: ScanResult) -> list[str]:
+    """The HTML counterpart of `_rule_hidden_section`."""
+    groups = _rule_hidden_groups(result)
+    if not groups:
+        return []
+    out = [
+        f'<h2 style="{_H2}">Hidden by your rules</h2>',
+        f'<div style="{_LEAD}">{_esc(_RULE_HIDDEN_LEAD)}</div>',
+    ]
+    for heading, rows in groups:
+        items = "".join(
+            f'<li style="{_LI}">{_rule_hidden_line_html(job, reason)}</li>'
+            for job, reason in rows
+        )
+        out += [
+            f'<div style="{_SUB_LABEL}">{_esc(heading)}</div>',
+            f'<ul style="{_UL}">{items}</ul>',
+        ]
+    return out
+
+
 def _roles_html(result: ScanResult) -> list[str]:
     if not result.reportable:
         return [
@@ -833,6 +951,7 @@ def render_html(
     if result.dry_run:
         body.append(f'<div style="{_DRY}">Dry run: nothing was marked as seen.</div>')
     body += _roles_html(result)
+    body += _rule_hidden_html(result)
     body += _failures_html(result)
     if shortlist:
         body += _shortlist_html(shortlist, config_path)

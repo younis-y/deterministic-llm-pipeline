@@ -25,9 +25,23 @@ APPLY_AT = 65
 CONSIDER_AT = 40
 BLOCKED_CAP = 20
 
-__all__ = ["APPLY_AT", "BLOCKED_CAP", "CONSIDER_AT", "decide"]
+__all__ = ["APPLY_AT", "BLOCKED_CAP", "CONSIDER_AT", "RULE_ORDER", "decide"]
 
 _REASON_CHARS = 220
+
+#: The name `decide` writes to `FitVerdict.rule` for each rule, in the order it
+#: applies them (see its docstring). `hard_bar` covers rules 1 and 1b: a
+#: nationality or clearance block and an `other` bar's skip. The digest groups
+#: rule-hidden postings in this order, so a rule added to `decide` belongs here
+#: too, at the place it is checked.
+RULE_ORDER = (
+    "hard_bar",
+    "graduation_year",
+    "student_only",
+    "level",
+    "years",
+    "field",
+)
 
 #: Bars whose category itself constrains the model: a nationality gate or a
 #: clearance. Only these block. `BarKind.other` is open
@@ -61,10 +75,11 @@ def _quote_reason(prefix: str, quote: str) -> str:
     return f'{prefix}"{q}"'
 
 
-def _rule_skip(facts: PostingFacts, rules: RulesConfig) -> str | None:
-    """The reason the first of rules 2-6 that fires gives, or None.
+def _rule_skip(facts: PostingFacts, rules: RulesConfig) -> tuple[str, str] | None:
+    """The name and reason of the first of rules 2-6 that fires, or None.
 
     Split out of `decide` so the rule order reads top to bottom in one place.
+    The name is the rule's entry in `RULE_ORDER`.
     """
     year = facts.graduation_year.value
     limit = rules.max_graduation_year
@@ -74,32 +89,37 @@ def _rule_skip(facts: PostingFacts, rules: RulesConfig) -> str | None:
     # exactly as it did before the year was extracted.
     judged_by_year = year is not None and limit is not None
     if year is not None and limit is not None and year > limit:
-        return _quote_reason("Skip: advert says ", facts.graduation_year.quote)
+        reason = _quote_reason("Skip: advert says ", facts.graduation_year.quote)
+        return "graduation_year", reason
     level = facts.level
     if (
         not judged_by_year
         and facts.student_only.value is True
         and rules.student_only == "skip"
     ):
-        return _quote_reason("Skip: advert says ", facts.student_only.quote)
+        return "student_only", _quote_reason(
+            "Skip: advert says ", facts.student_only.quote
+        )
     if (
         level.value != Level.not_stated
         and level.value not in rules.allowed_levels
         and (not rules.level_from_title_only or level.source == "title")
     ):
-        return _quote_reason("Skip: advert is for ", level.quote)
+        return "level", _quote_reason("Skip: advert is for ", level.quote)
     if (
         facts.years_required.value is not None
         and rules.max_years_required is not None
         and facts.years_required.value > rules.max_years_required
     ):
-        return _quote_reason("Skip: advert asks for ", facts.years_required.quote)
+        return "years", _quote_reason(
+            "Skip: advert asks for ", facts.years_required.quote
+        )
     if (
         facts.field.value is not None
         and rules.allowed_fields is not None
         and facts.field.value not in rules.allowed_fields
     ):
-        return _quote_reason("Skip: advert is for ", facts.field.quote)
+        return "field", _quote_reason("Skip: advert is for ", facts.field.quote)
     return None
 
 
@@ -137,6 +157,11 @@ def decide(
     `confidence` is `high` when a rule fired, since a rule is a fact check
     rather than a judgement call, and `medium` otherwise. `keywords_missing`
     always passes through from the model unchanged.
+
+    `rule` names the rule that fired, by its `RULE_ORDER` entry (`hard_bar`
+    for 1 and 1b), and is None when rule 7 decided. The digest lists
+    rule-hidden postings from it: on 2026-10-06, 44 of 109 scored postings
+    were hidden by these rules with no trace, so a wrong skip was invisible.
     """
     bars = [b for b in facts.hard_bars if b.kind not in _IGNORED_BARS]
     structural = [b for b in bars if b.kind in _STRUCTURAL_BARS]
@@ -148,16 +173,18 @@ def decide(
             reason=_quote_reason("Blocked: advert says ", structural[0].quote),
             blockers=[b.quote for b in structural],
             keywords_missing=facts.keywords_missing,
+            rule="hard_bar",
         )
 
-    skip_reason: str | None = None
+    skip: tuple[str, str] | None = None
     if bars:
-        skip_reason = _quote_reason("Skip: advert requires ", bars[0].quote)
+        skip = "hard_bar", _quote_reason("Skip: advert requires ", bars[0].quote)
 
-    if rules is not None and skip_reason is None:
-        skip_reason = _rule_skip(facts, rules)
+    if rules is not None and skip is None:
+        skip = _rule_skip(facts, rules)
 
-    if skip_reason is not None:
+    if skip is not None:
+        rule, skip_reason = skip
         capped = min(facts.fit_score, max(min_report_score - 1, 0))
         return FitVerdict(
             fit_score=capped,
@@ -166,6 +193,7 @@ def decide(
             reason=skip_reason,
             blockers=[],
             keywords_missing=facts.keywords_missing,
+            rule=rule,
         )
 
     if facts.fit_score >= APPLY_AT:

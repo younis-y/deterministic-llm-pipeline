@@ -198,7 +198,10 @@ posting (a fact whose quote is not there is dropped), then applies your
 
 A fact the advert does not state never fires a rule, so an advert that says
 nothing about level or years is decided on fit alone. Every rule skip names
-the rule and quotes the advert. The `rules` keys and their defaults:
+the rule and quotes the advert, and the digest lists every posting a rule
+kept out of it under "Hidden by your rules", one line each grouped by rule,
+so a wrong skip shows up rather than vanishing. The `rules` keys and their
+defaults:
 
 | Key | Default | Meaning |
 |---|---|---|

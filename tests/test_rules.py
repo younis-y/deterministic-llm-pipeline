@@ -3,16 +3,17 @@ from __future__ import annotations
 import pytest
 
 from rolescan.config import RulesConfig
-from rolescan.models import BarKind, JobField, Level
+from rolescan.models import BarKind, FitVerdict, JobField, Level
 from rolescan.scoring.facts import (
     FieldFact,
+    GraduationYearFact,
     HardBar,
     LevelFact,
     PostingFacts,
     StudentFact,
     YearsFact,
 )
-from rolescan.scoring.rules import decide
+from rolescan.scoring.rules import RULE_ORDER, decide
 
 RULES = RulesConfig(
     max_years_required=2,
@@ -244,3 +245,101 @@ def test_an_other_bar_still_skips_next_to_a_work_auth_bar() -> None:
     )
     assert v.verdict.value == "skip"
     assert "UK driving licence" in v.reason
+
+
+# --- the verdict names the rule that fired ----------------------------------
+# On 2026-10-06, 44 of 109 scored postings were hidden by these rules with no
+# trace in the digest. The digest now lists them by rule, which needs the
+# verdict to say which rule fired rather than leaving it to be re-derived from
+# the wording of `reason`.
+
+
+@pytest.mark.parametrize(
+    ("facts", "rules", "rule"),
+    [
+        (
+            _f(
+                hard_bars=[
+                    HardBar(kind=BarKind.nationality, quote="UAE nationals only")
+                ]
+            ),
+            RULES,
+            "hard_bar",
+        ),
+        (
+            _f(hard_bars=[HardBar(kind=BarKind.other, quote="UK driving licence")]),
+            RULES,
+            "hard_bar",
+        ),
+        (
+            _f(hard_bars=[HardBar(kind=BarKind.other, quote="UK driving licence")]),
+            None,
+            "hard_bar",
+        ),
+        (
+            _f(
+                graduation_year=GraduationYearFact(
+                    value=2028, quote="graduating in 2028"
+                )
+            ),
+            RULES.model_copy(update={"max_graduation_year": 2026}),
+            "graduation_year",
+        ),
+        (
+            _f(student_only=StudentFact(value=True, quote="Undergraduates only")),
+            RULES,
+            "student_only",
+        ),
+        (
+            _f(level=LevelFact(value=Level.senior, quote="Senior Data Engineer")),
+            RULES,
+            "level",
+        ),
+        (_f(years_required=YearsFact(value=5, quote="5+ years")), RULES, "years"),
+        (_f(field=FieldFact(value=JobField.other, quote="Front desk")), RULES, "field"),
+    ],
+)
+def test_a_rule_verdict_names_the_rule_that_fired(
+    facts: PostingFacts, rules: RulesConfig | None, rule: str
+) -> None:
+    v = decide(facts, rules, 50)
+    assert v.rule == rule
+    assert rule in RULE_ORDER
+
+
+@pytest.mark.parametrize("fit", [80, 50, 30])
+def test_a_score_decided_verdict_names_no_rule(fit: int) -> None:
+    assert decide(_f(fit=fit), RULES, 50).rule is None
+
+
+def test_a_work_auth_bar_decided_by_score_names_no_rule() -> None:
+    bar = HardBar(kind=BarKind.work_auth, quote="No visa sponsorship available")
+    assert decide(_f(fit=80, hard_bars=[bar]), RULES, 50).rule is None
+
+
+def test_rule_order_lists_the_rules_in_the_order_decide_applies_them() -> None:
+    assert RULE_ORDER == (
+        "hard_bar",
+        "graduation_year",
+        "student_only",
+        "level",
+        "years",
+        "field",
+    )
+
+
+def test_a_cached_verdict_written_before_the_rule_field_still_parses() -> None:
+    old = (
+        '{"fit_score": 49, "verdict": "skip", "confidence": "high", '
+        '"reason": "Skip: advert asks for \\"5+ years\\"", "blockers": [], '
+        '"keywords_missing": []}'
+    )
+    assert FitVerdict.model_validate_json(old).rule is None
+
+
+def test_the_rule_field_is_not_offered_to_a_judge_mode_model() -> None:
+    """`FitVerdict` is also judge mode's output schema, on both backends. A
+    `rule` property there would invite the model to name a rule that `decide`
+    never ran, and the digest would then list a posting as rule-hidden on the
+    model's say-so."""
+    assert "rule" not in FitVerdict.model_json_schema()["properties"]

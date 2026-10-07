@@ -24,6 +24,7 @@ from rolescan.pipeline import (
     _check_coverage,
     _drop_stale,
     _preflight,
+    _rule_hidden,
     deduplicate,
     run_scan,
 )
@@ -1192,3 +1193,113 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
     assert [s.job.title for s in result.reportable] == [
         "Graduate Energy Data Scientist"
     ]
+
+
+# --- postings a rule hid are carried to the digest, not dropped -------------
+
+
+@respx.mock
+async def test_rule_hidden_carries_what_the_rules_kept_out_of_the_digest(
+    tmp_path: Path,
+) -> None:
+    """On 2026-10-06, 44 of 109 scored postings were hidden by `profile.rules`
+    with no trace: a rule skip is capped below `min_report_score` and a block
+    is dropped by `show_blocked: false`, so a mis-read advert or a rule bug was
+    invisible. `rule_hidden` is what the digest lists them from.
+
+    `min_report_score` is set low on purpose. A block is capped at 20, so at
+    20 it clears the score gate and is removed only by `show_blocked: false` -
+    the second route out of the digest, not just the first.
+    """
+    years_quote = "5+ years of Python experience"
+    bar_quote = "UAE nationals only"
+    descriptions = {
+        1: f"Python, trading, energy, day-ahead forecasting. Must have {years_quote}.",
+        2: f"Python, trading, energy, day-ahead forecasting. {bar_quote}.",
+        3: "Python, trading, energy, day-ahead forecasting.",
+    }
+    titles = {
+        1: "Experienced Energy Data Scientist",
+        2: "Energy Data Scientist (Abu Dhabi)",
+        3: "Graduate Energy Data Scientist",
+    }
+    not_stated: dict[str, object] = {
+        "level": {"value": "not_stated", "quote": ""},
+        "years_required": {"value": None, "quote": ""},
+        "student_only": {"value": None, "quote": ""},
+        "hard_bars": [],
+        "field": {"value": None, "quote": ""},
+        "fit_score": 80,
+        "reason": "Strong Python and energy-market overlap.",
+        "keywords_missing": [],
+    }
+
+    def _respond(request: httpx.Request) -> httpx.Response:
+        user = json.loads(request.content)["messages"][1]["content"]
+        facts = dict(not_stated)
+        if years_quote in user:
+            facts["years_required"] = {"value": 5, "quote": years_quote}
+        elif bar_quote in user:
+            facts["hard_bars"] = [{"kind": "nationality", "quote": bar_quote}]
+        return httpx.Response(200, json={"message": {"content": json.dumps(facts)}})
+
+    respx.post("http://localhost:11434/api/chat").mock(side_effect=_respond)
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
+    )
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "id": jid,
+                        "title": titles[jid],
+                        "location": {"name": "London, UK"},
+                        "absolute_url": f"https://boards.greenhouse.io/acme/jobs/{jid}",
+                        "content": descriptions[jid],
+                        "updated_at": "2026-08-20T10:00:00Z",
+                    }
+                    for jid in (1, 2, 3)
+                ]
+            },
+        )
+    )
+    cfg = Config.model_validate(
+        {
+            "profile": {
+                "keywords": _KEYWORDS,
+                "min_keyword_score": 18,
+                "min_report_score": 20,
+                "rules": {"max_years_required": 2},
+            },
+            "llm": {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL},
+            "output": {
+                "dir": str(tmp_path),
+                "db_path": str(tmp_path / "seen.db"),
+                "show_blocked": False,
+            },
+            "sources": [{"kind": "greenhouse", "slug": "acme", "label": "Acme"}],
+        }
+    )
+
+    result = await run_scan(cfg, dry_run=True)
+
+    assert [s.job.title for s in result.reportable] == [titles[3]]
+    assert result.hidden_blocked == 1, "the block cleared the gate first"
+    hidden = {s.job.title: s.fit.rule for s in result.rule_hidden if s.fit}
+    assert hidden == {titles[1]: "years", titles[2]: "hard_bar"}
+    assert await _seen_uids(tmp_path / "seen.db") == set(), "--dry stays dry"
+
+
+def test_rule_hidden_never_repeats_a_posting_the_digest_already_shows(
+    energy_job: Job, gated_job: Job
+) -> None:
+    """At `min_report_score: 0` a rule skip's cap is 0, which clears the gate,
+    so a rule-skipped posting can be reportable. It is then in the digest
+    already and must not be listed a second time as hidden. A score-decided
+    posting is never rule-hidden, whatever happened to it."""
+    shown = _scored(energy_job, verdict=Verdict.SKIP, fit_score=0, rule="years")
+    hidden = _scored(gated_job, verdict=Verdict.SKIP, fit_score=0, rule="level")
+    unruled = _scored(energy_job.model_copy(update={"url": "https://x/9"}))
+    assert _rule_hidden([shown, hidden, unruled], [shown]) == [hidden]

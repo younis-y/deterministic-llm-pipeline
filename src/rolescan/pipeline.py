@@ -123,6 +123,17 @@ class ScanResult:
     made". A blocked posting that fell short of min_report_score was not kept
     out by the block and is not counted here."""
     reportable: list[ScoredJob] = field(default_factory=list)
+    rule_hidden: list[ScoredJob] = field(default_factory=list)
+    """Judged postings one of `profile.rules` fired on (`fit.rule` is set)
+    that are not in `reportable`, whichever way they left it: a rule skip's
+    score is capped below `min_report_score`, and a rule block is also
+    dropped by `output.show_blocked: false`.
+
+    On 2026-10-06, 44 of 109 scored postings were hidden this way with no
+    trace, so a mis-read advert or a rule bug that skipped a good role was
+    invisible. The digest lists these, one line each, so a wrong skip can be
+    spotted. A rule-fired posting that is still reportable (possible at
+    `min_report_score: 0`) is already in the digest and is not repeated."""
     dry_run: bool = False
 
     @property
@@ -369,6 +380,23 @@ def _rank(judged: list[ScoredJob], cfg: Config) -> tuple[list[ScoredJob], int]:
     return keep[: cfg.output.max_roles], hidden
 
 
+def _rule_hidden(
+    judged: list[ScoredJob], reportable: list[ScoredJob]
+) -> list[ScoredJob]:
+    """The judged postings a rule fired on that the digest does not show.
+
+    Matched on identity, not equality: `_rank` filters and slices `judged`
+    without copying, and two distinct postings can compare equal field for
+    field. Reads only what is already in memory, so `--dry` stays dry.
+    """
+    shown = {id(s) for s in reportable}
+    return [
+        s
+        for s in judged
+        if s.fit is not None and s.fit.rule is not None and id(s) not in shown
+    ]
+
+
 async def _check_coverage(
     reports: list[SourceReport], store: Store
 ) -> list[tuple[str, int]]:
@@ -450,4 +478,5 @@ async def run_scan(
             )
 
     result.reportable, result.hidden_blocked = _rank(judged, cfg)
+    result.rule_hidden = _rule_hidden(judged, result.reportable)
     return result

@@ -546,3 +546,150 @@ def test_a_backend_that_really_did_not_run_still_says_so() -> None:
     )
     text = render_markdown(result)
     assert "LLM scoring did not run at all" in text
+
+
+# --- postings hidden by the owner's rules are listed, one line each ---------
+# On 2026-10-06, 44 of 109 scored postings were hidden by `profile.rules` with
+# no trace in the digest, so a wrong skip (a mis-read advert, a rule bug) was
+# invisible. This section is where it becomes visible.
+
+
+def _ruled(
+    company: str, title: str, rule: str, reason: str, location: str | None = "Abu Dhabi"
+) -> ScoredJob:
+    blocked = reason.startswith("Blocked: ")
+    return ScoredJob(
+        job=Job(
+            source="greenhouse",
+            company=company,
+            title=title,
+            location=location,
+            url=f"https://x/{company.lower()}",
+            description="Analytics.",
+        ),
+        fit=_fit(
+            fit_score=20 if blocked else 49,
+            verdict=Verdict.BLOCKED if blocked else Verdict.SKIP,
+            reason=reason,
+            rule=rule,
+        ),
+    )
+
+
+_YEARS_REASON = 'Skip: advert asks for "3+ years of experience"'
+
+
+def _rule_hidden_result(**kw: object) -> ScanResult:
+    """One role in the digest, three hidden by rules (two in one group, given
+    out of order so the sort is tested), and a failed source after them."""
+    base: dict[str, object] = {
+        "unique": 109,
+        "reportable": [ScoredJob(job=_job(), keyword_score=40, fit=_fit())],
+        "rule_hidden": [
+            _ruled("Halian", "Data Engineer (m/f/d)", "years", _YEARS_REASON),
+            _ruled(
+                "Acme",
+                "Senior Analyst",
+                "years",
+                'Skip: advert asks for "5+ years"',
+                location=None,
+            ),
+            _ruled(
+                "ADNOC",
+                "Data Scientist",
+                "hard_bar",
+                'Blocked: advert says "UAE nationals only"',
+            ),
+        ],
+        "reports": [
+            SourceReport(kind="lever", slug="dead", label="Dead", error="HTTP 500")
+        ],
+    }
+    base.update(kw)
+    return ScanResult(**base)  # type: ignore[arg-type]
+
+
+def test_markdown_lists_rule_hidden_postings_grouped_by_rule() -> None:
+    text = render_markdown(_rule_hidden_result())
+    section = text.index("## Hidden by your rules")
+    assert text.index("## Worth a look") < section < text.index("Sources that failed")
+    body = text[section:]
+    assert (
+        "- **Halian** · [Data Engineer (m/f/d)](https://x/halian) · Abu Dhabi: "
+        'advert asks for "3+ years of experience"'
+    ) in body
+    assert (
+        '- **Acme** · [Senior Analyst](https://x/acme): advert asks for "5+ years"'
+        in body
+    )
+    assert (
+        '- **ADNOC** · [Data Scientist](https://x/adnoc) · Abu Dhabi: advert says "UAE nationals only"'
+        in body
+    )
+    # Grouped in the order decide() applies the rules, sorted by company.
+    assert body.index("Nationality, clearance or other hard bar") < body.index(
+        "**ADNOC**"
+    )
+    assert body.index("**ADNOC**") < body.index("Years of experience")
+    assert (
+        body.index("Years of experience")
+        < body.index("**Acme**")
+        < body.index("**Halian**")
+    )
+    assert (
+        "Skip: " not in body.split("---")[0] and "Blocked: " not in body.split("---")[0]
+    )
+
+
+def test_html_lists_rule_hidden_postings_grouped_by_rule() -> None:
+    html = render_html(_rule_hidden_result())
+    section = html.index("Hidden by your rules")
+    assert html.index("Worth a look") < section < html.index("Sources that failed")
+    body = html[section : html.index("Sources that failed")]
+    assert 'href="https://x/halian"' in body
+    assert (
+        "Data Engineer (m/f/d)</a> · Abu Dhabi: advert asks for &quot;3+ years of experience&quot;"
+        in body
+    )
+    assert "<strong>Halian</strong>" in body
+    assert "Senior Analyst</a>: advert asks for &quot;5+ years&quot;" in body
+    assert body.index("Nationality, clearance or other hard bar") < body.index("ADNOC")
+    assert body.index("ADNOC") < body.index("Years of experience")
+    assert body.index("Acme") < body.index("Halian")
+    assert "Skip: " not in body and "Blocked: " not in body
+
+
+def test_the_stats_line_counts_rule_hidden_postings() -> None:
+    result = _rule_hidden_result()
+    assert "3 hidden by your rules" in render_markdown(result)
+    assert "3 hidden by your rules" in render_html(result)
+
+
+def test_rule_hidden_postings_are_listed_on_a_day_with_nothing_to_report() -> None:
+    """The day nothing reaches the digest is the day a wrong skip matters
+    most: it may be the reason nothing did."""
+    result = _rule_hidden_result(reportable=[], reports=[])
+    text = render_markdown(result)
+    assert "Nothing new worth your time today." in text
+    assert "## Hidden by your rules" in text
+    assert "**Halian**" in text
+    html = render_html(result)
+    assert "Hidden by your rules" in html and "<strong>Halian</strong>" in html
+
+
+def test_rule_hidden_html_escapes_and_refuses_hostile_links() -> None:
+    hostile = _ruled("<b>Evil</b>", "Pwn", "level", "Skip: advert is for <i>x</i>")
+    hostile = hostile.model_copy(
+        update={"job": hostile.job.model_copy(update={"url": "javascript:alert(1)"})}
+    )
+    html = render_html(_rule_hidden_result(rule_hidden=[hostile]))
+    assert "<b>Evil</b>" not in html and "&lt;b&gt;Evil&lt;/b&gt;" in html
+    assert "<i>x</i>" not in html
+    assert "javascript:" not in html
+
+
+def test_no_rule_hidden_section_when_nothing_was_hidden() -> None:
+    result = _rule_hidden_result(rule_hidden=[])
+    for text in (render_markdown(result), render_html(result)):
+        assert "Hidden by your rules" not in text
+        assert "hidden by your rules" not in text
