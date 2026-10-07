@@ -490,6 +490,7 @@ def _failures(result: ScanResult) -> list[str]:
     if (
         not failed
         and not skipped
+        and not result.quiet_sources
         and not result.llm_errors
         and not result.llm_unusable
         and not result.enricher_unusable

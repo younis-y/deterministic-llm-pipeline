@@ -389,19 +389,23 @@ class Store:
         )
         await self.db.commit()
 
-    async def source_high_water(self, key: str, runs: int = 5) -> int:
-        """The most this source has returned in its last `runs` recorded runs.
+    async def source_high_water(self, key: str, *, days: int = 14) -> int:
+        """The most this source has returned in the last `days` days.
 
         A high-water mark rather than a mean or a median: the question is not
         "is today typical" but "has this source ever worked", and one good run
         is enough to prove it can. That makes a single fluke unable to raise
         the bar permanently, while a source that has only ever returned zero
         never trips the alarm.
+
+        A window in days, not runs (2.5.7): five runs of zero used to push the
+        good run out of the window, so a dead source dropped out of the digest
+        on its sixth run, which is the opposite of an alarm.
         """
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
         rows = await self.db.execute_fetchall(
-            "SELECT count FROM source_counts WHERE source_key = ? "
-            "ORDER BY ran DESC LIMIT ?",
-            (key, runs),
+            "SELECT count FROM source_counts WHERE source_key = ? AND ran >= ?",
+            (key, since),
         )
         return max((int(r[0]) for r in rows), default=0)
 

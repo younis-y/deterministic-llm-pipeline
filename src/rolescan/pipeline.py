@@ -102,7 +102,7 @@ class ScanResult:
     """Postings dropped for being older than `profile.max_age_days`."""
     quiet_sources: list[tuple[str, int]] = field(default_factory=list)
     """Sources that returned nothing this run but have returned rows before,
-    as (label, the most they have returned in their last five runs).
+    as (label, the most they have returned in the last 14 days).
 
     This is the alarm for the one defect this project keeps producing: a
     source that stops working without raising, leaving a run that exits 0 and
@@ -551,7 +551,7 @@ async def _check_coverage(
     """Record what each source returned, and name the ones that went quiet.
 
     Quiet means: returned nothing this run, raised nothing, and has returned
-    rows within its last five runs. A source that has never worked is not
+    rows within the last 14 days. A source that has never worked is not
     quiet, it is unconfigured, and saying so every morning would train the
     reader to ignore the line that matters.
 
@@ -559,8 +559,8 @@ async def _check_coverage(
     own line in the digest, and reporting them twice buries the silent case
     among the loud ones.
 
-    `record=False` on a dry run (2.5.7): the alarm remembers only the last
-    five runs, and a `--dry` run used to write its counts into that window,
+    `record=False` on a dry run (2.5.7): the alarm looks back over a window of
+    recent runs, and a `--dry` run used to write its counts into that window,
     so a few of them taught the store that zero was normal for a source that
     had gone silent (storage audit S6).
     """
