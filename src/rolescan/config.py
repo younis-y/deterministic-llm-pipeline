@@ -483,6 +483,13 @@ class OutputConfig(BaseModel):
     max_roles: Annotated[int, Field(ge=1)] = 15
     show_blocked: bool = True
     """Blocked roles are still worth seeing once, so you know the market moved."""
+    thin_unread_after: Annotated[int, Field(ge=1)] = 3
+    """After this many runs without a description, a posting is listed once
+    under "Unread" and recorded as seen. A posting with no text cannot be
+    judged, so it is held back and looked at again next run; a source that
+    never sends text (a Workday board with `details: false`, a structured page
+    with no body) would otherwise hold it back for ever, and a pile of such
+    postings would crowd out the ones that can be judged."""
     email: EmailConfig = Field(default_factory=EmailConfig)
 
 

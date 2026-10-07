@@ -355,7 +355,8 @@ class ScoredJob(BaseModel):
 
     `"llm_ceiling"`: `max_calls_per_run` was spent before its turn.
     `"digest_cap"`: it cleared `min_report_score` but fell past
-    `output.max_roles`. `"thin"`: it has no description to judge.
+    `output.max_roles`. `"thin"`: it has no description to judge (held back for
+    `output.thin_unread_after` runs, then listed once as unread and recorded).
 
     Set by the stage that skipped it, read by the recorder: a deferred posting
     is never written to `seen`, so it comes round again next run. Until 2.5.7

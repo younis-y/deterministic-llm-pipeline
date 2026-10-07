@@ -1,8 +1,11 @@
 """Persistence: what has been seen, and what the LLM already decided.
 
-Two tables with different jobs:
+Tables with different jobs:
 
   seen     keyed on Job.uid, so a role is reported once and never again.
+  deferred keyed on Job.uid, counting the runs a posting was held back without
+           being judged (no text yet), so a source that never sends text
+           cannot defer a posting for ever.
   verdicts keyed on Job.content_hash, so re-running costs nothing for postings
            whose text has not changed. This is what makes it safe to run the
            scan several times a day.
@@ -101,6 +104,15 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE seen ADD COLUMN reason TEXT NOT NULL DEFAULT '';
     """,
+    """
+    CREATE TABLE IF NOT EXISTS deferred (
+        uid        TEXT PRIMARY KEY,
+        reason     TEXT NOT NULL,
+        times      INTEGER NOT NULL DEFAULT 1,
+        first_seen TEXT NOT NULL,
+        last_seen  TEXT NOT NULL
+    );
+    """,
 )
 
 
@@ -109,6 +121,12 @@ _ADD_COLUMN = re.compile(
     r"\s*ALTER\s+TABLE\s+(?P<table>\w+)\s+ADD\s+COLUMN\s+(?P<column>\w+)",
     re.IGNORECASE,
 )
+
+
+def _chunks(items: list[str], size: int = 500) -> Iterable[list[str]]:
+    """`items` in slices small enough for SQLite's bound-variable limit."""
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
 
 
 def _statements(script: str) -> list[str]:
@@ -294,6 +312,56 @@ class Store:
             scored, reason = item if isinstance(item, tuple) else (item, "")
             await self.record(scored, reason=reason)
         await self.db.commit()
+
+    # -- deferred -----------------------------------------------------------
+
+    async def bump_deferred(self, uids: list[str], reason: str) -> dict[str, int]:
+        """Count one more run for each posting that was held back unjudged.
+
+        A posting with no description is deferred, not recorded, so the next
+        run can try again; a source that never sends the text would defer it
+        for ever. This counts the sightings so the caller can stop holding
+        it after N. Upserts: a new uid starts at 1, a known one is
+        incremented. Returns the new count per uid."""
+        wanted = list(dict.fromkeys(uids))
+        if not wanted:
+            return {}
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        for uid in wanted:
+            await self.db.execute(
+                """
+                INSERT INTO deferred (uid, reason, times, first_seen, last_seen)
+                VALUES (?, ?, 1, ?, ?)
+                ON CONFLICT(uid) DO UPDATE SET
+                    times=times + 1,
+                    reason=excluded.reason,
+                    last_seen=excluded.last_seen
+                """,
+                (uid, reason, now, now),
+            )
+        await self.db.commit()
+        counts: dict[str, int] = {}
+        for chunk in _chunks(wanted):
+            placeholders = ",".join("?" * len(chunk))
+            rows = await self.db.execute_fetchall(
+                f"SELECT uid, times FROM deferred WHERE uid IN ({placeholders})",
+                chunk,
+            )
+            counts.update({str(r[0]): int(r[1]) for r in rows})
+        return counts
+
+    async def forget_deferred(self, uids: Iterable[str]) -> int:
+        """Drop the deferral counts for postings that no longer need one (they
+        were recorded as seen). Returns the rows removed."""
+        removed = 0
+        for chunk in _chunks(list(dict.fromkeys(uids))):
+            placeholders = ",".join("?" * len(chunk))
+            cur = await self.db.execute(
+                f"DELETE FROM deferred WHERE uid IN ({placeholders})", chunk
+            )
+            removed += cur.rowcount
+        await self.db.commit()
+        return removed
 
     async def unsee(self, key: str) -> int:
         """Forget a posting by url or uid so it can be reported again.

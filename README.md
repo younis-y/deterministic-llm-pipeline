@@ -220,7 +220,11 @@ defaults:
 Since 2.5.7 the digest's stats line also reports a posting a run could not
 get to: "N deferred to the next run", with the reason (over the LLM budget,
 over the digest cap, or no description text yet). A deferred posting is not
-recorded as seen, so it comes round again. To bring back a posting a wrong
+recorded as seen, so it comes round again. A posting with no text is held back
+only `output.thin_unread_after` times (default 3): after that many runs without
+text it is listed once under "Unread (no text after N runs)", with its link,
+and recorded, so a source that never sends descriptions cannot hold it back for
+ever. To bring back a posting a wrong
 rule or term hid, run `rolescan unsee URL` (or its uid); the next scan reports
 it again. Four keys tune what gets hidden. On `profile`: `nationalities`
 (the demonyms and countries you hold, so a nationality bar that names one is

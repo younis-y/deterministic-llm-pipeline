@@ -195,6 +195,7 @@ output:
   db_path: seen.db
   max_roles: 15
   show_blocked: true         # blocked roles are worth seeing once
+  thin_unread_after: 3       # runs a posting may lack text before it is listed as unread
   email:
     enabled: false
     smtp_host: smtp.example.com

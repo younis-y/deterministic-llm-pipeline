@@ -9,11 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx
+import pytest
 import respx
+from pydantic import ValidationError
 
 from conftest import OLLAMA_MODEL, mock_ollama, scan_and_record
-from rolescan.config import Config
-from rolescan.digest import render_markdown
+from rolescan.config import Config, OutputConfig
+from rolescan.digest import render_html, render_markdown
 from rolescan.models import Confidence, FitVerdict, Job, ScoredJob, Verdict
 from rolescan.pipeline import ScanResult, _prefilter, _rank, assessed
 from rolescan.scoring import FitScorer
@@ -278,3 +280,168 @@ def test_stats_line_counts_deferred() -> None:
     assert "1 deferred to the next run (1 over the LLM budget)" in render_markdown(
         result
     )
+
+
+# --- a posting with no text is held back, then listed as unread (2.5.7) ------
+#
+# "Deferred to the next run" is permanent for a source that never sends text
+# (a Workday board with `details: false`, a structured page with no body): the
+# same postings were held back on every run and never listed. After
+# `output.thin_unread_after` runs a posting is listed once, with its link, and
+# recorded.
+
+
+def _thin_cfg(tmp_path: Path, after: int = 2) -> Config:
+    cfg = _pipeline_cfg(tmp_path)
+    cfg.output.thin_unread_after = after
+    return cfg
+
+
+def _mock_board(*jobs: tuple[int, str, str]) -> None:
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=_board(*jobs))
+    )
+
+
+async def _deferred_times(tmp_path: Path) -> dict[str, int]:
+    async with Store(tmp_path / "seen.db") as store:
+        rows = await store.db.execute_fetchall("SELECT uid, times FROM deferred")
+    return {r[0]: r[1] for r in rows}
+
+
+async def _seen_reasons(tmp_path: Path) -> dict[str, str]:
+    async with Store(tmp_path / "seen.db") as store:
+        rows = await store.db.execute_fetchall("SELECT title, reason FROM seen")
+    return {r[0]: r[1] for r in rows}
+
+
+def test_thin_unread_after_defaults_to_three_and_must_be_positive() -> None:
+    assert OutputConfig().thin_unread_after == 3
+    with pytest.raises(ValidationError):
+        OutputConfig(thin_unread_after=0)
+
+
+@respx.mock
+async def test_a_posting_with_no_text_is_listed_as_unread_on_the_nth_run(
+    tmp_path: Path,
+) -> None:
+    _mock_board((1, "Marketing Manager", ""))
+    cfg = _thin_cfg(tmp_path, after=2)
+
+    first = await scan_and_record(cfg)
+    assert [s.deferred for s in first.deferred] == ["thin"]
+    assert first.unread == []
+    assert await _seen_reasons(tmp_path) == {}
+    assert list((await _deferred_times(tmp_path)).values()) == [1]
+    assert "Unread" not in render_markdown(first)
+
+    second = await scan_and_record(cfg)
+    assert [s.job.title for s in second.unread] == ["Marketing Manager"]
+    assert second.deferred == [], "an unread posting is no longer deferred"
+    assert await _seen_reasons(tmp_path) == {"Marketing Manager": "thin_unread"}
+    assert await _deferred_times(tmp_path) == {}, "its count goes once it is recorded"
+    text = render_markdown(second)
+    assert "## Unread (no text after 2 runs)" in text
+    assert "[Marketing Manager](https://boards.greenhouse.io/acme/jobs/1)" in text
+    assert "1 listed as unread" in text
+
+    third = await scan_and_record(cfg)
+    assert third.unread == [] and third.deferred == []
+    assert third.already_seen == 1
+    assert "Unread" not in render_markdown(third)
+
+
+@respx.mock
+async def test_the_unread_section_is_in_the_html_digest_too(tmp_path: Path) -> None:
+    _mock_board((1, "Marketing Manager", ""))
+    cfg = _thin_cfg(tmp_path, after=1)
+
+    result = await scan_and_record(cfg)
+
+    html_text = render_html(result)
+    assert "Unread (no text after 1 run)" in html_text
+    assert 'href="https://boards.greenhouse.io/acme/jobs/1"' in html_text
+    assert "Marketing Manager" in html_text
+
+
+@respx.mock
+async def test_the_unread_section_comes_before_hidden_by_your_rules(
+    tmp_path: Path,
+) -> None:
+    """Both sections can appear in one digest; unread is the one nothing has
+    judged, so it comes first."""
+    _mock_board(
+        (1, "Marketing Manager", ""),
+        (2, "Energy Analyst", "energy python, security clearance needed"),
+    )
+    cfg = _thin_cfg(tmp_path, after=1)
+    cfg.output.show_blocked = False
+
+    result = await scan_and_record(cfg)
+
+    text = render_markdown(result)
+    assert "## Unread" in text and "## Hidden by your rules" in text
+    assert text.index("## Unread") < text.index("## Hidden by your rules")
+    html_text = render_html(result)
+    assert html_text.index(">Unread") < html_text.index(">Hidden by your rules")
+
+
+@respx.mock
+async def test_a_dry_run_does_not_count_a_text_less_posting(tmp_path: Path) -> None:
+    _mock_board((1, "Marketing Manager", ""))
+    cfg = _thin_cfg(tmp_path, after=2)
+
+    for _ in range(3):
+        result = await scan_and_record(cfg, dry_run=True)
+        assert result.unread == []
+        assert [s.deferred for s in result.deferred] == ["thin"]
+
+    assert await _deferred_times(tmp_path) == {}
+    assert await _seen_reasons(tmp_path) == {}
+
+
+@respx.mock
+async def test_a_posting_that_gains_text_is_judged_and_its_count_is_dropped(
+    tmp_path: Path,
+) -> None:
+    cfg = _thin_cfg(tmp_path, after=3)
+    _mock_board((1, "Python Analyst", ""))
+    held = await scan_and_record(cfg)
+    assert [s.deferred for s in held.deferred] == ["thin"]
+    assert list((await _deferred_times(tmp_path)).values()) == [1]
+
+    respx.clear()
+    _mock_board((1, "Python Analyst", "energy python"))
+    judged = await scan_and_record(cfg)
+
+    assert [s.job.title for s in judged.reportable] == ["Python Analyst"]
+    assert judged.unread == []
+    assert await _deferred_times(tmp_path) == {}
+    assert await _seen_reasons(tmp_path) == {"Python Analyst": "judged"}
+
+
+@respx.mock
+async def test_a_failed_digest_leaves_the_count_in_place(tmp_path: Path) -> None:
+    """The count is dropped by `record_scan`, after the digest exists. A run
+    whose digest is never written must not lose it, or the posting would
+    start again from 1 on every failed run."""
+    _mock_board((1, "Marketing Manager", ""))
+    cfg = _thin_cfg(tmp_path, after=2)
+    await scan_and_record(cfg)
+
+    from rolescan.pipeline import run_scan
+
+    unread = await run_scan(cfg)  # the digest write "fails": no record_scan
+    assert [s.job.title for s in unread.unread] == ["Marketing Manager"]
+    assert list((await _deferred_times(tmp_path)).values()) == [2]
+    again = await run_scan(cfg)
+    assert [s.job.title for s in again.unread] == ["Marketing Manager"]
+
+
+def test_an_unread_posting_that_matched_a_term_says_so() -> None:
+    """It is listed under Unread, not the terms group; the term it matched is
+    shown so the reader can still check it."""
+    hit = _scored(1, 0).model_copy(update={"blocker_hits": ["security clearance"]})
+    result = ScanResult(unread=[hit], unread_after=3)
+    text = render_markdown(result)
+    assert 'blocked by "security clearance"' in text

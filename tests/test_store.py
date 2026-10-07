@@ -342,8 +342,8 @@ async def test_record_all_still_accepts_bare_scored_jobs(
         assert [r[0] for r in rows] == [""]
 
 
-def test_migration_count_is_five() -> None:
-    assert len(_MIGRATIONS) == 5
+def test_migration_count_is_six() -> None:
+    assert len(_MIGRATIONS) == 6
 
 
 async def test_unsee_matches_on_uid_as_well_as_url(
@@ -386,7 +386,7 @@ async def test_reason_column_migrates_onto_a_version_four_store(
         cur = await store.db.execute("PRAGMA user_version")
         row = await cur.fetchone()
         assert row is not None
-        assert int(row[0]) == 5
+        assert int(row[0]) == len(_MIGRATIONS)
         columns = [
             r[1] for r in await store.db.execute_fetchall("PRAGMA table_info(seen)")
         ]
@@ -520,3 +520,43 @@ async def test_a_failing_migration_rolls_back_and_leaves_the_version_alone(
             "SELECT name FROM sqlite_master WHERE name='half_done'"
         )
         assert list(tables) == []
+
+
+# --- deferred: how many runs a posting has been held back without text -------
+
+
+async def test_bump_deferred_counts_each_sighting(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.db") as store:
+        assert await store.bump_deferred(["a", "b"], "thin") == {"a": 1, "b": 1}
+        assert await store.bump_deferred(["a"], "thin") == {"a": 2}
+        assert await store.bump_deferred(["a", "b", "c"], "thin") == {
+            "a": 3,
+            "b": 2,
+            "c": 1,
+        }
+        assert await store.bump_deferred([], "thin") == {}
+
+
+async def test_deferred_counts_survive_reopening_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "s.db"
+    async with Store(path) as store:
+        await store.bump_deferred(["a"], "thin")
+    async with Store(path) as store:
+        assert await store.bump_deferred(["a"], "thin") == {"a": 2}
+
+
+async def test_forget_deferred_restarts_the_count(tmp_path: Path) -> None:
+    async with Store(tmp_path / "s.db") as store:
+        await store.bump_deferred(["a", "b"], "thin")
+        assert await store.forget_deferred(["a", "never-deferred"]) == 1
+        assert await store.bump_deferred(["a", "b"], "thin") == {"a": 1, "b": 2}
+        assert await store.forget_deferred([]) == 0
+
+
+async def test_deferred_handles_more_uids_than_one_query_can_bind(
+    tmp_path: Path,
+) -> None:
+    uids = [f"u{i}" for i in range(1200)]
+    async with Store(tmp_path / "s.db") as store:
+        assert set((await store.bump_deferred(uids, "thin")).values()) == {1}
+        assert await store.forget_deferred(uids) == 1200

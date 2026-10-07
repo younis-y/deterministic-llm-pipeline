@@ -5,7 +5,7 @@ All notable changes to rolescan. Newest first.
 ## 2.5.7
 
 ### Added
-- Digest stats line reports "N deferred to the next run" with the reason (over the LLM budget, over the digest cap, no description text yet); a deferred posting is not recorded as seen.
+- Digest stats line reports "N deferred to the next run" with the reason (over the LLM budget, over the digest cap, no description text yet), and "K listed as unread"; a deferred posting is not recorded as seen.
 - "Hidden by your rules" gains "Your weighted terms (blockers)" and "Just under your keyword gate" groups.
 - `profile.title_only_blockers`: `blockers` terms whose weight counts only in the job title.
 - `profile.hidden_gate_margin`: how far under `min_keyword_score` a reject may fall and still be listed (default 10).
@@ -13,6 +13,8 @@ All notable changes to rolescan. Newest first.
 - `rules.field_exempt_companies`: employers whose postings pass the field rule.
 - `rolescan unsee URL`: forget a posting so the next scan can report it again.
 - `seen.reason` column (migration 5) records why a posting was hidden.
+- `output.thin_unread_after` (default 3): a posting with no description text is deferred, then after that many runs listed once under "Unread (no text after N runs)" and recorded as seen (reason `thin_unread`), so a source that never sends text cannot defer it for ever. Counted in the new `deferred` table (migration 6); `--dry` never counts.
+- `record_scan(cfg, result)`: the public half of a scan that writes `seen` once the digest exists.
 
 ### Changed
 - Each scan writes its own digest file (`YYYY-MM-DDTHHMM.md`); `--dry` writes `digest-dry.md`.

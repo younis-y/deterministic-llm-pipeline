@@ -182,6 +182,51 @@ def _rule_hidden_groups(result: ScanResult) -> list[tuple[str, list[tuple[Job, s
     ]
 
 
+def _unread_heading(result: ScanResult) -> str:
+    return f"Unread (no text after {_plural(result.unread_after, 'run')})"
+
+
+def _unread_lead(result: ScanResult) -> str:
+    return (
+        f"No description text arrived for these on {result.unread_after} runs, "
+        "so they were never judged. Listed once, with the link, and not shown "
+        "again."
+    )
+
+
+def _unread_note(item: ScoredJob) -> str:
+    """A `hard_blockers` term the title matched, as the terms group words it,
+    or "". A location entry is not something the reader can check."""
+    terms = [
+        t for t in dict.fromkeys(item.blocker_hits) if not t.startswith("location: ")
+    ]
+    return "blocked by " + ", ".join(f'"{t}"' for t in terms) if terms else ""
+
+
+def _unread_section(result: ScanResult) -> list[str]:
+    """One line each for the postings that went `thin_unread_after` runs
+    without text (see `ScanResult.unread`). Placed before "Hidden by your
+    rules": nothing has judged these, which is a different thing from a rule
+    having hidden them."""
+    if not result.unread:
+        return []
+    lines = [f"## {_unread_heading(result)}", "", _unread_lead(result), ""]
+    for item in sorted(
+        result.unread,
+        key=lambda s: (s.job.company.casefold(), s.job.title.casefold()),
+    ):
+        job = item.job
+        bits = [f"**{job.company}**", f"[{job.title}]({job.url})"]
+        if job.location:
+            bits.append(job.location)
+        line = f"- {' · '.join(bits)}"
+        if note := _unread_note(item):
+            line += f": {note}"
+        lines.append(line)
+    lines.append("")
+    return lines
+
+
 def _rule_hidden_section(result: ScanResult) -> list[str]:
     groups = _rule_hidden_groups(result)
     if not groups:
@@ -309,6 +354,7 @@ def render_markdown(
             _stats(result),
             "",
         ]
+        out += _unread_section(result)
         out += _rule_hidden_section(result)
         out += _failures(result)
         if shortlist:
@@ -340,6 +386,8 @@ def render_markdown(
         ]
         for item in blocked:
             out += _role(item)
+
+    out += _unread_section(result)
 
     out += _rule_hidden_section(result)
     out += _failures(result)
@@ -427,6 +475,8 @@ def _stats(result: ScanResult) -> str:
         bits.append(
             f"{len(result.deferred)} deferred to the next run ({', '.join(parts)})"
         )
+    if result.unread:
+        bits.append(f"{len(result.unread)} listed as unread")
     if listed := sum(len(rows) for _, rows in _rule_hidden_groups(result)):
         # Only when it happened, for the same reason. Counted separately from
         # the clause above: that one is postings `show_blocked` removed, this
@@ -954,14 +1004,39 @@ def _shortlist_html(
     return out
 
 
-def _rule_hidden_line_html(job: Job, reason: str) -> str:
+def _job_line_html(job: Job) -> str:
+    """Company, linked title and location, joined by dots."""
     title = _esc(job.title)
     if href := _href(job.url):
         title = f'<a href="{href}" style="{_LINK}">{title}</a>'
     bits = [f"<strong>{_esc(job.company)}</strong>", title]
     if job.location:
         bits.append(_esc(job.location))
-    return f"{' · '.join(bits)}: {_esc(reason)}"
+    return " · ".join(bits)
+
+
+def _rule_hidden_line_html(job: Job, reason: str) -> str:
+    return f"{_job_line_html(job)}: {_esc(reason)}"
+
+
+def _unread_html(result: ScanResult) -> list[str]:
+    """The HTML counterpart of `_unread_section`."""
+    if not result.unread:
+        return []
+    items = []
+    for item in sorted(
+        result.unread,
+        key=lambda s: (s.job.company.casefold(), s.job.title.casefold()),
+    ):
+        line = _job_line_html(item.job)
+        if note := _unread_note(item):
+            line += f": {_esc(note)}"
+        items.append(f'<li style="{_LI}">{line}</li>')
+    return [
+        f'<h2 style="{_H2}">{_esc(_unread_heading(result))}</h2>',
+        f'<div style="{_LEAD}">{_esc(_unread_lead(result))}</div>',
+        f'<ul style="{_UL}">{"".join(items)}</ul>',
+    ]
 
 
 def _rule_hidden_html(result: ScanResult) -> list[str]:
@@ -1027,6 +1102,7 @@ def render_html(
     if result.dry_run:
         body.append(f'<div style="{_DRY}">Dry run: nothing was marked as seen.</div>')
     body += _roles_html(result)
+    body += _unread_html(result)
     body += _rule_hidden_html(result)
     body += _failures_html(result)
     if shortlist:

@@ -165,7 +165,19 @@ class ScanResult:
     LLM ceiling, past `output.max_roles`, or without a description. They are
     not `seen`, so the next run sees them again. Counted in the digest so a
     run that keeps deferring the same roles is visible, where before it
-    buried them."""
+    buried them. A posting without a description is held back only for
+    `output.thin_unread_after` runs: then it moves to `unread`."""
+    unread: list[ScoredJob] = field(default_factory=list)
+    """Postings that had no description on `output.thin_unread_after` runs
+    (2.5.7), listed once under "Unread" and recorded with the reason
+    `thin_unread`. "Hold, then list as unread": a source that
+    never sends text (Workday with `details: false`, a structured page with no
+    body, a harvested row released without text) would otherwise leave a
+    posting deferred for ever, and a pile of them would crowd the judged ones
+    out. Never touched on a dry run."""
+    unread_after: int = 3
+    """`output.thin_unread_after` for this run, so the digest can say "no text
+    after 3 runs"."""
     to_record: list[tuple[ScoredJob, str]] = field(default_factory=list)
     """What a real run writes to `seen` once the digest is on disk (2.5.7),
     each posting with the reason it was assessed (see `assessed`). Empty on a
@@ -355,6 +367,33 @@ def _prefilter(
         if not s.job.description.strip()
     ]
     return candidates, rejects, thin
+
+
+async def _count_thin(
+    thin: list[ScoredJob], store: Store, unread_after: int
+) -> tuple[list[ScoredJob], list[ScoredJob]]:
+    """Count this sighting of each text-less posting; split off the ones that
+    have now gone `unread_after` runs without text.
+
+    Returns (unread, still deferred). The count is what gives "deferred to the
+    next run" an end: without it a source that never sends a description (a
+    Workday board with `details: false`, a structured page with no body) holds
+    the same postings back on every run, and hundreds of them crowd out the
+    ones that can be judged. An unread posting is returned with `deferred`
+    cleared, because it is no longer waiting for anything: it is listed once
+    and recorded. Its `deferred` row is dropped by `record_scan`, with the
+    rest, once the digest exists. Real runs only: a dry run must not count.
+    """
+    if not thin:
+        return [], []
+    counts = await store.bump_deferred([s.job.uid for s in thin], "thin")
+    unread = [
+        s.model_copy(update={"deferred": ""})
+        for s in thin
+        if counts.get(s.job.uid, 0) >= unread_after
+    ]
+    held = [s for s in thin if counts.get(s.job.uid, 0) < unread_after]
+    return unread, held
 
 
 async def _judge(
@@ -642,6 +681,9 @@ async def run_scan(
 
         candidates, rejects, thin = _prefilter(fresh, cfg.profile.min_keyword_score)
         result.prefiltered = len(rejects)
+        result.unread_after = cfg.output.thin_unread_after
+        if not dry_run:
+            result.unread, thin = await _count_thin(thin, store, result.unread_after)
 
         judged, scorer = await _judge(candidates, cfg, store)
         result.llm_calls = scorer.calls_made
@@ -663,7 +705,7 @@ async def run_scan(
                 rejects,
                 judged,
                 backend_broke=bool(result.llm_unusable) or scorer.errors > 0,
-            )
+            ) + [(s, "thin_unread") for s in result.unread]
     return result
 
 
@@ -676,10 +718,18 @@ async def record_scan(cfg: Config, result: ScanResult) -> int:
     a crash in between would leave a digest on disk whose postings are not
     recorded, and the next run would report them again.
 
+    Also drops the deferral count of every posting it records (see
+    `Store.bump_deferred`): a posting listed as unread, or one that arrived
+    with its text after being held back, is no longer waiting for anything.
+
     A dry run has an empty `to_record`, so this opens nothing and returns 0.
     """
     if not result.to_record:
         return 0
     async with Store(cfg.resolve(cfg.output.db_path)) as store:
         await store.record_all(result.to_record)
+        # A recorded posting needs no deferral count any more, whether it was
+        # listed as unread or arrived with its text and was judged. Done here,
+        # after the digest exists, so a failed write leaves the count in place.
+        await store.forget_deferred(s.job.uid for s, _ in result.to_record)
     return len(result.to_record)
