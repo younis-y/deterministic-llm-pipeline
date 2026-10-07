@@ -15,7 +15,6 @@ profile:
     how senior you actually are. The LLM reads it verbatim. Numbers beat
     adjectives, and being honest about your level stops the scorer flattering
     you into roles you will not get.
-  cv_dir: cvs
   locations: [abu dhabi, dubai, uae, riyadh, saudi, doha, qatar, london, united kingdom]
   allow_remote: true
   keywords:

@@ -22,13 +22,6 @@ profile:
     and domains you know. Languages. Where you can legally work. Roughly how
     many years of real experience you have.
 
-  # Directory of CV variant files (.tex, .md or .txt), named for the variants
-  # in rolescan.models.CVVariant: CV_Energy, CV_Quant, CV_DataEng, CV_MLAI,
-  # CV_Electrical, CV_Consulting. Matching ignores case, hyphens and
-  # underscores, so CV_ML-AI.tex is fine. Optional — without it the LLM works
-  # from the summary alone and gives less specific tailoring advice.
-  cv_dir: cvs
-
   # Substring-matched against each posting's location, case-insensitively.
   # A posting with no stated location is NOT penalised.
   locations:
@@ -63,6 +56,14 @@ profile:
     unpaid: 30
   location_penalty: 25
 
+  # `blockers` terms whose weight counts only when the term is in the job
+  # TITLE. For words that name a level or sector in a title but turn up as
+  # boilerplate in bodies: "head office", "board of directors", an equal-
+  # opportunity line about "military or veteran status". A term here keeps its
+  # weight from `blockers`; one also in `hard_blockers` still bars on the whole
+  # text. Default empty: every blocker counts anywhere.
+  # title_only_blockers: [head of, director, military]
+
   # Structural bars: things no application can get past. A term here forces a
   # `blocked` verdict that no LLM opinion can override, so a posting matching
   # one is removed from the digest and never shown again - with
@@ -81,8 +82,19 @@ profile:
   hard_blockers:
     - security clearance
 
+  # Nationalities you hold, as an advert would word them: the demonym and the
+  # country. A nationality bar whose quote names one of them is not a bar for
+  # you. A residence permit is not a nationality, so do not list one. If a
+  # matching term is also in hard_blockers, remove it from there. Default none.
+  # nationalities: []
+
   min_keyword_score: 18   # below this, a posting never reaches the LLM
   min_report_score: 55    # below this, a posting never reaches the digest
+
+  # How far under min_keyword_score a posting may fall and still be listed in
+  # the digest's "Hidden by your rules" section, so a weight that is rejecting
+  # good roles shows up. 0 lists none.
+  # hidden_gate_margin: 10
 
   # Eligibility rules, applied by code in facts mode (llm.mode: facts) to the
   # facts the model quotes from each posting. The model never decides these;
@@ -115,6 +127,9 @@ profile:
   #     - data_engineering       # data_engineering, ai_llm, data_science,
   #     - ai_llm                 # analytics_bi, quant, product, software,
   #     - data_science           # consulting, other.
+  #   field_exempt_companies: [] # employers whose postings pass the field
+  #                              # rule whatever their field (company name,
+  #                              # case-insensitive, whole words). Default none.
 
 llm:
   # Set false to score on keywords alone — no key, no network, no bill.

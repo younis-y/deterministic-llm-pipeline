@@ -294,9 +294,12 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig, *, examples_digest: str = "")
     advert's own eligibility wording ("UAE Nationals only", "Emirati Talent"
     in the title, "active eDV clearance"). A v11 row could replay an APPLY for
     a role the owner cannot hold.
+    v13 (2.5.7): student alternative routes, range low end, graduation word,
+    field rows, nationalities. A v12 row could replay a resolver verdict the
+    corrected passes would no longer give.
     """
     if mode == "facts":
-        key = f"{job.content_hash}:facts-v12:{cfg.backend}:{cfg.model}"
+        key = f"{job.content_hash}:facts-v13:{cfg.backend}:{cfg.model}"
         return f"{key}:ex-{examples_digest}" if examples_digest else key
     return job.content_hash
 

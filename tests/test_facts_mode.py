@@ -149,7 +149,7 @@ async def test_cache_key_is_mode_aware() -> None:
     assert cache_key(job, "judge", cfg) == job.content_hash
     assert (
         cache_key(job, "facts", cfg)
-        == f"{job.content_hash}:facts-v12:ollama:qwen2.5:14b"
+        == f"{job.content_hash}:facts-v13:ollama:qwen2.5:14b"
     )
 
 

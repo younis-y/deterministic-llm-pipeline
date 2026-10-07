@@ -217,6 +217,21 @@ defaults:
 | `level_from_title_only` | `false` | `true`: only a level word in the job title can skip; a level the model states is ignored. |
 | `allowed_fields` | `null` (any) | From `data_engineering`, `ai_llm`, `data_science`, `analytics_bi`, `quant`, `product`, `software`, `consulting`, `other`. |
 
+Since 2.5.7 the digest's stats line also reports a posting a run could not
+get to: "N deferred to the next run", with the reason (over the LLM budget,
+over the digest cap, or no description text yet). A deferred posting is not
+recorded as seen, so it comes round again. To bring back a posting a wrong
+rule or term hid, run `rolescan unsee URL` (or its uid); the next scan reports
+it again. Four keys tune what gets hidden. On `profile`: `nationalities`
+(the demonyms and countries you hold, so a nationality bar that names one is
+not a bar for you), `title_only_blockers` (`blockers` terms such as
+`head of`, `director` or `military` whose weight counts only in the job title,
+not in boilerplate in the body) and `hidden_gate_margin` (how far under
+`min_keyword_score` a reject may fall and still be listed under "Hidden by
+your rules"; default 10, 0 lists none). On `profile.rules`:
+`field_exempt_companies` (employers whose postings pass the field rule
+whatever their field). All four are in `config.example.yaml`.
+
 `llm.facts_examples_file` points at a YAML list of worked examples, each a
 posting excerpt and the facts it should yield:
 
