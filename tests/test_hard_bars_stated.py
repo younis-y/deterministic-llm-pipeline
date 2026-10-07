@@ -20,6 +20,7 @@ import pytest
 from rolescan.config import RulesConfig
 from rolescan.models import BarKind, Job, Verdict
 from rolescan.scoring.facts import (
+    _BAR_WORDS,
     HardBar,
     PostingFacts,
     _bar_supported,
@@ -27,7 +28,7 @@ from rolescan.scoring.facts import (
     resolve_hard_bars,
     verify_facts,
 )
-from rolescan.scoring.rules import decide
+from rolescan.scoring.rules import _STRUCTURAL_BARS, decide
 
 # Real titles and advert lines from the owner's cached adverts (companies left
 # out). Each is (title, description).
@@ -117,6 +118,19 @@ NATIONALITY = [
         "JLL UAE invites UAE Nationals to join the UAE National Graduate Analyst "
         "Programme in Dubai.",
     ),
+    # review round: localisation words that stay bars, and a residency that is
+    # an extra condition rather than an alternative
+    ("Emiratisation Programme Trainee", ""),
+    (
+        "SC&E - Capital Projects Transformation Analyst - Emiratization & UAE "
+        "Talent Development",
+        "",
+    ),
+    ("Visual Merchandising Trainee - Emiratisation", ""),
+    ("Service Champion - Part Time (Emiratized)", ""),
+    ("Analyst", "This is an Emiratisation position in our finance team."),
+    ("Analyst", "This internship is for Emiratization students."),
+    ("Analyst", "You must be a British citizen and have lived in the UK for 5 years."),
     # A welcome to students and graduates after the bar is not a preference
     # about the bar itself.
     (
@@ -185,6 +199,42 @@ NOT_A_NATIONALITY_BAR = [
     ("Analyst", "You do not need to be a British citizen to apply."),
     # the HR role that runs the programme, not a hire under it
     ("Emiratisation Manager", ""),
+    # review round: more programme runners, in any title shape
+    ("Director of Emiratisation", ""),
+    ("Head,  Emiratisation", ""),
+    ("Senior Manager, Emiratisation", ""),
+    ("Emiratisation Programme Manager", ""),
+    ("Emiratization Program Lead", ""),
+    ("Emiratisation & Talent Lead", ""),
+    ("HR Business Partner - Emiratisation & Talent Lead", ""),
+    ("Emiratisation Recruiter", ""),
+    ("Saudization HR Officer", ""),
+    ("HR Analyst - Emiratisation Reporting", ""),
+    # review round: a localisation duty in the description
+    ("Analyst", "You will design and run our Emiratisation programme."),
+    ("Analyst", "Track Emiratisation hires against Nafis targets."),
+    ("Analyst", "Build dashboards for Saudization roles."),
+    ("Analyst", "Report on Emiratisation hiring metrics."),
+    ("Analyst", "Support Emiratisation opportunities across the business."),
+    # review round: UK and US alternatives the owner may satisfy
+    (
+        "Analyst",
+        "Applicants must be a UK national or have the right to work in the UK.",
+    ),
+    ("Analyst", "Must be a US citizen or green card holder."),
+    (
+        "Analyst",
+        "This role is open to UK citizens and those with indefinite leave to remain.",
+    ),
+    (
+        "Analyst",
+        "This role is open to UK nationals and EU nationals with settled status.",
+    ),
+    ("Analyst", "UK nationals and EU nationals with settled status"),
+    # review round: a hyphen inside a word, and "any" nationality
+    ("Analyst - Emirati-owned family office", ""),
+    ("Analyst", "Nationality: UAE / Any"),
+    ("Analyst", "This role is open to all nationalities."),
     # corpus review: the national programme named in an equal-opportunity line
     (
         "Data Analyst",
@@ -221,6 +271,14 @@ CLEARANCE = [
     ("Data Engineer - SC Cleared / SC Eligible", ""),
     ("Engineer", "Candidates must be eligible for DV."),
     ("Engineer", "Must have active eDV."),
+    # review round: still bars
+    ("Engineer", "Candidates must be eligible to attain SC clearance"),
+    ("Engineer", "You must hold active eDV clearance."),
+    (
+        "Senior AI/ML Engineer",
+        "Senior AI/ML Engineer in Greater London Must hold active clearance - SC "
+        "or MoD DV Up to 95k DoE plus bonus",
+    ),
 ]
 
 NOT_A_CLEARANCE_BAR = [
@@ -263,6 +321,33 @@ NOT_A_CLEARANCE_BAR = [
         "the UK for the past 5 years), as this is the prerequisite for a "
         "security clearance.",
     ),
+    # review round: "clearance" that is not security clearance
+    ("Analyst", "Improve the current clearance rate of tickets."),
+    ("Analyst", "Obtain valid clearance certificates for shipments."),
+    ("Analyst", "Active clearance of backlog items."),
+    # review round: clearance as the work, or someone else's
+    ("Analyst", "Process security clearance applications for staff."),
+    ("Analyst", "Experience supporting security vetting processes."),
+    ("Analyst", "You will manage BPSS checks for new joiners."),
+    ("Analyst", "Our customers hold active SC clearance."),
+    ("Analyst", "Work with DV-cleared colleagues."),
+    ("Analyst", "The role sits in our Security Vetting team."),
+    ("Security Clearance Officer", ""),
+    # review round: BPSS is the baseline screen, not a structural bar
+    (
+        "Analyst",
+        "SECURITY CLEARANCE: You will be subject to a BPSS (Baseline Personnel "
+        "Security Standard) check.",
+    ),
+    (
+        "Analyst",
+        "Security Clearance This position requires the ability to obtain a BPSS "
+        "clearance.",
+    ),
+    ("Analyst", "All offers are subject to BPSS."),
+    # review round: a preference at the end of the clause
+    ("Engineer", "Security clearance would be nice."),
+    ("Engineer", "SC clearance or willingness to obtain it is a plus."),
     # a preference
     ("Engineer", "Current SC clearance is highly desirable."),
     ("Engineer", "Candidates should ideally hold active SC clearance."),
@@ -346,6 +431,27 @@ def test_a_short_sentence_is_quoted_whole() -> None:
     assert bar == HardBar(
         kind=BarKind.nationality, quote="This role is open to UAE Nationals only."
     )
+
+
+def test_a_long_sentence_is_quoted_from_the_bar_to_its_end() -> None:
+    text = (
+        "Dynamic working: 3-4 days per week on-site due to workload "
+        "classification Security clearance: British Citizen or a Dual UK "
+        "national with British citizenship. Restrictions apply."
+    )
+    bar = _bar("Engineer", text, BarKind.clearance)
+    assert bar == HardBar(
+        kind=BarKind.clearance,
+        quote=(
+            "Security clearance: British Citizen or a Dual UK national with "
+            "British citizenship."
+        ),
+    )
+
+
+def test_the_kinds_bar_words_check_are_the_kinds_that_block() -> None:
+    # `resolve_hard_bars` relies on this to keep blocking bars on overflow.
+    assert set(_BAR_WORDS) == _STRUCTURAL_BARS
 
 
 def _job(description: str, title: str = "Data Analyst") -> Job:

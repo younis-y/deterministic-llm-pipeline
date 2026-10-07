@@ -482,3 +482,15 @@ async def test_an_unsupported_clearance_bar_does_not_block_on_the_live_path() ->
 
     assert out.fit is not None and out.fit.verdict == Verdict.APPLY
     assert scorer.last_facts[job.job.url].hard_bars == []
+
+
+async def test_a_bar_the_model_left_out_still_blocks_through_the_scorer() -> None:
+    """2.5.6: `_call_facts` chains `resolve_hard_bars` after `verify_facts`."""
+    job = _job("Motivated and hardworking. This role is open to UAE Nationals only.")
+    scorer, _judge = _facts_scorer(_facts(fit_score=85))
+
+    [out] = await scorer.score_all([job])
+
+    assert out.fit is not None
+    assert out.fit.verdict == Verdict.BLOCKED
+    assert "open to UAE Nationals only" in out.fit.reason
