@@ -132,8 +132,11 @@ async def test_dry_run_does_not_persist(config: Config) -> None:
             json=_payload("Graduate Energy Data Scientist", "Python, trading, energy."),
         )
     )
-    await run_scan(config, dry_run=True)
-    again = await run_scan(config, dry_run=True)
+    # `scan_and_record`, not `run_scan`: `run_scan` writes nothing since
+    # 2.5.7, so only the hand-off (`to_record`) can say a dry run records.
+    first = await scan_and_record(config, dry_run=True)
+    assert first.to_record == [], "a dry run hands the CLI nothing to record"
+    again = await scan_and_record(config, dry_run=True)
     assert again.already_seen == 0, "a dry run must leave the store untouched"
 
 

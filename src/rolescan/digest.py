@@ -381,10 +381,11 @@ def _stats(result: ScanResult) -> str:
         # Only when it happened: a permanent "0 blocked and hidden" on every
         # digest would train the reader to skip the line that matters. These
         # postings scored well enough to be here and were removed anyway, and
-        # they are recorded as seen once this digest is written (a blocked
-        # posting that the LLM ceiling deferred is not recorded, and comes
-        # round again), so this is the reader's only chance to notice a
-        # blocker term that is matching the wrong thing.
+        # they are recorded as seen once this digest is written (except a
+        # deferred one, an unjudged one when the backend broke, and anything
+        # on a dry run, which are not recorded and come round again), so for
+        # the rest this is the reader's only chance to notice a blocker term
+        # that is matching the wrong thing.
         bits.append(
             f"{result.hidden_blocked} blocked and hidden (output.show_blocked is false)"
         )

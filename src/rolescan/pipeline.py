@@ -391,8 +391,9 @@ def _hide_blocked(keep: list[ScoredJob]) -> tuple[list[ScoredJob], int]:
     """Remove blocked roles from the digest, and say how many that was.
 
     Logged as well as counted: these postings are recorded as seen once the
-    digest is written (a blocked posting the LLM ceiling deferred is never
-    recorded), so this is the only record that a specific role existed and
+    digest is written, except a deferred one, an unjudged one when the
+    backend broke, and everything on a dry run, none of which is recorded.
+    So for the rest this is the only record that a specific role existed and
     was deleted on the strength of a configured term.
     """
     visible = [s for s in keep if not s.is_blocked]
@@ -522,6 +523,12 @@ async def run_scan(
 
     The body is the pipeline, one named stage per line. `check_llm` is False
     only when the caller has deliberately turned scoring off (`--no-llm`).
+
+    Since 2.5.7 this does NOT write `seen`. It returns what should be
+    recorded in `result.to_record` (empty on a dry run), and the caller
+    records it once the digest exists: `rolescan scan` does so right after
+    `write_digest`. A caller that never records re-reports every posting on
+    every run, so any new caller of `run_scan` must do the same.
     """
     result = ScanResult(dry_run=dry_run, llm_backend=cfg.llm.backend)
     if check_llm:

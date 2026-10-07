@@ -137,6 +137,24 @@ def test_seen_is_written_only_after_the_digest(
 
 
 @respx.mock
+def test_a_first_dry_run_records_nothing_and_leaves_no_latest(
+    tmp_path: Path,
+) -> None:
+    """The guard `test_dry_run_writes_its_own_file` cannot be: with a fresh
+    store every posting is new, so a dry run that recorded would show up as
+    rows in `seen`, and one that wrote `latest.md` would leave the file."""
+    cfg = _project(tmp_path)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    dry = runner.invoke(app, ["scan", "-c", str(cfg), "--no-email", "--dry"])
+    assert dry.exit_code == 0, dry.output
+    assert asyncio.run(_seen_count(tmp_path / "seen.db")) == 0
+    assert (tmp_path / "digests" / "digest-dry.md").is_file()
+    assert not (tmp_path / "digests" / "latest.md").exists()
+
+
+@respx.mock
 def test_dry_run_writes_its_own_file(tmp_path: Path) -> None:
     """Review focus 2: a dry run after a real run leaves `latest.md` as the
     real run's digest and writes `digest-dry.md` beside it."""

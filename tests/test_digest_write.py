@@ -14,7 +14,9 @@ from rolescan.digest import write_digest
 def test_each_scan_gets_its_own_file(tmp_path: Path) -> None:
     a = write_digest("first", tmp_path)
     b = write_digest("second", tmp_path)
-    assert a != b or a.read_text() == "second"
+    assert a != b
+    assert a.read_text() == "first"
+    assert b.read_text() == "second"
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{4}(?:-\d+)?\.md", a.name)
     assert (tmp_path / "latest.md").read_text() == "second"
 
