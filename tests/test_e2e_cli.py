@@ -108,6 +108,51 @@ def test_full_scan_writes_a_digest(tmp_path: Path) -> None:
     assert "Nothing new" in digest.read_text()
 
 
+async def _seen_count(db: Path) -> int:
+    async with Store(db) as store:
+        return await store.count()
+
+
+@respx.mock
+def test_seen_is_written_only_after_the_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review focus 2 and storage S2 in one: `write_digest` fails, so nothing
+    may be recorded and the exit code is non-zero. Before 2.5.7 `seen` was
+    committed inside `run_scan`, before the digest existed."""
+    import rolescan.cli as cli_module
+
+    cfg = _project(tmp_path)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+
+    def boom(*a: object, **k: object) -> Path:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(cli_module, "write_digest", boom)
+    result = runner.invoke(app, ["scan", "-c", str(cfg), "--no-email"])
+    assert result.exit_code != 0
+    assert asyncio.run(_seen_count(tmp_path / "seen.db")) == 0
+
+
+@respx.mock
+def test_dry_run_writes_its_own_file(tmp_path: Path) -> None:
+    """Review focus 2: a dry run after a real run leaves `latest.md` as the
+    real run's digest and writes `digest-dry.md` beside it."""
+    cfg = _project(tmp_path)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    real = runner.invoke(app, ["scan", "-c", str(cfg), "--no-email"])
+    assert real.exit_code == 0, real.output
+    latest_before = (tmp_path / "digests" / "latest.md").read_text()
+    dry = runner.invoke(app, ["scan", "-c", str(cfg), "--no-email", "--dry"])
+    assert dry.exit_code == 0, dry.output
+    assert (tmp_path / "digests" / "digest-dry.md").is_file()
+    assert (tmp_path / "digests" / "latest.md").read_text() == latest_before
+
+
 @respx.mock
 def test_paths_resolve_against_the_config_not_the_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -126,6 +171,7 @@ def test_paths_resolve_against_the_config_not_the_cwd(
     assert not (elsewhere / "seen.db").exists()
     assert not (elsewhere / "digests").exists()
     assert (tmp_path / "seen.db").is_file()
+
 
 def test_stats_reports_zero_on_a_fresh_store(tmp_path: Path) -> None:
     cfg = _project(tmp_path)

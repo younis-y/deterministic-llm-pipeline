@@ -8,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from conftest import OLLAMA_MODEL, mock_ollama
+from conftest import OLLAMA_MODEL, mock_ollama, scan_and_record
 from rolescan.config import Config
 from rolescan.digest import render_html, render_markdown
 from rolescan.models import (
@@ -118,7 +118,7 @@ async def test_second_run_reports_nothing_new(config: Config) -> None:
             ),
         )
     )
-    assert len((await run_scan(config)).reportable) == 1
+    assert len((await scan_and_record(config)).reportable) == 1
     second = await run_scan(config)
     assert second.reportable == []
     assert second.already_seen == 1
@@ -318,7 +318,7 @@ async def test_a_second_scan_does_not_refetch_an_unchanged_posting(
         }
     )
 
-    first = await run_scan(cfg)
+    first = await scan_and_record(cfg)
     assert first.fetched == 1
     assert detail.call_count == 1
 
@@ -425,7 +425,7 @@ async def test_an_unjudged_posting_is_not_buried_in_seen(
         )
     )
     cfg = _cfg(tmp_path, {"enabled": True, "backend": "anthropic", "api_key": ""})
-    first = await run_scan(cfg)
+    first = await scan_and_record(cfg)
     assert first.llm_unusable, "the backend was supposed to work and did not"
     assert first.prefiltered == 0, "this posting reached the scorer"
     assert await _seen_uids(tmp_path / "seen.db") == set()
@@ -456,7 +456,7 @@ async def test_a_deliberate_keyword_only_run_does_record_what_it_judged(
         )
     )
     cfg = _cfg(tmp_path, {"enabled": False})
-    first = await run_scan(cfg)
+    first = await scan_and_record(cfg)
     assert first.llm_unusable == "", "nobody asked for a judge, so none is broken"
     assert first.prefiltered == 0, "this posting reached the scorer"
     assert len(await _seen_uids(tmp_path / "seen.db")) == 1
@@ -475,7 +475,7 @@ async def test_preflight_reports_an_unknown_enricher_before_fetching(
 
     The two reasons are returned separately (round 2 of this task's review):
     an unknown enricher must never be folded into the backend reason, since
-    every caller of `llm_unusable` - the digest, the CLI, `_record_assessed`
+    every caller of `llm_unusable` - the digest, the CLI, `assessed`
     - treats a non-empty value as "the judge backend cannot run"."""
     cfg = _cfg(
         tmp_path,
@@ -518,7 +518,7 @@ async def test_a_posting_the_scorer_errored_on_is_not_buried_either(
         return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
     cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL})
-    result = await run_scan(cfg)
+    result = await scan_and_record(cfg)
     assert result.llm_unusable == "", "the backend was usable; the call is what failed"
     assert result.llm_errors == 1
     assert await _seen_uids(tmp_path / "seen.db") == set()
@@ -542,7 +542,7 @@ async def test_a_healthy_run_still_records_what_it_judged(tmp_path: Path) -> Non
         tmp_path,
         {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"},
     )
-    result = await run_scan(cfg)
+    result = await scan_and_record(cfg)
     assert len(result.reportable) == 1
     assert len(await _seen_uids(tmp_path / "seen.db")) == 1
     assert (await run_scan(cfg)).already_seen == 1
@@ -578,7 +578,7 @@ async def test_a_healthy_run_with_an_unknown_enricher_scores_normally(
             "enricher": "not-a-real-enricher",
         },
     )
-    result = await run_scan(cfg)
+    result = await scan_and_record(cfg)
 
     assert result.llm_unusable == "", "the backend is healthy"
     assert "not-a-real-enricher" in result.enricher_unusable
@@ -639,7 +639,7 @@ async def test_a_hard_blocker_overrides_a_high_llm_score(tmp_path: Path) -> None
             "sources": [{"kind": "greenhouse", "slug": "acme", "label": "Acme"}],
         }
     )
-    result = await run_scan(cfg)
+    result = await scan_and_record(cfg)
     assert result.prefiltered == 0, "the posting must have reached the LLM"
     assert result.reportable == [], "a hard blocker must not reach the digest"
 
@@ -761,7 +761,7 @@ async def test_a_prefiltered_reject_is_recorded_even_with_scoring_off(
         )
     )
     cfg = _cfg(tmp_path, {"enabled": False})
-    result = await run_scan(cfg)
+    result = await scan_and_record(cfg)
     assert result.prefiltered == 1
     assert len(await _seen_uids(tmp_path / "seen.db")) == 1
     assert (await run_scan(cfg)).already_seen == 1
@@ -913,6 +913,21 @@ async def test_a_source_that_goes_quiet_is_reported(tmp_path: Path) -> None:
         )
         quiet = await _check_coverage([silent], store)
     assert quiet == [("Jane Street", 228)]
+
+
+async def test_a_dry_check_leaves_the_quiet_alarm_armed(tmp_path: Path) -> None:
+    """Storage audit S6: a `--dry` run wrote its counts, and the alarm looks
+    at the last five runs, so a few dry runs of a silent source taught the
+    store that zero was normal and the real run stayed quiet about it."""
+    worked = SourceReport(kind="greenhouse", slug="jane", label="Jane", count=228)
+    silent = SourceReport(kind="greenhouse", slug="jane", label="Jane", count=0)
+    async with Store(tmp_path / "s.db") as store:
+        await _check_coverage([worked], store)
+        for _ in range(5):
+            assert await _check_coverage([silent], store, record=False) == [
+                ("Jane", 228)
+            ]
+        assert await _check_coverage([silent], store) == [("Jane", 228)]
 
 
 async def test_a_source_that_never_worked_is_not_called_quiet(tmp_path: Path) -> None:
@@ -1497,7 +1512,7 @@ async def test_rule_hidden_carries_a_posting_a_term_pushed_under_the_prefilter(
 
     # Rejects are still recorded as seen on a real run, so the posting is
     # listed once, on the run that first sees it, and not every morning.
-    first = await run_scan(cfg, check_llm=False)
+    first = await scan_and_record(cfg, check_llm=False)
     assert [s.job.title for s in first.rule_hidden] == ["Energy Data Scientist"]
     again = await run_scan(cfg, check_llm=False)
     assert again.rule_hidden == []

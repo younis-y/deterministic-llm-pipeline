@@ -210,12 +210,25 @@ def scan(
     html_body = render_html(
         result, shortlist=shortlist_rows, config_path=config.resolve()
     )
-    path = write_digest(text, cfg.resolve(cfg.output.dir))
+    path = write_digest(
+        text, cfg.resolve(cfg.output.dir), name="digest-dry.md" if dry else None
+    )
     console.print(Markdown(text))
     console.print(f"\n[dim]written to {path}[/]")
 
     if result.reportable:
         console.print(_ranked_table(result))
+
+    # Recorded only now that the digest is on disk (2.5.7): a crash or a
+    # failed write before this point leaves `seen` untouched, so the next run
+    # sees the same postings again instead of losing them (storage audit S2).
+    if result.to_record:
+
+        async def _record() -> None:
+            async with Store(cfg.resolve(cfg.output.db_path)) as store:
+                await store.record_all(result.to_record)
+
+        asyncio.run(_record())
 
     _deliver(text, html_body, cfg, path, email=email)
 

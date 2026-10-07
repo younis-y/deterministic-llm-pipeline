@@ -4,6 +4,7 @@ import json
 import re
 import socket
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -11,6 +12,8 @@ import respx
 
 from rolescan.config import Config, ProfileConfig
 from rolescan.models import Job
+from rolescan.pipeline import ScanResult, run_scan
+from rolescan.store import Store
 
 FIXTURE_CONFIG = """
 profile:
@@ -167,6 +170,20 @@ def gated_job() -> Job:
         ),
         posted="2026-08-22",
     )
+
+
+async def scan_and_record(cfg: Config, **kw: Any) -> ScanResult:
+    """`run_scan`, then the write the CLI makes once the digest is on disk.
+
+    Since 2.5.7 `run_scan` no longer touches `seen`: it returns what should be
+    recorded in `result.to_record` and `rolescan scan` records it after
+    `write_digest`. A test that asserts on `seen`, or runs twice and expects
+    the second run to skip what the first judged, needs both halves."""
+    result = await run_scan(cfg, **kw)
+    if result.to_record:
+        async with Store(cfg.resolve(cfg.output.db_path)) as store:
+            await store.record_all(result.to_record)
+    return result
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")

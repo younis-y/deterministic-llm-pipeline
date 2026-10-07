@@ -381,8 +381,10 @@ def _stats(result: ScanResult) -> str:
         # Only when it happened: a permanent "0 blocked and hidden" on every
         # digest would train the reader to skip the line that matters. These
         # postings scored well enough to be here and were removed anyway, and
-        # they are already recorded as seen, so this is the reader's only
-        # chance to notice a blocker term that is matching the wrong thing.
+        # they are recorded as seen once this digest is written (a blocked
+        # posting that the LLM ceiling deferred is not recorded, and comes
+        # round again), so this is the reader's only chance to notice a
+        # blocker term that is matching the wrong thing.
         bits.append(
             f"{result.hidden_blocked} blocked and hidden (output.show_blocked is false)"
         )
@@ -1018,13 +1020,35 @@ def render_html(
     )
 
 
-def write_digest(text: str, directory: Path) -> Path:
+def write_digest(text: str, directory: Path, *, name: str | None = None) -> Path:
+    """Write the digest atomically; one file per scan.
+
+    `name` given: write only that file (a dry run writes `digest-dry.md` and
+    must not become `latest.md`, which `rolescan show` and the owner's tools
+    read as the last real run). Otherwise the file is stamped to the minute
+    and suffixed if that minute already has one, so a second scan of the day
+    cannot overwrite the first (2026-09-28: four scans, one file).
+    """
     directory.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y-%m-%d")
-    path = directory / f"{stamp}.md"
-    path.write_text(text, encoding="utf-8")
-    (directory / "latest.md").write_text(text, encoding="utf-8")
+    if name is None:
+        stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M")
+        path = directory / f"{stamp}.md"
+        n = 1
+        while path.exists():
+            n += 1
+            path = directory / f"{stamp}-{n}.md"
+    else:
+        path = directory / name
+    _write_atomic(path, text)
+    if name is None:
+        _write_atomic(directory / "latest.md", text)
     return path
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 def send_email(

@@ -91,7 +91,7 @@ class ScanResult:
     Deliberately a SEPARATE field from `llm_unusable`, not folded into it. A
     misspelt `llm.enricher` does not stop the judge from scoring - `FitScorer`
     just runs without the extra step - so it must not trip anything that reads
-    `llm_unusable` as "the judge backend cannot run": `_record_assessed`'s
+    `llm_unusable` as "the judge backend cannot run": `assessed`'s
     `backend_broke`, the digest's "did not run at all" / "pre-scan backend
     check failed" notes, or the CLI's matching warnings. Those all behave
     exactly as if no enricher had been configured. This field exists purely so
@@ -159,6 +159,9 @@ class ScanResult:
     not `seen`, so the next run sees them again. Counted in the digest so a
     run that keeps deferring the same roles is visible, where before it
     buried them."""
+    to_record: list[ScoredJob] = field(default_factory=list)
+    """What a real run writes to `seen` once the digest is on disk (2.5.7).
+    Empty on a dry run."""
     dry_run: bool = False
 
     @property
@@ -230,7 +233,7 @@ async def _preflight(cfg: Config) -> tuple[str, str]:
     Returned as two SEPARATE strings on purpose (round 2 of this task's
     review folded the enricher reason into the backend one, which then read
     as a broken judge backend everywhere `llm_unusable` is consulted -
-    `_record_assessed`'s `backend_broke`, the digest's "did not run at all"
+    `assessed`'s `backend_broke`, the digest's "did not run at all"
     note, the CLI's matching warning - for a fault that does not stop
     scoring at all, only the extra step an enricher adds on top of it).
     """
@@ -384,23 +387,13 @@ def assessed(
     return kept
 
 
-async def _record_assessed(
-    store: Store,
-    rejects: list[ScoredJob],
-    judged: list[ScoredJob],
-    *,
-    backend_broke: bool,
-) -> None:
-    """Write `assessed(...)` to `seen`. The one place a scan records."""
-    await store.record_all(assessed(rejects, judged, backend_broke=backend_broke))
-
-
 def _hide_blocked(keep: list[ScoredJob]) -> tuple[list[ScoredJob], int]:
     """Remove blocked roles from the digest, and say how many that was.
 
-    Logged as well as counted: these postings have just been written to
-    `seen`, so this is the only record that a specific role existed and was
-    deleted on the strength of a configured term.
+    Logged as well as counted: these postings are recorded as seen once the
+    digest is written (a blocked posting the LLM ceiling deferred is never
+    recorded), so this is the only record that a specific role existed and
+    was deleted on the strength of a configured term.
     """
     visible = [s for s in keep if not s.is_blocked]
     hidden = len(keep) - len(visible)
@@ -484,7 +477,7 @@ def _rule_hidden(
 
 
 async def _check_coverage(
-    reports: list[SourceReport], store: Store
+    reports: list[SourceReport], store: Store, *, record: bool = True
 ) -> list[tuple[str, int]]:
     """Record what each source returned, and name the ones that went quiet.
 
@@ -496,6 +489,11 @@ async def _check_coverage(
     Sources that errored or skipped are excluded - those already have their
     own line in the digest, and reporting them twice buries the silent case
     among the loud ones.
+
+    `record=False` on a dry run (2.5.7): the alarm remembers only the last
+    five runs, and a `--dry` run used to write its counts into that window,
+    so a few of them taught the store that zero was normal for a source that
+    had gone silent (storage audit S6).
     """
     quiet: list[tuple[str, int]] = []
     for report in reports:
@@ -510,7 +508,10 @@ async def _check_coverage(
                     report.label or report.slug,
                     previous,
                 )
-    await store.record_source_counts({_source_key(r): r.count for r in reports if r.ok})
+    if record:
+        await store.record_source_counts(
+            {_source_key(r): r.count for r in reports if r.ok}
+        )
     return quiet
 
 
@@ -539,7 +540,9 @@ async def run_scan(
         unique = merge_near_duplicates(deduplicate(fresh_raw))
         result.unique = len(unique)
 
-        result.quiet_sources = await _check_coverage(result.reports, store)
+        result.quiet_sources = await _check_coverage(
+            result.reports, store, record=not dry_run
+        )
 
         scored = [score_keywords(j, cfg.profile) for j in unique]
 
@@ -564,8 +567,7 @@ async def run_scan(
         )
 
         if not dry_run:
-            await _record_assessed(
-                store,
+            result.to_record = assessed(
                 rejects,
                 judged,
                 backend_broke=bool(result.llm_unusable) or scorer.errors > 0,

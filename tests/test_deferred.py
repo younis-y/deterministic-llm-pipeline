@@ -11,11 +11,11 @@ from pathlib import Path
 import httpx
 import respx
 
-from conftest import OLLAMA_MODEL, mock_ollama
+from conftest import OLLAMA_MODEL, mock_ollama, scan_and_record
 from rolescan.config import Config
 from rolescan.digest import render_markdown
 from rolescan.models import Job, ScoredJob
-from rolescan.pipeline import ScanResult, _prefilter, _rank, assessed, run_scan
+from rolescan.pipeline import ScanResult, _prefilter, _rank, assessed
 from rolescan.scoring import FitScorer
 from rolescan.store import Store
 
@@ -178,11 +178,11 @@ async def test_roles_past_the_digest_cap_come_back_next_run(tmp_path: Path) -> N
         )
     )
     cfg = _pipeline_cfg(tmp_path)
-    first = await run_scan(cfg)
+    first = await scan_and_record(cfg)
     assert len(first.reportable) == 1
     assert [s.deferred for s in first.deferred] == ["digest_cap"]
     assert await _seen(tmp_path) == {"Energy Python Analyst"}
-    second = await run_scan(cfg)
+    second = await scan_and_record(cfg)
     assert [s.job.title for s in second.reportable] == ["Energy Analyst"]
 
 
@@ -211,13 +211,35 @@ async def test_deferred_posting_with_a_term_is_listed_not_recorded(
         model=OLLAMA_MODEL,
         max_calls_per_run=1,
     )
-    result = await run_scan(cfg)
+    result = await scan_and_record(cfg)
     assert [(s.job.title, s.deferred) for s in result.deferred] == [
         ("Energy Analyst", "llm_ceiling")
     ]
     text = render_markdown(result)
     assert "Energy Analyst" in text and "security clearance" in text
     assert "Energy Analyst" not in await _seen(tmp_path)
+
+
+@respx.mock
+async def test_a_posting_with_no_text_is_deferred_not_recorded(tmp_path: Path) -> None:
+    """Review focus 3, end to end: a posting whose description never arrived
+    and whose title scores nothing is held back, not buried. It is counted in
+    the digest and absent from `seen`, so the next run (which may have the
+    text) sees it again; the on-topic posting beside it is recorded."""
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json=_board(
+                (1, "Marketing Manager", ""),
+                (2, "Energy Python Analyst", "energy python"),
+            ),
+        )
+    )
+    result = await scan_and_record(_pipeline_cfg(tmp_path))
+    assert "Marketing Manager" not in await _seen(tmp_path)
+    assert await _seen(tmp_path) == {"Energy Python Analyst"}
+    assert [s.deferred for s in result.deferred] == ["thin"]
+    assert "1 without text yet" in render_markdown(result)
 
 
 def test_stats_line_counts_deferred() -> None:
