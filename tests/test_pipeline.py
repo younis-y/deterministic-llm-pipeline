@@ -1302,7 +1302,7 @@ def test_rule_hidden_never_repeats_a_posting_the_digest_already_shows(
     shown = _scored(energy_job, verdict=Verdict.SKIP, fit_score=0, rule="years")
     hidden = _scored(gated_job, verdict=Verdict.SKIP, fit_score=0, rule="level")
     unruled = _scored(energy_job.model_copy(update={"url": "https://x/9"}))
-    assert _rule_hidden([shown, hidden, unruled], [shown]) == [hidden]
+    assert _rule_hidden([shown, hidden, unruled], [shown], []) == [hidden]
 
 
 @respx.mock
@@ -1367,7 +1367,7 @@ async def test_rule_hidden_carries_postings_a_hard_blockers_term_removed(
     ]
     text = render_markdown(result)
     section = text[text.index("## Hidden by your rules") :]
-    assert "**Your hard_blockers terms**" in section
+    assert "**Your blocking terms (hard_blockers, excluded_locations)**" in section
     assert (
         "- **Acme** · [Energy Data Scientist](https://boards.greenhouse.io/acme/jobs/1)"
         ' · Abu Dhabi: blocked by "uae nationals only"'
@@ -1379,8 +1379,8 @@ def test_rule_hidden_lists_a_term_blocked_posting_once(
     energy_job: Job, gated_job: Job
 ) -> None:
     """A posting both a rule and a `hard_blockers` term caught is one posting,
-    and a term-blocked posting the digest shows (`show_blocked: true`) is not
-    hidden at all."""
+    a term-blocked posting the digest shows (`show_blocked: true`) is not
+    hidden at all, and of the prefilter rejects only a term hit is."""
     both = _scored(gated_job, verdict=Verdict.BLOCKED, fit_score=20, rule="hard_bar")
     both = both.model_copy(update={"blocker_hits": ["uae national"]})
     term_only = _scored(energy_job).model_copy(update={"blocker_hits": ["sc"]})
@@ -1393,4 +1393,96 @@ def test_rule_hidden_lists_a_term_blocked_posting_once(
         blocker_hits=["dv"],
     )
     judged = [both, term_only, unscored, shown]
-    assert _rule_hidden(judged, [shown]) == [both, term_only, unscored]
+    term_reject = ScoredJob(
+        job=gated_job.model_copy(update={"url": "https://x/7"}),
+        keyword_score=-11,
+        blocker_hits=["uae national"],
+    )
+    low_reject = ScoredJob(job=gated_job.model_copy(update={"url": "https://x/6"}))
+    assert _rule_hidden(judged, [shown], [term_reject, low_reject]) == [
+        both,
+        term_only,
+        unscored,
+        term_reject,
+    ]
+
+
+@respx.mock
+async def test_rule_hidden_carries_a_posting_a_term_pushed_under_the_prefilter(
+    tmp_path: Path,
+) -> None:
+    """The owner's config carries the same nationality and clearance phrases
+    as 60-point `blockers` and as `hard_blockers`, so a term hit almost always
+    takes a posting under `min_keyword_score`. It is then a prefilter reject:
+    never judged, never ranked, recorded as seen - and, without this, never
+    in the section that exists to show a wrong term. A reject with no term is
+    low relevance, not a rule hide, and stays out."""
+    bar = "UAE nationals only"
+    relevant = "Python, trading, energy, day-ahead forecasting."
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "id": jid,
+                        "title": title,
+                        "location": {"name": "Abu Dhabi"},
+                        "absolute_url": f"https://boards.greenhouse.io/acme/jobs/{jid}",
+                        "content": text,
+                        "updated_at": "2026-08-20T10:00:00Z",
+                    }
+                    for jid, title, text in (
+                        (1, "Energy Data Scientist", f"{relevant} {bar}."),
+                        (2, "Receptionist", "Front desk cover."),
+                        (3, "Graduate Energy Data Scientist", relevant),
+                    )
+                ]
+            },
+        )
+    )
+    cfg = Config.model_validate(
+        {
+            "profile": {
+                "keywords": _KEYWORDS,
+                "blockers": {"uae nationals only": 60},
+                "hard_blockers": ["uae nationals only"],
+                "min_keyword_score": 18,
+                "min_report_score": 10,
+            },
+            "llm": {"enabled": False},
+            "output": {
+                "dir": str(tmp_path),
+                "db_path": str(tmp_path / "seen.db"),
+                "show_blocked": False,
+            },
+            "sources": [{"kind": "greenhouse", "slug": "acme", "label": "Acme"}],
+        }
+    )
+
+    result = await run_scan(cfg, dry_run=True, check_llm=False)
+
+    assert result.prefiltered == 2, "both the term hit and the receptionist"
+    assert [s.job.title for s in result.reportable] == [
+        "Graduate Energy Data Scientist"
+    ]
+    [hidden] = result.rule_hidden
+    assert hidden.job.title == "Energy Data Scientist"
+    assert hidden.blocker_hits == ["uae nationals only"]
+    gate = cfg.profile.min_keyword_score
+    assert hidden.keyword_score < gate <= hidden.keyword_score + 60, (
+        "the term's weight alone is what put it under the gate"
+    )
+    text = render_markdown(result)
+    terms = text[text.index("**Your blocking terms") :]
+    assert "[Energy Data Scientist](https://boards.greenhouse.io/acme/jobs/1)" in terms
+    assert 'Abu Dhabi: blocked by "uae nationals only"' in terms
+    assert "Receptionist" not in text
+    assert "1 hidden by your rules" in text
+
+    # Rejects are still recorded as seen on a real run, so the posting is
+    # listed once, on the run that first sees it, and not every morning.
+    first = await run_scan(cfg, check_llm=False)
+    assert [s.job.title for s in first.rule_hidden] == ["Energy Data Scientist"]
+    again = await run_scan(cfg, check_llm=False)
+    assert again.rule_hidden == []

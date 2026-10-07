@@ -78,8 +78,9 @@ def _md_frags(frags: _Frags) -> str:
 #: `other` bar gives (a driving licence, a sector background), so the label
 #: does not claim every one of them is a nationality or clearance bar.
 #: `_TERMS` is not a `decide` rule: it groups postings a configured
-#: `hard_blockers` term blocked (`ScoredJob.blocker_hits`) when no rule fired,
-#: and always comes last.
+#: `hard_blockers` term or `excluded_locations` entry blocked
+#: (`ScoredJob.blocker_hits`, where a location reads "location: dubai") when
+#: no rule fired, and always comes last.
 _TERMS = "hard_blockers"
 _RULE_LABELS: dict[str, str] = {
     "hard_bar": "Nationality, clearance or other hard bar",
@@ -88,7 +89,7 @@ _RULE_LABELS: dict[str, str] = {
     "level": "Level",
     "years": "Years of experience",
     "field": "Field",
-    _TERMS: "Your hard_blockers terms",
+    _TERMS: "Your blocking terms (hard_blockers, excluded_locations)",
 }
 
 _RULE_HIDDEN_LEAD = (

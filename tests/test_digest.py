@@ -724,9 +724,11 @@ def test_hard_blockers_terms_are_the_last_group_with_their_terms() -> None:
     text = render_markdown(result)
     body = text[text.index("## Hidden by your rules") :]
     assert body.index("Years of experience") < body.index(
-        "**Your hard_blockers terms**"
+        "**Your blocking terms (hard_blockers, excluded_locations)**"
     )
-    terms = body[body.index("**Your hard_blockers terms**") :]
+    terms = body[
+        body.index("**Your blocking terms (hard_blockers, excluded_locations)**") :
+    ]
     assert (
         '- **Emirates** · [Data Analyst](https://x/emirates) · Dubai: blocked by "emirati", "location: dubai"'
         in terms
@@ -738,11 +740,15 @@ def test_hard_blockers_terms_are_the_last_group_with_their_terms() -> None:
     assert terms.index("**Emirates**") < terms.index("**Mubadala**")
     assert "3 hidden by your rules" in text
     html = render_html(result)
-    group = html[html.index("Your hard_blockers terms") :]
+    group = html[
+        html.index("Your blocking terms (hard_blockers, excluded_locations)") :
+    ]
     assert (
         "Data Analyst</a> · Dubai: blocked by &quot;uae nationals only&quot;" in group
     )
-    assert html.index("Years of experience") < html.index("Your hard_blockers terms")
+    assert html.index("Years of experience") < html.index(
+        "Your blocking terms (hard_blockers, excluded_locations)"
+    )
 
 
 def test_a_posting_with_a_hard_bar_and_a_term_is_listed_once_under_hard_bar() -> None:
@@ -755,7 +761,7 @@ def test_a_posting_with_a_hard_bar_and_a_term_is_listed_once_under_hard_bar() ->
     result = _rule_hidden_result(rule_hidden=[both], reports=[])
     for text in (render_markdown(result), render_html(result)):
         assert text.count("ADNOC") == 1
-        assert "Your hard_blockers terms" not in text
+        assert "Your blocking terms (hard_blockers, excluded_locations)" not in text
         assert "Nationality, clearance or other hard bar" in text
 
 
@@ -767,4 +773,6 @@ def test_an_unlabelled_rule_still_renders_before_the_terms_group() -> None:
         _ruled("Acme", "Analyst", "zzz_new_rule", 'Skip: advert says "x"'),
     ]
     text = render_markdown(_rule_hidden_result(rule_hidden=hidden, reports=[]))
-    assert text.index("**zzz_new_rule**") < text.index("**Your hard_blockers terms**")
+    assert text.index("**zzz_new_rule**") < text.index(
+        "**Your blocking terms (hard_blockers, excluded_locations)**"
+    )
