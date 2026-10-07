@@ -131,6 +131,18 @@ NATIONALITY = [
     ("Analyst", "This is an Emiratisation position in our finance team."),
     ("Analyst", "This internship is for Emiratization students."),
     ("Analyst", "You must be a British citizen and have lived in the UK for 5 years."),
+    # final round: the description shapes kept for Emiratisation, and titles
+    # whose last role noun is a hire
+    ("Analyst", "Graduate opportunity (Emiratisation) in our Dubai office."),
+    ("Analyst", "This is an Emiratisation opportunity for fresh graduates."),
+    ("Analyst", "We are recruiting for an Emiratisation vacancy in finance."),
+    ("Analyst", "This internship is for Emiratisation trainees."),
+    ("Analyst", "Applications are open for Emiratisation graduates."),
+    ("Analyst", "Join our Emiratisation programme for UAE nationals."),
+    ("Emiratisation Officer Trainee", ""),
+    ("Business Analyst - Emiratization", ""),
+    ("Graduate Trainee - Emiratization", ""),
+    ("HR Analyst Trainee - Emiratization", ""),
     # A welcome to students and graduates after the bar is not a preference
     # about the bar itself.
     (
@@ -231,6 +243,26 @@ NOT_A_NATIONALITY_BAR = [
         "This role is open to UK nationals and EU nationals with settled status.",
     ),
     ("Analyst", "UK nationals and EU nationals with settled status"),
+    # final round: Emiratisation as HR work or company boilerplate in the
+    # description, and a title that names the HR role
+    (
+        "Emiratisation Programme Manager",
+        "Oversee the Emiratisation programme across all business units.",
+    ),
+    ("Emiratisation Programme Manager", "This is an Emiratisation role."),
+    ("Analyst", "Responsible for Emiratisation hiring across the group."),
+    ("Analyst", "Develop and implement Emiratisation strategies and programmes."),
+    ("Analyst", "Monitor Emiratisation targets and hires."),
+    ("Analyst", "Ensure Emiratisation opportunities are filled on time."),
+    ("Analyst", "Coordinate Emiratisation programmes with HR business partners."),
+    ("Analyst", "We are committed to Emiratisation programmes."),
+    ("Analyst", "Our Emiratisation programme has placed hundreds of nationals."),
+    ("Analyst", "Knowledge of Emiratisation roles and Nafis incentives."),
+    ("Emiratisation Graduate Programme Manager", ""),
+    ("Manager - Emiratisation", ""),
+    ("Senior Manager - Emiratisation", ""),
+    ("Talent Acquisition Specialist - Emiratisation", ""),
+    ("Analyst", "Open to Saudi nationals and international candidates."),
     # review round: a hyphen inside a word, and "any" nationality
     ("Analyst - Emirati-owned family office", ""),
     ("Analyst", "Nationality: UAE / Any"),
@@ -273,6 +305,12 @@ CLEARANCE = [
     ("Engineer", "Must have active eDV."),
     # review round: still bars
     ("Engineer", "Candidates must be eligible to attain SC clearance"),
+    # final round: a sponsored clearance keeps its residency rule, a level
+    # above BPSS is a bar, and a requirement verb is not a duty verb
+    ("Engineer", "We will sponsor your SC clearance."),
+    ("Engineer", "Must hold BPSS and CTC security clearance."),
+    ("Engineer", "Candidates must be eligible to obtain and maintain SC clearance."),
+    ("Engineer", "We are looking to connect with DV cleared Data Engineers."),
     ("Engineer", "You must hold active eDV clearance."),
     (
         "Senior AI/ML Engineer",
@@ -333,6 +371,19 @@ NOT_A_CLEARANCE_BAR = [
     ("Analyst", "Work with DV-cleared colleagues."),
     ("Analyst", "The role sits in our Security Vetting team."),
     ("Security Clearance Officer", ""),
+    # final round: more clearance work, a screening question, peers, titles
+    ("Analyst", "Track security clearance renewals for contractors."),
+    ("Analyst", "Report on security clearance status every month."),
+    ("Analyst", "Maintain security clearance records for all staff."),
+    ("Analyst", "Monitor security clearance expiry dates."),
+    ("Analyst", "Advise on security clearance policy."),
+    ("Analyst", "Experience of security clearance processes."),
+    ("Analyst", "Knowledge of security vetting requirements."),
+    ("Analyst", "You will help clients obtain security clearance."),
+    ("Analyst", "Do you hold security clearance? (Yes/No)"),
+    ("Analyst", "You will work with SC-cleared engineers."),
+    ("Security Vetting Analyst", ""),
+    ("Security Clearance Analyst", ""),
     # review round: BPSS is the baseline screen, not a structural bar
     (
         "Analyst",
@@ -447,6 +498,36 @@ def test_a_long_sentence_is_quoted_from_the_bar_to_its_end() -> None:
             "British citizenship."
         ),
     )
+
+
+RUN_ON = [
+    (
+        BarKind.nationality,
+        "Interest in platform design Eligibility Saudi nationals only We welcome "
+        "both current students and fresh graduates We expect a full-time "
+        "commitment for the whole internship and on-site attendance in Riyadh",
+        "Saudi nationals only",
+    ),
+    (
+        BarKind.clearance,
+        "Senior AI/ML Engineer in Greater London Must hold active clearance - SC "
+        "or MoD DV Up to 95k DoE plus bonus 4 days on site in Brentford - future "
+        "travel to client sites across the UK and Europe",
+        "hold active clearance - SC or MoD DV",
+    ),
+]
+
+
+@pytest.mark.parametrize(("kind", "text", "lead"), RUN_ON)
+def test_a_run_on_sentence_is_quoted_for_about_a_line(
+    kind: BarKind, text: str, lead: str
+) -> None:
+    bar = _bar("Analyst", text, kind)
+    assert bar is not None
+    assert bar.quote.startswith(lead)
+    assert bar.quote in text
+    assert len(bar.quote) <= 120
+    assert not bar.quote.endswith(" ")
 
 
 def test_the_kinds_bar_words_check_are_the_kinds_that_block() -> None:
