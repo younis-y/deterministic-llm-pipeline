@@ -475,8 +475,9 @@ def _rule_hidden(
     under `gate`). `thin` is the postings deferred for having no description:
     they are not rejects, but one whose title matched a `hard_blockers` term
     is listed all the same, or it would be in no list at all. Only those: a
-    thin near-gate or weighted-term posting would be listed again on every run
-    until its text arrives.
+    thin near-gate or weighted-term posting, or one whose only hit is an
+    `excluded_locations` entry (`location: ...`, nothing for the reader to
+    check), would be listed again on every run until its text arrives.
 
     Matched on identity, not equality: `_rank` filters and slices `judged`
     and `run_scan` copies only the postings it marks `digest_cap`, so the
@@ -494,7 +495,11 @@ def _rule_hidden(
         and s.keyword_score + sum(profile.blockers.get(t, 0) for t in s.blocker_hits)
         >= gate
     ]
-    thin_blocked = [s for s in thin if s.blocker_hits]
+    thin_blocked = [
+        s
+        for s in thin
+        if any(not hit.startswith("location: ") for hit in s.blocker_hits)
+    ]
 
     def _weight(s: ScoredJob) -> int:
         return sum(

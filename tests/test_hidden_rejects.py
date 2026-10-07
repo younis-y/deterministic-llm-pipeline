@@ -93,17 +93,27 @@ def test_a_thin_posting_a_hard_blocker_term_caught_is_listed_but_no_other_thin_i
     """A posting with no description is deferred, not rejected, so it is no
     longer in `rejects`; without `thin=` a title that matched `hard_blockers`
     would be in no list at all. Only that one is listed: a thin near-gate or
-    weighted reject would repeat every run until its text arrives."""
+    weighted reject would repeat every run until its text arrives, and so
+    would one whose only hit is an excluded location, which the reader has
+    nothing to check."""
     profile = _profile(
         keywords={"python": 4},
         blockers={},
         hard_blockers=["security clearance"],
+        excluded_locations=["dubai"],
         hidden_gate_margin=10,
     )
     caught = score_keywords(_job("Python Analyst, security clearance", ""), profile)
     plain = score_keywords(_job("Python Analyst", ""), profile)  # 12: near the gate
-    _, rejects, thin = _prefilter([caught, plain], profile.min_keyword_score)
-    assert rejects == [] and [s.deferred for s in thin] == ["thin", "thin"]
+    dubai = score_keywords(
+        _job("Python Analyst", "").model_copy(
+            update={"location": "Dubai", "url": "https://acme.example/2"}
+        ),
+        profile,
+    )
+    assert dubai.blocker_hits == ["location: dubai"]
+    _, rejects, thin = _prefilter([caught, plain, dubai], profile.min_keyword_score)
+    assert rejects == [] and [s.deferred for s in thin] == ["thin"] * 3
     assert _rule_hidden([], [], rejects, profile) == [], "the default lists none"
     hidden = _rule_hidden([], [], rejects, profile, thin=thin)
     assert [s.job.title for s in hidden] == ["Python Analyst, security clearance"]
