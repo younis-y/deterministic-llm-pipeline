@@ -166,9 +166,10 @@ class ScanResult:
     not `seen`, so the next run sees them again. Counted in the digest so a
     run that keeps deferring the same roles is visible, where before it
     buried them."""
-    to_record: list[ScoredJob] = field(default_factory=list)
-    """What a real run writes to `seen` once the digest is on disk (2.5.7).
-    Empty on a dry run."""
+    to_record: list[tuple[ScoredJob, str]] = field(default_factory=list)
+    """What a real run writes to `seen` once the digest is on disk (2.5.7),
+    each posting with the reason it was assessed (see `assessed`). Empty on a
+    dry run."""
     gate: int = 0
     """`profile.min_keyword_score` for this run (2.5.7), so the digest can say
     "scored 12 of 20" for a reject listed as just under it."""
@@ -367,7 +368,7 @@ async def _judge(
 
 def assessed(
     rejects: list[ScoredJob], judged: list[ScoredJob], *, backend_broke: bool
-) -> list[ScoredJob]:
+) -> list[tuple[ScoredJob, str]]:
     """The postings that were actually assessed - and ONLY those.
 
     Recording a posting writes it to `seen`, and `filter_new` then suppresses
@@ -389,11 +390,25 @@ def assessed(
     2.5.7: a `deferred` posting is never assessed, whatever marked it: the
     ceiling, the digest cap, or a missing description. Leaving it out is what
     lets it come round again.
+
+    Each posting comes back with the reason it was assessed, which `seen`
+    keeps so `rolescan unsee` and a reader of the table can tell a keyword
+    reject from a judged skip: `prefilter` for a reject, then for a judged
+    posting the `fit.rule` that fired, else `blocked` when a hard blocker
+    matched, else `judged`.
     """
-    kept = [s for s in rejects if not s.deferred]
-    kept += [
-        s for s in judged if not s.deferred and (s.fit is not None or not backend_broke)
+    kept: list[tuple[ScoredJob, str]] = [
+        (s, "prefilter") for s in rejects if not s.deferred
     ]
+    for s in judged:
+        if s.deferred or (s.fit is None and backend_broke):
+            continue
+        if s.fit is not None and s.fit.rule:
+            kept.append((s, s.fit.rule))
+        elif s.blocker_hits:
+            kept.append((s, "blocked"))
+        else:
+            kept.append((s, "judged"))
     return kept
 
 

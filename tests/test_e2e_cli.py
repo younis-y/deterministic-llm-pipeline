@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 
 from conftest import OLLAMA_MODEL, mock_ollama, plain
 from rolescan.cli import app
+from rolescan.models import Job, ScoredJob
 from rolescan.store import Store
 
 runner = CliRunner()
@@ -169,6 +170,27 @@ def test_dry_run_writes_its_own_file(tmp_path: Path) -> None:
     assert dry.exit_code == 0, dry.output
     assert (tmp_path / "digests" / "digest-dry.md").is_file()
     assert (tmp_path / "digests" / "latest.md").read_text() == latest_before
+
+
+def test_unsee_command_removes_a_posting(tmp_path: Path) -> None:
+    cfg = _project(tmp_path)
+    job = Job(
+        source="greenhouse:acme",
+        company="Acme",
+        title="Energy Analyst",
+        url="https://boards.greenhouse.io/acme/jobs/9",
+        description="energy",
+    )
+
+    async def seed() -> None:
+        async with Store(tmp_path / "seen.db") as store:
+            await store.record_all([(ScoredJob(job=job, keyword_score=20), "judged")])
+
+    asyncio.run(seed())
+    result = runner.invoke(app, ["unsee", job.url, "-c", str(cfg)])
+    assert result.exit_code == 0, result.output
+    assert "1 row removed" in plain(result.output)
+    assert asyncio.run(_seen_count(tmp_path / "seen.db")) == 0
 
 
 @respx.mock

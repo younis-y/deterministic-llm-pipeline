@@ -479,5 +479,24 @@ def mark(
     console.print(f"{state}: {url}")
 
 
+@app.command()
+def unsee(
+    key: Annotated[
+        str,
+        typer.Argument(help="The posting URL (as printed in the digest) or its uid."),
+    ],
+    config: ConfigOpt = Path("config.yaml"),
+) -> None:
+    """Forget a posting so the next scan can report it again."""
+    cfg = _load(config)
+
+    async def go() -> int:
+        async with Store(cfg.resolve(cfg.output.db_path)) as store:
+            return await store.unsee(key)
+
+    n = asyncio.run(go())
+    console.print(f"{n} row{'s' if n != 1 else ''} removed for {key}")
+
+
 if __name__ == "__main__":
     app()

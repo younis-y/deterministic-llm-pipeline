@@ -14,7 +14,7 @@ import respx
 from conftest import OLLAMA_MODEL, mock_ollama, scan_and_record
 from rolescan.config import Config
 from rolescan.digest import render_markdown
-from rolescan.models import Job, ScoredJob
+from rolescan.models import Confidence, FitVerdict, Job, ScoredJob, Verdict
 from rolescan.pipeline import ScanResult, _prefilter, _rank, assessed
 from rolescan.scoring import FitScorer
 from rolescan.store import Store
@@ -149,7 +149,35 @@ def test_assessed_leaves_out_every_deferred_posting() -> None:
     ]
     rejects = [_scored(3, 5)]
     kept = assessed(rejects, judged, backend_broke=False)
-    assert {s.job.title for s in kept} == {"Energy Analyst 1", "Energy Analyst 3"}
+    assert {s.job.title for s, _ in kept} == {"Energy Analyst 1", "Energy Analyst 3"}
+
+
+def test_assessed_attaches_the_reason_each_posting_was_recorded_for() -> None:
+    """`prefilter` for a keyword reject; for a judged posting the rule that
+    fired, else `blocked` for a hard-blocker hit, else plain `judged`."""
+
+    def verdict(rule: str | None) -> FitVerdict:
+        return FitVerdict(
+            fit_score=60,
+            verdict=Verdict.CONSIDER,
+            confidence=Confidence.MEDIUM,
+            reason="Some overlap.",
+            rule=rule,
+        )
+
+    ruled = _scored(1, 50).model_copy(update={"fit": verdict("level")})
+    blocked = _scored(2, 50).model_copy(
+        update={"fit": verdict(None), "blocker_hits": ["security clearance"]}
+    )
+    plain_judged = _scored(3, 50).model_copy(update={"fit": verdict(None)})
+    reject = _scored(4, 5)
+    kept = assessed([reject], [ruled, blocked, plain_judged], backend_broke=False)
+    assert {s.job.title: reason for s, reason in kept} == {
+        "Energy Analyst 4": "prefilter",
+        "Energy Analyst 1": "level",
+        "Energy Analyst 2": "blocked",
+        "Energy Analyst 3": "judged",
+    }
 
 
 def test_rank_returns_the_overflow_marked_digest_cap() -> None:

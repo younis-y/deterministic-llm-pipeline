@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
@@ -95,6 +96,9 @@ _MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX IF NOT EXISTS source_counts_key ON source_counts(source_key, ran);
     """,
+    """
+    ALTER TABLE seen ADD COLUMN reason TEXT NOT NULL DEFAULT '';
+    """,
 )
 
 
@@ -168,19 +172,20 @@ class Store:
         known = {row[0] for row in await cur.fetchall()}
         return [s for s in scored if s.job.uid not in known]
 
-    async def record(self, scored: ScoredJob) -> None:
+    async def record(self, scored: ScoredJob, *, reason: str = "") -> None:
         now = datetime.now(UTC).isoformat(timespec="seconds")
         job = scored.job
         await self.db.execute(
             """
             INSERT INTO seen
                 (uid, company, title, location, url, source, score, verdict,
-                 first_seen, last_seen)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
+                 first_seen, last_seen, reason)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(uid) DO UPDATE SET
                 last_seen=excluded.last_seen,
                 score=excluded.score,
-                verdict=excluded.verdict
+                verdict=excluded.verdict,
+                reason=excluded.reason
             """,
             (
                 job.uid,
@@ -193,13 +198,33 @@ class Store:
                 scored.verdict.value,
                 now,
                 now,
+                reason,
             ),
         )
 
-    async def record_all(self, items: list[ScoredJob]) -> None:
-        for s in items:
-            await self.record(s)
+    async def record_all(
+        self, items: Iterable[ScoredJob | tuple[ScoredJob, str]]
+    ) -> None:
+        """Record each posting with the reason it was assessed (2.5.7:
+        `prefilter`, `judged`, a rule name, `blocked`), so `rolescan unsee`
+        and a reader of the table can tell a keyword reject from a judged
+        skip. A bare `ScoredJob` records with no reason, for callers that
+        predate the column."""
+        for item in items:
+            scored, reason = item if isinstance(item, tuple) else (item, "")
+            await self.record(scored, reason=reason)
         await self.db.commit()
+
+    async def unsee(self, key: str) -> int:
+        """Forget a posting by url or uid so it can be reported again.
+
+        The one recovery path for a role hidden by a wrong rule or term; until
+        2.5.7 it was a hand-written DELETE. Returns the rows removed."""
+        cur = await self.db.execute(
+            "DELETE FROM seen WHERE uid = ? OR url = ?", (key, key)
+        )
+        await self.db.commit()
+        return cur.rowcount
 
     async def count(self) -> int:
         cur = await self.db.execute("SELECT COUNT(*) FROM seen")

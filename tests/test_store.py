@@ -248,6 +248,25 @@ async def test_applications_table_is_created_on_a_fresh_store(
         assert await store.shortlist() == [("https://x/2", "A", "One")]
 
 
+async def _insert_old_seen_row(store: Store, job: Job) -> None:
+    """Write a `seen` row the way a store from before the `reason` column did.
+
+    `Store.record` names `reason`, so a test that pins the schema below
+    migration 5 cannot use it; it inserts the columns that schema has."""
+    await store.db.execute(
+        "INSERT INTO seen (uid, company, title, url, first_seen, last_seen) "
+        "VALUES (?,?,?,?,?,?)",
+        (
+            job.uid,
+            job.company,
+            job.title,
+            job.url,
+            "2026-09-01T00:00:00+00:00",
+            "2026-09-01T00:00:00+00:00",
+        ),
+    )
+
+
 async def test_applications_table_migrates_onto_a_pre_existing_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, energy_job: Job
 ) -> None:
@@ -263,7 +282,7 @@ async def test_applications_table_migrates_onto_a_pre_existing_store(
         # real user's rolescan.sqlite3 would be in.
         m.setattr(store_module, "_MIGRATIONS", store_module._MIGRATIONS[:2])
         async with Store(path) as store:
-            await store.record_all([ScoredJob(job=energy_job)])
+            await _insert_old_seen_row(store, energy_job)
             cur = await store.db.execute("PRAGMA user_version")
             row = await cur.fetchone()
             assert row is not None
@@ -295,3 +314,84 @@ async def test_applications_table_migrates_onto_a_pre_existing_store(
 
         await store.mark("https://x/2", "shortlist", company="A", title="One")
         assert await store.shortlist() == [("https://x/2", "A", "One")]
+
+
+async def test_record_keeps_a_reason_and_unsee_removes_the_row(
+    tmp_path: Path, energy_job: Job
+) -> None:
+    db = tmp_path / "seen.db"
+    async with Store(db) as store:
+        await store.record_all(
+            [(ScoredJob(job=energy_job, keyword_score=4), "prefilter")]
+        )
+        rows = await store.db.execute_fetchall("SELECT reason FROM seen")
+        assert [r[0] for r in rows] == ["prefilter"]
+        assert await store.unsee(energy_job.url) == 1
+        assert await store.is_new(energy_job)
+        assert await store.unsee(energy_job.url) == 0
+
+
+async def test_record_all_still_accepts_bare_scored_jobs(
+    tmp_path: Path, energy_job: Job
+) -> None:
+    async with Store(tmp_path / "seen.db") as store:
+        await store.record_all([ScoredJob(job=energy_job, keyword_score=4)])
+        rows = await store.db.execute_fetchall("SELECT reason FROM seen")
+        assert [r[0] for r in rows] == [""]
+
+
+def test_migration_count_is_five() -> None:
+    assert len(_MIGRATIONS) == 5
+
+
+async def test_unsee_matches_on_uid_as_well_as_url(
+    tmp_path: Path, energy_job: Job
+) -> None:
+    """`unsee` takes either key: the digest prints the url, but a row can also
+    be addressed by its uid."""
+    async with Store(tmp_path / "seen.db") as store:
+        await store.record(ScoredJob(job=energy_job, keyword_score=4), reason="judged")
+        assert await store.unsee(energy_job.uid) == 1
+        assert await store.is_new(energy_job)
+
+
+async def test_reason_column_migrates_onto_a_version_four_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, energy_job: Job
+) -> None:
+    """A user's existing `seen.db` sits at `user_version` 4, with rows that
+    predate the `reason` column. Opening it with the new code must add the
+    column in place, keep those rows, and give them '' (the old behaviour, a
+    row with no recorded reason), not fail or drop them."""
+    path = tmp_path / "s.db"
+
+    with monkeypatch.context() as m:
+        # Pin the module to the first four migrations so this open genuinely
+        # stops at the pre-`reason` schema.
+        m.setattr(store_module, "_MIGRATIONS", store_module._MIGRATIONS[:4])
+        async with Store(path) as store:
+            await _insert_old_seen_row(store, energy_job)
+            cur = await store.db.execute("PRAGMA user_version")
+            row = await cur.fetchone()
+            assert row is not None
+            assert int(row[0]) == 4, "fixture must start below the new migration"
+            columns = [
+                r[1] for r in await store.db.execute_fetchall("PRAGMA table_info(seen)")
+            ]
+            assert "reason" not in columns
+
+    # Reopen with the real, unpatched Store: the actual upgrade path.
+    async with Store(path) as store:
+        cur = await store.db.execute("PRAGMA user_version")
+        row = await cur.fetchone()
+        assert row is not None
+        assert int(row[0]) == 5
+        columns = [
+            r[1] for r in await store.db.execute_fetchall("PRAGMA table_info(seen)")
+        ]
+        assert "reason" in columns
+        reasons = await store.db.execute_fetchall("SELECT reason FROM seen")
+        assert [r[0] for r in reasons] == [""]
+        assert not await store.is_new(energy_job), "the old row must survive"
+        await store.record(ScoredJob(job=energy_job, keyword_score=4), reason="judged")
+        reasons = await store.db.execute_fetchall("SELECT reason FROM seen")
+        assert [r[0] for r in reasons] == ["judged"]
