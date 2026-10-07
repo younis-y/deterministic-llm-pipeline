@@ -138,6 +138,44 @@ def test_seen_is_written_only_after_the_digest(
 
 
 @respx.mock
+def test_seen_is_written_even_if_terminal_rendering_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The digest is on disk, so its postings must be recorded before anything
+    is drawn to the terminal. The record used to come after the rendering, so
+    an exception there left a digest whose postings were reported again on the
+    next run. The exit code is still non-zero: the command did fail."""
+    import rolescan.cli as cli_module
+
+    cfg = _project(tmp_path)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    real_write = cli_module.write_digest
+    real_print = cli_module.console.print
+    written: list[Path] = []
+
+    def write_then_arm(*a: object, **k: object) -> Path:
+        path = real_write(*a, **k)  # type: ignore[arg-type]
+        written.append(path)
+        return path
+
+    def print_or_fail(*a: object, **k: object) -> None:
+        if written:
+            raise RuntimeError("terminal rendering failed")
+        real_print(*a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cli_module, "write_digest", write_then_arm)
+    monkeypatch.setattr(cli_module.console, "print", print_or_fail)
+
+    result = runner.invoke(app, ["scan", "-c", str(cfg), "--no-email"])
+
+    assert result.exit_code != 0
+    assert written and written[0].is_file(), "the digest was written first"
+    assert asyncio.run(_seen_count(tmp_path / "seen.db")) > 0
+
+
+@respx.mock
 def test_a_first_dry_run_records_nothing_and_leaves_no_latest(
     tmp_path: Path,
 ) -> None:

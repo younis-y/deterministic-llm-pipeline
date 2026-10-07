@@ -26,6 +26,7 @@ from rolescan.pipeline import (
     _preflight,
     _rule_hidden,
     deduplicate,
+    record_scan,
     run_scan,
 )
 from rolescan.scoring import FitScorer
@@ -138,6 +139,44 @@ async def test_dry_run_does_not_persist(config: Config) -> None:
     assert first.to_record == [], "a dry run hands the CLI nothing to record"
     again = await scan_and_record(config, dry_run=True)
     assert again.already_seen == 0, "a dry run must leave the store untouched"
+
+
+@respx.mock
+async def test_record_scan_writes_what_run_scan_returned(config: Config) -> None:
+    """`run_scan` marks nothing seen; `record_scan` is the public half that a
+    library caller runs after writing the digest. It returns the row count."""
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json=_payload("Graduate Energy Data Scientist", "Python, trading, energy."),
+        )
+    )
+    result = await run_scan(config)
+    async with Store(config.resolve(config.output.db_path)) as store:
+        assert await store.count() == 0, "run_scan alone must not write seen"
+
+    assert await record_scan(config, result) == len(result.to_record) == 1
+
+    async with Store(config.resolve(config.output.db_path)) as store:
+        assert await store.count() == 1
+    again = await run_scan(config)
+    assert again.already_seen == 1
+
+
+@respx.mock
+async def test_record_scan_after_a_dry_run_records_nothing(config: Config) -> None:
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json=_payload("Graduate Energy Data Scientist", "Python, trading, energy."),
+        )
+    )
+    result = await run_scan(config, dry_run=True)
+
+    assert await record_scan(config, result) == 0
+
+    async with Store(config.resolve(config.output.db_path)) as store:
+        assert await store.count() == 0
 
 
 @respx.mock

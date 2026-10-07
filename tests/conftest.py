@@ -12,8 +12,7 @@ import respx
 
 from rolescan.config import Config, ProfileConfig
 from rolescan.models import Job
-from rolescan.pipeline import ScanResult, run_scan
-from rolescan.store import Store
+from rolescan.pipeline import ScanResult, record_scan, run_scan
 
 FIXTURE_CONFIG = """
 profile:
@@ -180,9 +179,7 @@ async def scan_and_record(cfg: Config, **kw: Any) -> ScanResult:
     `write_digest`. A test that asserts on `seen`, or runs twice and expects
     the second run to skip what the first judged, needs both halves."""
     result = await run_scan(cfg, **kw)
-    if result.to_record:
-        async with Store(cfg.resolve(cfg.output.db_path)) as store:
-            await store.record_all(result.to_record)
+    await record_scan(cfg, result)
     return result
 
 

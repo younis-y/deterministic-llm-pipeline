@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from rolescan.config import Config
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
-from rolescan.pipeline import ScanResult, run_scan
+from rolescan.pipeline import ScanResult, record_scan, run_scan
 
 __version__ = "2.5.7"
 
@@ -16,5 +16,6 @@ __all__ = [
     "ScoredJob",
     "Verdict",
     "__version__",
+    "record_scan",
     "run_scan",
 ]

@@ -17,7 +17,7 @@ from rolescan.config import Config, SourceEntry
 from rolescan.digest import render_html, render_markdown, send_email, write_digest
 from rolescan.http import Fetcher
 from rolescan.models import Verdict
-from rolescan.pipeline import ScanResult, run_scan
+from rolescan.pipeline import ScanResult, record_scan, run_scan
 from rolescan.slugs import SlugIndex
 from rolescan.sources import available, get_source
 from rolescan.sources.base import ProbeResult, ProbeStatus
@@ -213,22 +213,20 @@ def scan(
     path = write_digest(
         text, cfg.resolve(cfg.output.dir), name="digest-dry.md" if dry else None
     )
+
+    # Recorded only now that the digest is on disk (2.5.7): a crash or a
+    # failed write before this point leaves `seen` untouched, so the next run
+    # sees the same postings again instead of losing them. And recorded
+    # straight away, before any console rendering: the digest exists, so an
+    # exception while drawing it to the terminal must not leave its postings
+    # unrecorded and reported again tomorrow.
+    asyncio.run(record_scan(cfg, result))
+
     console.print(Markdown(text))
     console.print(f"\n[dim]written to {path}[/]")
 
     if result.reportable:
         console.print(_ranked_table(result))
-
-    # Recorded only now that the digest is on disk (2.5.7): a crash or a
-    # failed write before this point leaves `seen` untouched, so the next run
-    # sees the same postings again instead of losing them.
-    if result.to_record:
-
-        async def _record() -> None:
-            async with Store(cfg.resolve(cfg.output.db_path)) as store:
-                await store.record_all(result.to_record)
-
-        asyncio.run(_record())
 
     _deliver(text, html_body, cfg, path, email=email)
 

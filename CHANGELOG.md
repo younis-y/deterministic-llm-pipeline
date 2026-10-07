@@ -16,9 +16,10 @@ All notable changes to rolescan. Newest first.
 
 ### Changed
 - Each scan writes its own digest file (`YYYY-MM-DDTHHMM.md`); `--dry` writes `digest-dry.md`.
-- Postings are marked seen after the digest is written, not before.
+- Postings are marked seen after the digest is written, not before. `run_scan` no longer writes `seen`; it returns `ScanResult.to_record` and library callers must call `record_scan(cfg, result)` after writing the digest (the CLI does). `--dry` writes `digest-dry.md` and leaves `latest.md` untouched.
 - Resolver: students-only adverts with an alternative route are not skipped, a years range is read at its low end, a graduation year needs a graduation word, and promotion clauses are not read as requirements.
 - Field rows: "transformation" reads as consulting, "Finance Project Analyst" as finance, and `other` never hides a graduate-entry role.
+- Field rows widened (business/digital transformation = consulting; `<finance word> <word> analyst` = finance): for a profile whose `allowed_fields` excludes those, such titles are now hidden under Field (listed in Hidden by your rules).
 - The quiet-source alarm looks back 14 days and always reaches the Markdown digest.
 - Facts cache key bumped to `facts-v13`: cached facts are re-extracted once.
 

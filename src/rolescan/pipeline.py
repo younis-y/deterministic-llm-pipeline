@@ -35,7 +35,7 @@ from rolescan.sources import get_source
 from rolescan.sources.base import _REGISTRY, PostingCache, SourceSkipped
 from rolescan.store import Store
 
-__all__ = ["ScanResult", "SourceReport", "run_scan"]
+__all__ = ["ScanResult", "SourceReport", "record_scan", "run_scan"]
 
 log = logging.getLogger(__name__)
 
@@ -609,9 +609,10 @@ async def run_scan(
 
     Since 2.5.7 this does NOT write `seen`. It returns what should be
     recorded in `result.to_record` (empty on a dry run), and the caller
-    records it once the digest exists: `rolescan scan` does so right after
-    `write_digest`. A caller that never records re-reports every posting on
-    every run, so any new caller of `run_scan` must do the same.
+    records it once the digest exists, with `record_scan`: `rolescan scan`
+    does so right after `write_digest`. A caller that never records
+    re-reports every posting on every run, so any new caller of `run_scan`
+    must do the same.
     """
     result = ScanResult(dry_run=dry_run, llm_backend=cfg.llm.backend)
     if check_llm:
@@ -664,3 +665,21 @@ async def run_scan(
                 backend_broke=bool(result.llm_unusable) or scorer.errors > 0,
             )
     return result
+
+
+async def record_scan(cfg: Config, result: ScanResult) -> int:
+    """Write `result.to_record` to `seen` and return how many rows that was.
+
+    What `cli.scan` does once the digest is on disk (2.5.7); a library caller
+    of `run_scan` must call this or nothing is ever marked seen. Call it after
+    the digest is written and before anything that can fail while rendering:
+    a crash in between would leave a digest on disk whose postings are not
+    recorded, and the next run would report them again.
+
+    A dry run has an empty `to_record`, so this opens nothing and returns 0.
+    """
+    if not result.to_record:
+        return 0
+    async with Store(cfg.resolve(cfg.output.db_path)) as store:
+        await store.record_all(result.to_record)
+    return len(result.to_record)
