@@ -801,6 +801,14 @@ class _FakeMessages:
         )
 
 
+class _EchoingMessages(_FakeMessages):
+    """A model that fills in `rule` anyway, as if the schema had offered it."""
+
+    async def parse(self, **kw: Any) -> SimpleNamespace:
+        self.calls.append(kw)
+        return SimpleNamespace(parsed_output=FitVerdict(**VERDICT_JSON, rule="years"))
+
+
 def _anthropic(fake: _FakeMessages) -> AnthropicJudge:
     judge = AnthropicJudge(LLMConfig(backend="anthropic", api_key="k"))
     judge._client = SimpleNamespace(messages=fake)
@@ -945,3 +953,18 @@ def test_triage_fit_score_bounds_match_fitverdict() -> None:
     full = FitVerdict.model_json_schema()["properties"]["fit_score"]
     assert triage["minimum"] == full["minimum"]
     assert triage["maximum"] == full["maximum"]
+
+
+@respx.mock
+async def test_a_model_cannot_name_the_rule_that_hid_a_posting() -> None:
+    """Only `decide` names a rule. A judge-mode model echoing `rule` would
+    otherwise mark the posting rule-hidden in the digest on its own say-so."""
+    echoed = {**VERDICT_JSON, "rule": "years"}
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"content": __import__("json").dumps(echoed)}}
+        )
+    )
+    ollama = get_judge("ollama", LLMConfig(enabled=True, backend="ollama", model="m"))
+    assert (await ollama.verdict("s", "u")).rule is None
+    assert (await _anthropic(_EchoingMessages()).verdict("s", "u")).rule is None

@@ -113,11 +113,16 @@ def _hidden_group(item: ScoredJob) -> tuple[str, str] | None:
 
     The rule `decide` fired wins over a `hard_blockers` term, so a posting
     both caught is listed once, under the rule: its reason quotes the advert,
-    which is what a reader checks a skip against. A term-only posting's
+    which is what a reader checks a skip against. A judge-mode model block
+    has no rule (`decide` never ran) and goes under `hard_bar` with the
+    model's reason, ahead of any term it also matched. A term-only posting's
     reason is the term(s) that matched, as configured.
     """
-    if item.fit is not None and item.fit.rule is not None:
-        return item.fit.rule, _hidden_reason(item.fit.reason)
+    fit = item.fit
+    if fit is not None and fit.rule is not None:
+        return fit.rule, _hidden_reason(fit.reason)
+    if fit is not None and fit.verdict is Verdict.BLOCKED:
+        return "hard_bar", _hidden_reason(fit.reason)
     if item.blocker_hits:
         terms = ", ".join(f'"{t}"' for t in dict.fromkeys(item.blocker_hits))
         return _TERMS, f"blocked by {terms}"
@@ -380,12 +385,15 @@ def _stats(result: ScanResult) -> str:
         bits.append(
             f"{result.hidden_blocked} blocked and hidden (output.show_blocked is false)"
         )
-    if result.rule_hidden:
+    if listed := sum(len(rows) for _, rows in _rule_hidden_groups(result)):
         # Only when it happened, for the same reason. Counted separately from
         # the clause above: that one is postings `show_blocked` removed, this
         # one is postings any rule or `hard_blockers` term removed by any
-        # route, so a block hidden by `show_blocked` is in both.
-        bits.append(f"{len(result.rule_hidden)} hidden by your rules")
+        # route, so a block hidden by `show_blocked` is in both - hence
+        # "listed below", so the two numbers do not read as two postings. It
+        # counts the rows the section renders, so the number and the list
+        # can never disagree.
+        bits.append(f"{listed} hidden by your rules (listed below)")
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
 

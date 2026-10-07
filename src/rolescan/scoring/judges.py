@@ -283,7 +283,7 @@ class AnthropicJudge(Judge):
         if not isinstance(parsed, FitVerdict):  # pragma: no cover - enforced upstream
             msg = f"model returned {type(parsed).__name__}, expected FitVerdict"
             raise RuntimeError(msg)
-        return parsed
+        return _without_rule(parsed)
 
     async def facts(self, system: str, user: str) -> PostingFacts:
         response = await self._get_client().messages.parse(
@@ -328,6 +328,19 @@ class AnthropicJudge(Judge):
             confidence=parsed.confidence,
             reason=TRIAGE_REASON,
         )
+
+
+def _without_rule(verdict: FitVerdict) -> FitVerdict:
+    """`verdict` with `rule` cleared: only `rules.decide` names a rule.
+
+    `rule` is kept out of the schema both backends sample against, but
+    validation still accepts the key, and a model that echoes it anyway would
+    mark the posting rule-hidden in the digest on its own say-so. Defence in
+    depth behind the schema, not a replacement for it.
+    """
+    if verdict.rule is None:
+        return verdict
+    return verdict.model_copy(update={"rule": None})
 
 
 #: Marks a verdict produced by the triage pass, which was never asked for a
@@ -460,7 +473,7 @@ class OllamaJudge(Judge):
     async def verdict(self, system: str, user: str) -> FitVerdict:
         content = await self._chat(system, user, FitVerdict.model_json_schema())
         try:
-            return FitVerdict.model_validate_json(content)
+            return _without_rule(FitVerdict.model_validate_json(content))
         except ValueError as e:
             # Schema-constrained sampling should make this unreachable, but a
             # small model on an old Ollama can still return prose.

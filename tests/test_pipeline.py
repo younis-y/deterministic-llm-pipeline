@@ -1287,13 +1287,14 @@ async def test_rule_hidden_carries_what_the_rules_kept_out_of_the_digest(
 
     assert [s.job.title for s in result.reportable] == [titles[3]]
     assert result.hidden_blocked == 1, "the block cleared the gate first"
+    assert len(result.rule_hidden) == 2, "no fit=None entry hides behind the filter"
     hidden = {s.job.title: s.fit.rule for s in result.rule_hidden if s.fit}
     assert hidden == {titles[1]: "years", titles[2]: "hard_bar"}
     assert await _seen_uids(tmp_path / "seen.db") == set(), "--dry stays dry"
 
 
 def test_rule_hidden_never_repeats_a_posting_the_digest_already_shows(
-    energy_job: Job, gated_job: Job
+    energy_job: Job, gated_job: Job, config: Config
 ) -> None:
     """At `min_report_score: 0` a rule skip's cap is 0, which clears the gate,
     so a rule-skipped posting can be reportable. It is then in the digest
@@ -1302,7 +1303,9 @@ def test_rule_hidden_never_repeats_a_posting_the_digest_already_shows(
     shown = _scored(energy_job, verdict=Verdict.SKIP, fit_score=0, rule="years")
     hidden = _scored(gated_job, verdict=Verdict.SKIP, fit_score=0, rule="level")
     unruled = _scored(energy_job.model_copy(update={"url": "https://x/9"}))
-    assert _rule_hidden([shown, hidden, unruled], [shown], []) == [hidden]
+    assert _rule_hidden([shown, hidden, unruled], [shown], [], config.profile) == [
+        hidden
+    ]
 
 
 @respx.mock
@@ -1376,11 +1379,14 @@ async def test_rule_hidden_carries_postings_a_hard_blockers_term_removed(
 
 
 def test_rule_hidden_lists_a_term_blocked_posting_once(
-    energy_job: Job, gated_job: Job
+    energy_job: Job, gated_job: Job, config: Config
 ) -> None:
     """A posting both a rule and a `hard_blockers` term caught is one posting,
     a term-blocked posting the digest shows (`show_blocked: true`) is not
-    hidden at all, and of the prefilter rejects only a term hit is."""
+    hidden at all, and a prefilter reject is listed only when its terms'
+    weights are what put it under the gate (the fixture weights
+    "uae national" at 60, gate 18). An `excluded_locations` entry carries no
+    weight, so an irrelevant posting in one is not listed."""
     both = _scored(gated_job, verdict=Verdict.BLOCKED, fit_score=20, rule="hard_bar")
     both = both.model_copy(update={"blocker_hits": ["uae national"]})
     term_only = _scored(energy_job).model_copy(update={"blocker_hits": ["sc"]})
@@ -1393,17 +1399,21 @@ def test_rule_hidden_lists_a_term_blocked_posting_once(
         blocker_hits=["dv"],
     )
     judged = [both, term_only, unscored, shown]
-    term_reject = ScoredJob(
-        job=gated_job.model_copy(update={"url": "https://x/7"}),
-        keyword_score=-11,
-        blocker_hits=["uae national"],
-    )
-    low_reject = ScoredJob(job=gated_job.model_copy(update={"url": "https://x/6"}))
-    assert _rule_hidden(judged, [shown], [term_reject, low_reject]) == [
+
+    def _reject(url: str, score: int, hits: list[str]) -> ScoredJob:
+        job = gated_job.model_copy(update={"url": url})
+        return ScoredJob(job=job, keyword_score=score, blocker_hits=hits)
+
+    pushed_under = _reject("https://x/7", -42, ["uae national"])  # 18 without it
+    under_anyway = _reject("https://x/6", -43, ["uae national"])  # 17 without it
+    low = _reject("https://x/5", 0, [])
+    elsewhere = _reject("https://x/4", 5, ["location: dubai"])
+    rejects = [pushed_under, under_anyway, low, elsewhere]
+    assert _rule_hidden(judged, [shown], rejects, config.profile) == [
         both,
         term_only,
         unscored,
-        term_reject,
+        pushed_under,
     ]
 
 
@@ -1415,8 +1425,11 @@ async def test_rule_hidden_carries_a_posting_a_term_pushed_under_the_prefilter(
     as 60-point `blockers` and as `hard_blockers`, so a term hit almost always
     takes a posting under `min_keyword_score`. It is then a prefilter reject:
     never judged, never ranked, recorded as seen - and, without this, never
-    in the section that exists to show a wrong term. A reject with no term is
-    low relevance, not a rule hide, and stays out."""
+    in the section that exists to show a wrong term. It is listed only when
+    the term's weight is what put it under the gate: a reject that would
+    have failed the gate without the term (the office manager, 0 without it)
+    is low relevance, not a rule hide, and stays out, as does one with no
+    term at all (the receptionist)."""
     bar = "UAE nationals only"
     relevant = "Python, trading, energy, day-ahead forecasting."
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
@@ -1436,6 +1449,7 @@ async def test_rule_hidden_carries_a_posting_a_term_pushed_under_the_prefilter(
                         (1, "Energy Data Scientist", f"{relevant} {bar}."),
                         (2, "Receptionist", "Front desk cover."),
                         (3, "Graduate Energy Data Scientist", relevant),
+                        (4, "Office Manager", f"Front desk cover. {bar}."),
                     )
                 ]
             },
@@ -1462,7 +1476,7 @@ async def test_rule_hidden_carries_a_posting_a_term_pushed_under_the_prefilter(
 
     result = await run_scan(cfg, dry_run=True, check_llm=False)
 
-    assert result.prefiltered == 2, "both the term hit and the receptionist"
+    assert result.prefiltered == 3, "the two term hits and the receptionist"
     assert [s.job.title for s in result.reportable] == [
         "Graduate Energy Data Scientist"
     ]
@@ -1478,7 +1492,8 @@ async def test_rule_hidden_carries_a_posting_a_term_pushed_under_the_prefilter(
     assert "[Energy Data Scientist](https://boards.greenhouse.io/acme/jobs/1)" in terms
     assert 'Abu Dhabi: blocked by "uae nationals only"' in terms
     assert "Receptionist" not in text
-    assert "1 hidden by your rules" in text
+    assert "Office Manager" not in text, "under the gate with or without it"
+    assert "1 hidden by your rules (listed below)" in text
 
     # Rejects are still recorded as seen on a real run, so the posting is
     # listed once, on the run that first sees it, and not every morning.
@@ -1486,3 +1501,56 @@ async def test_rule_hidden_carries_a_posting_a_term_pushed_under_the_prefilter(
     assert [s.job.title for s in first.rule_hidden] == ["Energy Data Scientist"]
     again = await run_scan(cfg, check_llm=False)
     assert again.rule_hidden == []
+
+
+@respx.mock
+async def test_a_judge_mode_model_block_is_listed_under_hard_bar(
+    tmp_path: Path,
+) -> None:
+    """In judge mode the model blocks a posting itself: `decide` never runs,
+    so `fit.rule` is None, and with `show_blocked: false` the posting would
+    leave the digest untraced. It is listed under the hard-bar group with the
+    model's own reason."""
+    verdict = {
+        "fit_score": 70,
+        "verdict": "blocked",
+        "confidence": "high",
+        "reason": "The advert is open to UAE nationals only.",
+        "blockers": ["UAE nationals only"],
+        "keywords_missing": [],
+    }
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"content": json.dumps(verdict)}}
+        )
+    )
+    respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
+    )
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json=_payload(
+                "Graduate Energy Data Scientist",
+                "Python, trading, energy, day-ahead forecasting. UAE nationals only.",
+            ),
+        )
+    )
+    cfg = _cfg(
+        tmp_path,
+        {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"},
+    )
+    cfg.output.show_blocked = False
+
+    result = await run_scan(cfg, dry_run=True)
+
+    assert result.reportable == [] and result.hidden_blocked == 1
+    [hidden] = result.rule_hidden
+    assert hidden.fit is not None and hidden.fit.rule is None
+    text = render_markdown(result)
+    group = text[text.index("**Nationality, clearance or other hard bar**") :]
+    assert (
+        "[Graduate Energy Data Scientist](https://boards.greenhouse.io/acme/jobs/1)"
+        " · London, UK: The advert is open to UAE nationals only."
+    ) in group
+    assert "1 hidden by your rules (listed below)" in text

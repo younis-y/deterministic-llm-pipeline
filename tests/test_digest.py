@@ -776,3 +776,33 @@ def test_an_unlabelled_rule_still_renders_before_the_terms_group() -> None:
     assert text.index("**zzz_new_rule**") < text.index(
         "**Your blocking terms (hard_blockers, excluded_locations)**"
     )
+
+
+def test_the_rule_hidden_count_is_the_rows_listed_below() -> None:
+    """The count is of the rows the section renders, not of the list, and says
+    they are listed below: a block hidden by `show_blocked` is also in "N
+    blocked and hidden", and two bare numbers read as two postings."""
+    unlistable = ScoredJob(job=_job(), fit=_fit(verdict=Verdict.SKIP))
+    hidden = [
+        _ruled("Halian", "Data Engineer (m/f/d)", "years", _YEARS_REASON),
+        unlistable,
+    ]
+    result = _rule_hidden_result(rule_hidden=hidden, reports=[])
+    for text in (render_markdown(result), render_html(result)):
+        assert "1 hidden by your rules (listed below)" in text
+        assert "2 hidden" not in text
+
+
+def test_a_model_block_with_no_rule_is_listed_under_hard_bar() -> None:
+    """Judge mode: the model blocked the posting itself, so `decide` named no
+    rule. Listed with the model's reason under the hard-bar group, not
+    dropped, and ahead of any term it also matched."""
+    item = ScoredJob(
+        job=_job(),
+        blocker_hits=["uae national"],
+        fit=_fit(verdict=Verdict.BLOCKED, reason="Open to UAE nationals only."),
+    )
+    text = render_markdown(_rule_hidden_result(rule_hidden=[item], reports=[]))
+    group = text[text.index("**Nationality, clearance or other hard bar**") :]
+    assert "Abu Dhabi: Open to UAE nationals only." in group
+    assert "Your blocking terms" not in text
