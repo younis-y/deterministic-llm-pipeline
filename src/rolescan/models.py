@@ -350,6 +350,18 @@ class ScoredJob(BaseModel):
     `rolescan.scoring.keyword`."""
     fit: FitVerdict | None = None
     llm_cached: bool = False
+    deferred: str = ""
+    """Why the intended judge never saw this posting, or "" (2.5.7).
+
+    `"llm_ceiling"`: `max_calls_per_run` was spent before its turn.
+    `"digest_cap"`: it cleared `min_report_score` but fell past
+    `output.max_roles`. `"thin"`: it has no description to judge.
+
+    Set by the stage that skipped it, read by the recorder: a deferred posting
+    is never written to `seen`, so it comes round again next run. Until 2.5.7
+    all three were recorded with everything else and could never surface
+    again (26 Sep: 382 of 982 candidates; 5-6 Oct: 15-17 reportable roles a
+    day past the cap)."""
 
     @property
     def score(self) -> int:

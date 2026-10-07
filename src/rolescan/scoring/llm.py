@@ -567,9 +567,9 @@ class FitScorer:
         async with self._sem:
             if self._calls >= self.cfg.max_calls_per_run:
                 log.info(
-                    "LLM call ceiling reached, leaving %r on keyword score", job.title
+                    "LLM call ceiling reached, deferring %r to the next run", job.title
                 )
-                return scored
+                return scored.model_copy(update={"deferred": "llm_ceiling"})
             self._calls += 1
             verdict = await self._call_judge(scored)
 
@@ -610,9 +610,9 @@ class FitScorer:
         async with self._sem:
             if self._calls >= self.cfg.max_calls_per_run:
                 log.info(
-                    "LLM call ceiling reached, leaving %r on keyword score", job.title
+                    "LLM call ceiling reached, deferring %r to the next run", job.title
                 )
-                return scored
+                return scored.model_copy(update={"deferred": "llm_ceiling"})
             self._calls += 1
             facts = await self._call_facts(scored)
 
