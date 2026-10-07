@@ -605,6 +605,7 @@ class FitScorer:
                     self.profile.rules,
                     self.profile.min_report_score,
                     company=job.company,
+                    nationalities=self.profile.nationalities,
                 )
                 verdict = await self._maybe_enrich(job, verdict)
                 await self.store.put_verdict(final_key(job), verdict)
@@ -627,6 +628,7 @@ class FitScorer:
             self.profile.rules,
             self.profile.min_report_score,
             company=job.company,
+            nationalities=self.profile.nationalities,
         )
         verdict = await self._maybe_enrich(job, verdict)
         if self.store is not None:

@@ -17,6 +17,7 @@ from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
 from rolescan.scoring import FitScorer
 from rolescan.scoring.facts import (
     FieldFact,
+    HardBar,
     LevelFact,
     PostingFacts,
     StudentFact,
@@ -146,7 +147,10 @@ async def test_cache_key_is_mode_aware() -> None:
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
     assert cache_key(job, "facts", cfg) != cache_key(job, "judge", cfg)
     assert cache_key(job, "judge", cfg) == job.content_hash
-    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v12:ollama:qwen2.5:14b"
+    assert (
+        cache_key(job, "facts", cfg)
+        == f"{job.content_hash}:facts-v12:ollama:qwen2.5:14b"
+    )
 
 
 async def test_facts_cache_key_changes_with_backend_and_model() -> None:
@@ -155,7 +159,9 @@ async def test_facts_cache_key_changes_with_backend_and_model() -> None:
     job = _job().job
     local = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
     other_model = LLMConfig(enabled=True, backend="ollama", model="llama3.1:8b")
-    hosted = LLMConfig(enabled=True, backend="anthropic", model="qwen2.5:14b", api_key="k")
+    hosted = LLMConfig(
+        enabled=True, backend="anthropic", model="qwen2.5:14b", api_key="k"
+    )
     keys = {cache_key(job, "facts", c) for c in (local, other_model, hosted)}
     assert len(keys) == 3
     # judge mode is unchanged: the bare content hash whatever the backend
@@ -212,7 +218,9 @@ class _JudgeModeJudge(Judge):
     cheap_triage = False
 
     async def verdict(self, system: str, user: str) -> FitVerdict:
-        return FitVerdict(fit_score=70, verdict=Verdict.APPLY, confidence="high", reason="ok")
+        return FitVerdict(
+            fit_score=70, verdict=Verdict.APPLY, confidence="high", reason="ok"
+        )
 
     async def facts(self, system: str, user: str) -> PostingFacts:
         raise AssertionError("judge mode must not call facts")
@@ -291,7 +299,9 @@ async def test_a_cached_rule_skip_never_reaches_the_digest_after_the_gate_drops(
     rules = RulesConfig(max_years_required=2)
 
     async with Store(tmp_path / "store.db") as store:
-        scorer1, judge1 = _facts_scorer(facts, rules=rules, min_report_score=55, store=store)
+        scorer1, judge1 = _facts_scorer(
+            facts, rules=rules, min_report_score=55, store=store
+        )
         [first] = await scorer1.score_all([job])
         assert len(judge1.facts_calls) == 1
         assert first.fit is not None
@@ -300,7 +310,9 @@ async def test_a_cached_rule_skip_never_reaches_the_digest_after_the_gate_drops(
 
         # Drop the gate right down. The cached rule-skip must be re-capped
         # under the NEW gate, not replayed with its old score.
-        scorer2, judge2 = _facts_scorer(facts, rules=rules, min_report_score=1, store=store)
+        scorer2, judge2 = _facts_scorer(
+            facts, rules=rules, min_report_score=1, store=store
+        )
         [second] = await scorer2.score_all([job])
 
         assert len(judge2.facts_calls) == 0
@@ -312,10 +324,17 @@ async def test_a_cached_rule_skip_never_reaches_the_digest_after_the_gate_drops(
 # --- the deterministic level pass runs on the live path (fix A) ------------
 
 
-async def test_a_senior_title_the_model_left_not_stated_skips_with_the_title_quote() -> None:
+async def test_a_senior_title_the_model_left_not_stated_skips_with_the_title_quote() -> (
+    None
+):
     job = ScoredJob(
-        job=Job(source="test", company="Harnham", title="Senior AI Engineer (198174)",
-                url="https://x/9", description="Build agentic systems."),
+        job=Job(
+            source="test",
+            company="Harnham",
+            title="Senior AI Engineer (198174)",
+            url="https://x/9",
+            description="Build agentic systems.",
+        ),
         keyword_score=40,
     )
     facts = _facts(fit_score=75, level=LevelFact(value="not_stated", quote=""))
@@ -332,8 +351,13 @@ async def test_a_senior_title_the_model_left_not_stated_skips_with_the_title_quo
 
 async def test_a_graduate_title_still_passes_on_fit() -> None:
     job = ScoredJob(
-        job=Job(source="test", company="FDM", title="Graduate AI Engineer",
-                url="https://x/10", description="Graduate programme."),
+        job=Job(
+            source="test",
+            company="FDM",
+            title="Graduate AI Engineer",
+            url="https://x/10",
+            description="Graduate programme.",
+        ),
         keyword_score=40,
     )
     rules = RulesConfig(allowed_levels=["graduate_entry", "junior", "not_stated"])
@@ -347,13 +371,22 @@ async def test_a_graduate_title_still_passes_on_fit() -> None:
 # --- the deterministic field pass runs on the live path (2.4.3) -----------
 
 
-_OWNER_FIELDS = RulesConfig(allowed_fields=["data_engineering", "ai_llm", "data_science"])
+_OWNER_FIELDS = RulesConfig(
+    allowed_fields=["data_engineering", "ai_llm", "data_science"]
+)
 
 
-async def test_an_analyst_title_the_model_left_fieldless_skips_with_the_title_quote() -> None:
+async def test_an_analyst_title_the_model_left_fieldless_skips_with_the_title_quote() -> (
+    None
+):
     job = ScoredJob(
-        job=Job(source="test", company="Acme", title="Graduate Data Analyst",
-                url="https://x/11", description="Dashboards for the sales team."),
+        job=Job(
+            source="test",
+            company="Acme",
+            title="Graduate Data Analyst",
+            url="https://x/11",
+            description="Dashboards for the sales team.",
+        ),
         keyword_score=40,
     )
     scorer, _judge = _facts_scorer(_facts(fit_score=75), rules=_OWNER_FIELDS)
@@ -444,6 +477,74 @@ async def test_an_exempt_company_passes_the_field_rule_on_a_cached_hit(
     assert out.fit.rule is None
 
 
+# --- a nationality bar the candidate meets is not a bar (2.5.7) -----
+
+
+def _job_with_nationality_bar(
+    quote: str = "Jordanian nationals only",
+) -> tuple[ScoredJob, HardBar]:
+    """A data engineer role with a nationality bar."""
+    return (
+        ScoredJob(
+            job=Job(
+                source="test",
+                company="Amman Tech",
+                title="Data Engineer",
+                url="https://x/15",
+                description="Work with our team.",
+            ),
+            keyword_score=40,
+        ),
+        HardBar(kind="nationality", quote=quote),
+    )
+
+
+async def test_a_nationality_bar_the_candidate_meets_passes_on_a_fresh_call() -> None:
+    job, bar = _job_with_nationality_bar()
+    facts = _facts(fit_score=75, hard_bars=[bar])
+    scorer = FitScorer(
+        LLMConfig(enabled=True, backend="ollama", mode="facts"),
+        ProfileConfig(nationalities=["jordanian", "jordan"]),
+    )
+    judge = _FakeFactsJudge(scorer.cfg, facts)
+    scorer._judge = judge
+    [out] = await scorer.score_all([job])
+    assert out.fit is not None and out.fit.verdict == Verdict.APPLY
+    assert out.fit.rule is None
+
+
+async def test_a_nationality_bar_the_candidate_meets_passes_on_a_cached_hit(
+    tmp_path: Path,
+) -> None:
+    job, bar = _job_with_nationality_bar()
+    facts = _facts(fit_score=75, hard_bars=[bar])
+
+    async with Store(tmp_path / "store.db") as store:
+        scorer1 = FitScorer(
+            LLMConfig(enabled=True, backend="ollama", mode="facts"),
+            ProfileConfig(nationalities=["jordanian"]),
+            store,
+        )
+        judge1 = _FakeFactsJudge(scorer1.cfg, facts)
+        scorer1._judge = judge1
+        await scorer1.score_all([job])
+        assert len(judge1.facts_calls) == 1
+
+        scorer2 = FitScorer(
+            LLMConfig(enabled=True, backend="ollama", mode="facts"),
+            ProfileConfig(nationalities=["jordanian"]),
+            store,
+        )
+        judge2 = _FakeFactsJudge(scorer2.cfg, facts)
+        scorer2._judge = judge2
+        [out] = await scorer2.score_all([job])
+
+    assert len(judge2.facts_calls) == 0, "this must be the cached-facts path"
+    assert out.llm_cached is True
+    assert out.fit is not None and out.fit.verdict == Verdict.APPLY
+    assert out.fit.rule is None
+
+
 # --- extra_prompt is not sent in facts mode; say so once (fix E) -----------
 
 
@@ -462,7 +563,11 @@ def test_facts_mode_with_extra_prompt_and_no_enricher_logs_once_at_info(
 
 @pytest.mark.parametrize(
     ("mode", "enricher", "extra"),
-    [("judge", "", "private"), ("facts", "some-enricher", "private"), ("facts", "", "")],
+    [
+        ("judge", "", "private"),
+        ("facts", "some-enricher", "private"),
+        ("facts", "", ""),
+    ],
 )
 def test_no_extra_prompt_notice_otherwise(
     caplog: pytest.LogCaptureFixture, mode: str, enricher: str, extra: str
@@ -507,11 +612,16 @@ def test_facts_prompt_says_work_auth_is_checked_by_keywords() -> None:
 # --- 2.5.2: the recent-graduates guard runs on the live path ---------------
 
 
-async def test_a_student_flag_on_an_advert_that_accepts_graduates_does_not_skip() -> None:
+async def test_a_student_flag_on_an_advert_that_accepts_graduates_does_not_skip() -> (
+    None
+):
     job = _job("Requirements: Recent graduates or final year students.")
     rules = RulesConfig(student_only="skip")
     scorer, _judge = _facts_scorer(
-        _facts(fit_score=75, student_only=StudentFact(value=True, quote="final year students")),
+        _facts(
+            fit_score=75,
+            student_only=StudentFact(value=True, quote="final year students"),
+        ),
         rules=rules,
     )
 
@@ -529,9 +639,12 @@ async def test_an_unsupported_clearance_bar_does_not_block_on_the_live_path() ->
 
     job = _job("Adheres to the established internal security practices.")
     scorer, _judge = _facts_scorer(
-        _facts(fit_score=75, hard_bars=[
-            HardBar(kind=BarKind.clearance, quote="internal security practices"),
-        ]),
+        _facts(
+            fit_score=75,
+            hard_bars=[
+                HardBar(kind=BarKind.clearance, quote="internal security practices"),
+            ],
+        ),
     )
 
     [out] = await scorer.score_all([job])

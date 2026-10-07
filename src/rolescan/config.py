@@ -185,6 +185,12 @@ class ProfileConfig(BaseModel):
     roles whose descriptions merely mention a US parent or office, and blocked
     zero actually-US ones. A global employer names its headquarters in every
     advert it writes."""
+    nationalities: list[str] = Field(default_factory=list)
+    """Nationalities the candidate holds, as the words an advert would use:
+    the demonym and the country ("jordanian", "jordan"). A nationality bar
+    whose quote names one of them is not a bar for this candidate. Residence
+    permits are not nationalities: a golden visa does not meet "UAE
+    nationals only", so it is not listed here."""
     agencies: list[str] = Field(default_factory=list)
     """Company names that post roles they are not themselves hiring for:
     recruiters, staffing firms, job boards. Matched against the COMPANY name
@@ -304,6 +310,13 @@ class ProfileConfig(BaseModel):
         title_only = (normalise_term(raw) for raw in self.title_only_blockers)
         object.__setattr__(
             self, "title_only_blockers", list(dict.fromkeys(t for t in title_only if t))
+        )
+
+        # Normalise nationalities: strip, casefold, drop empties (2.5.7).
+        object.__setattr__(
+            self,
+            "nationalities",
+            [n.strip().casefold() for n in self.nationalities if n.strip()],
         )
         return self
 

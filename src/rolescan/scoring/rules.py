@@ -104,6 +104,19 @@ def _company_exempt(company: str, exempt: Sequence[str]) -> bool:
     return any(f" {n} " in f" {name} " for n in needles)
 
 
+def _names_own_nationality(quote: str, nationalities: Sequence[str]) -> bool:
+    """True when `quote` names one of the candidate's nationalities.
+
+    Matches word boundaries so "dominica" does not match "dominican" and a
+    bar like "UAE or Jordanian nationals only" matches when "jordanian" is in
+    `nationalities`.
+    """
+    folded = quote.casefold()
+    return any(
+        re.search(rf"(?<!\w){re.escape(n)}(?!\w)", folded) for n in nationalities
+    )
+
+
 def _quote_reason(prefix: str, quote: str) -> str:
     """Build `"<prefix>: <lead-in> \"<quote>\""`, truncating the quote to fit.
 
@@ -177,12 +190,14 @@ def decide(
     min_report_score: int,
     *,
     company: str = "",
-    nationalities: Sequence[str] = (),  # noqa: ARG001  wired in 2.5.7
+    nationalities: Sequence[str] = (),
 ) -> FitVerdict:
     """Turn verified facts into a verdict, applying `rules` in a fixed order.
 
     Rule order (first match wins):
       0. `work_auth` hard bars are ignored (see `_IGNORED_BARS`).
+         A nationality bar whose quote names one of `nationalities` is dropped
+         first (2.5.7).
       1. A nationality or clearance hard bar -> blocked.
       1b. Any other (`BarKind.other`) hard bar -> skip, whatever `rules` says.
       2. `graduation_year` is stated, `rules.max_graduation_year` is set, and
@@ -218,10 +233,18 @@ def decide(
     were hidden by these rules with no trace, so a wrong skip was invisible.
 
     `company` is the posting's employer, read by the field rule's exemption.
-    `nationalities` is accepted for 2.5.7's nationality handling and is not
-    read yet.
+    `nationalities` are nationalities the candidate holds; nationality bars
+    naming one are dropped before the hard-bar check.
     """
-    bars = [b for b in facts.hard_bars if b.kind not in _IGNORED_BARS]
+    bars = [
+        b
+        for b in facts.hard_bars
+        if b.kind not in _IGNORED_BARS
+        and not (
+            b.kind is BarKind.nationality
+            and _names_own_nationality(b.quote, nationalities)
+        )
+    ]
     structural = [b for b in bars if b.kind in _STRUCTURAL_BARS]
     if structural:
         return FitVerdict(
