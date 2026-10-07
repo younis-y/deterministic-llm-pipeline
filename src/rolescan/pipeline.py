@@ -6,7 +6,7 @@
       -> drop anything already reported
       -> prefilter to plausible roles
       -> LLM fit score and CV match (cached)
-      -> record and rank
+      -> rank, then record what was assessed
 
 Everything here is orchestration. The judgement lives in scoring, the IO in
 sources and store.
@@ -153,6 +153,12 @@ class ScanResult:
     Rejects are still recorded as seen, so a wrongly hidden posting is listed
     once, on the run it is first seen, and not again (a `--dry` run records
     nothing, so it lists it every time)."""
+    deferred: list[ScoredJob] = field(default_factory=list)
+    """Postings this run did not judge and did not record (2.5.7): past the
+    LLM ceiling, past `output.max_roles`, or without a description. They are
+    not `seen`, so the next run sees them again. Counted in the digest so a
+    run that keeps deferring the same roles is visible, where before it
+    buried them."""
     dry_run: bool = False
 
     @property
@@ -312,16 +318,29 @@ def _drop_stale(jobs: list[Job], max_age_days: int) -> tuple[list[Job], int]:
 
 def _prefilter(
     fresh: list[ScoredJob], gate: int
-) -> tuple[list[ScoredJob], list[ScoredJob]]:
-    """Split into what the LLM will read and what it never will.
+) -> tuple[list[ScoredJob], list[ScoredJob], list[ScoredJob]]:
+    """Split by the keyword gate, holding back postings with nothing to read.
 
-    The single biggest lever on cost, and the reason blocker terms are
-    matched on word boundaries: a posting that falls below the gate is never
+    The gate is the single biggest lever on cost, and the reason blocker terms
+    are matched on word boundaries: a posting that falls below it is never
     judged, is recorded as seen, and never surfaces again.
+
+    A posting whose description never arrived is gated on its title alone,
+    which keeps 85% of what the full text keeps (measured 2026-10-07 on the
+    owner's store: a graduate stream titled "IT, Tech and Data" scored 94 on
+    its text and 0 on its title). So a thin reject is deferred, not rejected:
+    the next run may have the text. A thin posting that clears the gate is
+    judged as before; the model's quotes then come from the title.
     """
     candidates = [s for s in fresh if s.keyword_score >= gate]
-    rejects = [s for s in fresh if s.keyword_score < gate]
-    return candidates, rejects
+    under = [s for s in fresh if s.keyword_score < gate]
+    rejects = [s for s in under if s.job.description.strip()]
+    thin = [
+        s.model_copy(update={"deferred": "thin"})
+        for s in under
+        if not s.job.description.strip()
+    ]
+    return candidates, rejects, thin
 
 
 async def _judge(
@@ -333,14 +352,10 @@ async def _judge(
     return judged, scorer
 
 
-async def _record_assessed(
-    store: Store,
-    rejects: list[ScoredJob],
-    judged: list[ScoredJob],
-    *,
-    backend_broke: bool,
-) -> None:
-    """Record the postings that were actually assessed - and ONLY those.
+def assessed(
+    rejects: list[ScoredJob], judged: list[ScoredJob], *, backend_broke: bool
+) -> list[ScoredJob]:
+    """The postings that were actually assessed - and ONLY those.
 
     Recording a posting writes it to `seen`, and `filter_new` then suppresses
     it forever. Doing that to a posting the intended judge never saw buries a
@@ -357,10 +372,27 @@ async def _record_assessed(
 
     Prefiltered rejects are recorded either way: they were assessed, on
     keywords, and rejected on their merits.
+
+    2.5.7: a `deferred` posting is never assessed, whatever marked it: the
+    ceiling, the digest cap, or a missing description. Leaving it out is what
+    lets it come round again.
     """
-    recorded = list(rejects)
-    recorded += [s for s in judged if s.fit is not None or not backend_broke]
-    await store.record_all(recorded)
+    kept = [s for s in rejects if not s.deferred]
+    kept += [
+        s for s in judged if not s.deferred and (s.fit is not None or not backend_broke)
+    ]
+    return kept
+
+
+async def _record_assessed(
+    store: Store,
+    rejects: list[ScoredJob],
+    judged: list[ScoredJob],
+    *,
+    backend_broke: bool,
+) -> None:
+    """Write `assessed(...)` to `seen`. The one place a scan records."""
+    await store.record_all(assessed(rejects, judged, backend_broke=backend_broke))
 
 
 def _hide_blocked(keep: list[ScoredJob]) -> tuple[list[ScoredJob], int]:
@@ -383,20 +415,34 @@ def _hide_blocked(keep: list[ScoredJob]) -> tuple[list[ScoredJob], int]:
     return visible, hidden
 
 
-def _rank(judged: list[ScoredJob], cfg: Config) -> tuple[list[ScoredJob], int]:
+def _rank(
+    judged: list[ScoredJob], cfg: Config
+) -> tuple[list[ScoredJob], int, list[ScoredJob]]:
     """Gate on score, drop blocked roles if asked, sort, and cap.
 
-    Returns the digest roles and the number the block removed from a digest
-    they would otherwise have made. That count is taken here rather than at
-    the score gate, so a blocked posting that fell short of min_report_score
-    is not counted: it was not the block that kept it out.
+    Returns the digest roles, the number the block removed from a digest
+    they would otherwise have made, and the roles past the cap. The count is
+    taken here rather than at the score gate, so a blocked posting that fell
+    short of min_report_score is not counted: it was not the block that kept
+    it out.
+
+    2.5.7: the roles past `max_roles` are returned too, marked `digest_cap`,
+    so the caller can keep them out of `seen`. Before, they were recorded
+    with the shown ones and never came back: 15-17 reportable roles a day on
+    5-6 Oct 2026, invisible. A role already deferred for another reason (the
+    LLM ceiling) keeps that reason, so the digest's counts say what held it.
     """
     keep = [s for s in judged if s.score >= cfg.profile.min_report_score]
     hidden = 0
     if not cfg.output.show_blocked:
         keep, hidden = _hide_blocked(keep)
     keep.sort(key=lambda s: s.sort_key(), reverse=True)
-    return keep[: cfg.output.max_roles], hidden
+    shown = keep[: cfg.output.max_roles]
+    overflow = [
+        s.model_copy(update={"deferred": s.deferred or "digest_cap"})
+        for s in keep[cfg.output.max_roles :]
+    ]
+    return shown, hidden, overflow
 
 
 def _caught_by_a_rule(item: ScoredJob) -> bool:
@@ -419,8 +465,10 @@ def _rule_hidden(
     whose terms' `blockers` weights are what put them under the gate.
 
     Matched on identity, not equality: `_rank` filters and slices `judged`
-    without copying, and two distinct postings can compare equal field for
-    field. Reads only what is already in memory, so `--dry` stays dry.
+    and `run_scan` copies only the postings it marks `digest_cap`, so the
+    shown ones are the same objects, and two distinct postings can compare
+    equal field for field. Reads only what is already in memory, so `--dry`
+    stays dry.
     """
     shown = {id(s) for s in reportable}
     caught = [s for s in judged if id(s) not in shown and _caught_by_a_rule(s)]
@@ -498,7 +546,7 @@ async def run_scan(
         fresh = await _drop_already_handled(scored, store)
         result.already_seen = len(scored) - len(fresh)
 
-        candidates, rejects = _prefilter(fresh, cfg.profile.min_keyword_score)
+        candidates, rejects, thin = _prefilter(fresh, cfg.profile.min_keyword_score)
         result.prefiltered = len(rejects)
 
         judged, scorer = await _judge(candidates, cfg, store)
@@ -507,6 +555,14 @@ async def run_scan(
         result.llm_errors = scorer.errors
         result.llm_error_detail = scorer.first_error
 
+        result.reportable, result.hidden_blocked, overflow = _rank(judged, cfg)
+        cut = {s.job.uid: s for s in overflow}
+        judged = [cut.get(s.job.uid, s) for s in judged]
+        result.deferred = [s for s in judged if s.deferred] + thin
+        result.rule_hidden = _rule_hidden(
+            judged, result.reportable, rejects, cfg.profile
+        )
+
         if not dry_run:
             await _record_assessed(
                 store,
@@ -514,7 +570,4 @@ async def run_scan(
                 judged,
                 backend_broke=bool(result.llm_unusable) or scorer.errors > 0,
             )
-
-    result.reportable, result.hidden_blocked = _rank(judged, cfg)
-    result.rule_hidden = _rule_hidden(judged, result.reportable, rejects, cfg.profile)
     return result

@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import logging
 import smtplib
+from collections import Counter
 from datetime import UTC, datetime
 from email.message import EmailMessage
 from pathlib import Path
@@ -384,6 +385,20 @@ def _stats(result: ScanResult) -> str:
         # chance to notice a blocker term that is matching the wrong thing.
         bits.append(
             f"{result.hidden_blocked} blocked and hidden (output.show_blocked is false)"
+        )
+    if result.deferred:
+        reasons = Counter(s.deferred for s in result.deferred)
+        parts = [
+            f"{n} {label}"
+            for key, label in (
+                ("llm_ceiling", "over the LLM budget"),
+                ("digest_cap", "over the digest cap"),
+                ("thin", "without text yet"),
+            )
+            if (n := reasons.get(key))
+        ]
+        bits.append(
+            f"{len(result.deferred)} deferred to the next run ({', '.join(parts)})"
         )
     if listed := sum(len(rows) for _, rows in _rule_hidden_groups(result)):
         # Only when it happened, for the same reason. Counted separately from
