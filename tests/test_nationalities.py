@@ -52,3 +52,19 @@ def test_nationalities_are_normalised_at_load() -> None:
         {"nationalities": [" Jordanian ", "DOMINICA"]}
     )
     assert profile.nationalities == ["jordanian", "dominica"]
+
+
+def test_dominica_does_not_match_dominican() -> None:
+    """Word boundary: 'dominica' candidate is still blocked by 'Dominican nationals only'."""
+    verdict = decide(
+        _facts("Dominican nationals only"), None, 40, nationalities=["dominica"]
+    )
+    assert verdict.verdict is Verdict.BLOCKED
+
+
+def test_jordan_does_not_match_jordanian() -> None:
+    """Word boundary: 'jordan' candidate is still blocked by 'Jordanian nationals only'."""
+    verdict = decide(
+        _facts("Jordanian nationals only"), None, 40, nationalities=["jordan"]
+    )
+    assert verdict.verdict is Verdict.BLOCKED

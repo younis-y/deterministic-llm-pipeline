@@ -190,7 +190,10 @@ class ProfileConfig(BaseModel):
     the demonym and the country ("jordanian", "jordan"). A nationality bar
     whose quote names one of them is not a bar for this candidate. Residence
     permits are not nationalities: a golden visa does not meet "UAE
-    nationals only", so it is not listed here."""
+    nationals only", so it is not listed here. A matching term kept in
+    `hard_blockers` (for example "jordanian nationals only") still blocks at
+    the keyword stage, so remove such terms from `hard_blockers` when listing
+    the nationality."""
     agencies: list[str] = Field(default_factory=list)
     """Company names that post roles they are not themselves hiring for:
     recruiters, staffing firms, job boards. Matched against the COMPANY name

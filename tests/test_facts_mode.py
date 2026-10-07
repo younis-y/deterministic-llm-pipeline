@@ -491,7 +491,7 @@ def _job_with_nationality_bar(
                 company="Amman Tech",
                 title="Data Engineer",
                 url="https://x/15",
-                description="Work with our team.",
+                description=f"{quote}. Work with our team.",
             ),
             keyword_score=40,
         ),
