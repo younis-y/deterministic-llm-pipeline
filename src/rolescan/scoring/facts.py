@@ -857,15 +857,15 @@ _YEARS_RANGE = re.compile(
 )
 
 
-def _range_low(quote: str) -> int | None:
-    """The low end of a "lo-hi years" range in `quote`, or None if it has none.
+def _range_bounds(quote: str) -> tuple[int, int] | None:
+    """The (low, high) of a "lo-hi years" range in `quote`, or None if it has none.
 
     The model answered 2 for "0-2 years" (the eval's Quantcast ML Engineer,
     a good role hidden by `max_years_required: 1`). A range's requirement is
     its low end, and a low end of 0 is no requirement at all.
     """
     m = _YEARS_RANGE.search(quote)
-    return int(m.group("lo")) if m else None
+    return (int(m.group("lo")), int(m.group("hi"))) if m else None
 
 
 def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
@@ -880,18 +880,21 @@ def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
     from the title first, quoting the words `years_required_stated` matched,
     which are verbatim and so would pass the guard themselves.
 
-    2.5.7: a stated value that is not the low end of a range in its own quote
-    (the model gave the high end) is corrected to the low end ("0-2 years"
-    answered as 2 becomes no requirement; "3-5 years" answered as 5 becomes 3).
+    2.5.7: a stated value that is the high end of a range in its own quote
+    (the model picked the top of it) is corrected to the low end ("0-2 years"
+    answered as 2 becomes no requirement; "3-5 years" answered as 5 becomes
+    3). Any other value is kept, so a quote with an unrelated range in it
+    ("5+ years overall, 2-3 years in Python" answered as 5) is left alone.
 
     Pure and idempotent; never mutates `facts`. Expects `facts` to have been
     through `verify_facts` already.
     """
     stated = facts.years_required
     if stated.value is not None:
-        low = _range_low(stated.quote)
-        if low is None or low == stated.value:
+        bounds = _range_bounds(stated.quote)
+        if bounds is None or bounds[1] != stated.value:
             return facts
+        low = bounds[0]
         fixed = (
             YearsFact(value=None, quote="")
             if low == 0

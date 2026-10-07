@@ -84,6 +84,16 @@ def test_a_stated_low_end_or_single_figure_is_left_alone() -> None:
     assert resolve_years(verify_facts(one, single), single).years_required.value == 5
 
 
+def test_an_unrelated_range_in_the_quote_does_not_correct_the_value() -> None:
+    """The model's 5 is the "5+", not the top of the Python range."""
+    quote = "5+ years overall, 2-3 years in Python"
+    job = _job(f"{quote}.")
+    facts = _facts(years_required=YearsFact(value=5, quote=quote))
+    out = resolve_years(verify_facts(facts, job), job)
+    assert out.years_required.value == 5
+    assert out.years_required.quote == quote
+
+
 @pytest.mark.parametrize(
     "text",
     [
