@@ -16,12 +16,24 @@ import re
 from rolescan.config import ProfileConfig
 from rolescan.models import Job, ScoredJob
 
-__all__ = ["TITLE_MULTIPLIER", "score_keywords"]
+__all__ = [
+    "AGENCY_PENALTY",
+    "LOCATION_PENALTY",
+    "SYNTHETIC_PENALTIES",
+    "TITLE_MULTIPLIER",
+    "score_keywords",
+]
 
 TITLE_MULTIPLIER = 3
 """A term in the title says what the role *is*. The same term buried in the
 body often just describes the team. Weighting them equally is the classic way
 these filters go wrong."""
+
+AGENCY_PENALTY = "posted by an agency"
+LOCATION_PENALTY = "location mismatch"
+SYNTHETIC_PENALTIES = frozenset({AGENCY_PENALTY, LOCATION_PENALTY})
+"""The two `keyword_penalties` labels that are not configured `blockers`
+terms, so a reader of that list can tell them apart."""
 
 
 def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
@@ -41,8 +53,10 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
             total += weight
             hits.append(term)
 
+    title_only = set(profile.title_only_blockers)
     for term, penalty in profile.blockers.items():
-        if _term_hit(term, blob):
+        haystack = title if term in title_only else blob
+        if _term_hit(term, haystack):
             total -= penalty
             penalties.append(term)
 
@@ -61,14 +75,14 @@ def score_keywords(job: Job, profile: ProfileConfig) -> ScoredJob:
 
     if profile.agency_penalty and _agency_hit(job.company, profile.agencies):
         total -= profile.agency_penalty
-        penalties.append("posted by an agency")
+        penalties.append(AGENCY_PENALTY)
 
     if not _location_ok(job, profile):
         total -= profile.location_penalty
         # Not a hard bar: the candidate allows remote and has several target
         # cities, so this goes in keyword_penalties (for display) but never
         # in blocker_hits (which forces a `blocked` verdict).
-        penalties.append("location mismatch")
+        penalties.append(LOCATION_PENALTY)
 
     return ScoredJob(
         job=job,

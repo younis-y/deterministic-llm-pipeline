@@ -14,6 +14,7 @@ from rolescan.config import EmailConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
 from rolescan.pipeline import ScanResult, SourceReport
 from rolescan.scoring.judges import available_judges
+from rolescan.scoring.keyword import SYNTHETIC_PENALTIES
 from rolescan.scoring.rules import RULE_ORDER
 
 __all__ = ["render_html", "render_markdown", "send_email", "write_digest"]
@@ -91,6 +92,8 @@ _RULE_LABELS: dict[str, str] = {
     "years": "Years of experience",
     "field": "Field",
     _TERMS: "Your blocking terms (hard_blockers, excluded_locations)",
+    "blockers": "Your weighted terms (blockers)",
+    "gate": "Just under your keyword gate",
 }
 
 _RULE_HIDDEN_LEAD = (
@@ -109,7 +112,7 @@ def _hidden_reason(reason: str) -> str:
     return reason
 
 
-def _hidden_group(item: ScoredJob) -> tuple[str, str] | None:
+def _hidden_group(item: ScoredJob, gate: int) -> tuple[str, str] | None:
     """The group a rule-hidden posting is listed under, and its reason.
 
     The rule `decide` fired wins over a `hard_blockers` term, so a posting
@@ -118,6 +121,12 @@ def _hidden_group(item: ScoredJob) -> tuple[str, str] | None:
     has no rule (`decide` never ran) and goes under `hard_bar` with the
     model's reason, ahead of any term it also matched. A term-only posting's
     reason is the term(s) that matched, as configured.
+
+    2.5.7: a reject the model never scored (`fit` is None) with no
+    `hard_blockers` hit is listed under `blockers` when a weighted term cost
+    it points, else under `gate` with its score against `gate`. The two
+    synthetic penalties (agency, location) are not terms: a near-gate reject
+    whose only penalty is one of them lands under `gate`.
     """
     fit = item.fit
     if fit is not None and fit.rule is not None:
@@ -127,6 +136,15 @@ def _hidden_group(item: ScoredJob) -> tuple[str, str] | None:
     if item.blocker_hits:
         terms = ", ".join(f'"{t}"' for t in dict.fromkeys(item.blocker_hits))
         return _TERMS, f"blocked by {terms}"
+    weighted = [
+        t for t in dict.fromkeys(item.keyword_penalties) if t not in SYNTHETIC_PENALTIES
+    ]
+    if weighted and item.fit is None:
+        return "blockers", "pushed under the gate by " + ", ".join(
+            f'"{t}"' for t in weighted
+        )
+    if item.fit is None:
+        return "gate", f"scored {item.keyword_score} of {gate}"
     return None
 
 
@@ -140,12 +158,14 @@ def _rule_hidden_groups(result: ScanResult) -> list[tuple[str, list[tuple[Job, s
     """
     groups: dict[str, list[tuple[Job, str]]] = {}
     for item in result.rule_hidden:
-        if (found := _hidden_group(item)) is None:
+        if (found := _hidden_group(item, result.gate)) is None:
             continue
         group, reason = found
         groups.setdefault(group, []).append((item.job, reason))
     rank = {rule: i for i, rule in enumerate(RULE_ORDER)}
     rank[_TERMS] = len(RULE_ORDER) + 1
+    rank["blockers"] = len(RULE_ORDER) + 2
+    rank["gate"] = len(RULE_ORDER) + 3
     return [
         (
             _RULE_LABELS.get(rule, rule),

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -29,6 +30,7 @@ from rolescan.scoring import (
     unusable_backend_reason,
     unusable_enricher_reason,
 )
+from rolescan.scoring.keyword import SYNTHETIC_PENALTIES
 from rolescan.sources import get_source
 from rolescan.sources.base import _REGISTRY, PostingCache, SourceSkipped
 from rolescan.store import Store
@@ -143,10 +145,15 @@ class ScanResult:
     that is still reportable (a rule skip at `min_report_score: 0`, a block
     with `show_blocked: true`) is already in the digest and is not repeated.
 
-    A prefilter reject is included only when its terms are what put it under
+    A prefilter reject is included when its terms are what put it under
     the gate: its keyword score plus the `blockers` weights of its
-    `blocker_hits` clears `min_keyword_score`. A reject that fails the gate
-    either way is low relevance, not a rule hide. An `excluded_locations`
+    `blocker_hits` clears `min_keyword_score`. (2.5.7: so is one whose
+    weighted `blockers` terms alone did it, and one within
+    `profile.hidden_gate_margin` of the gate, whatever put it there; both
+    carry no rule, and the digest groups them as `blockers` and `gate`. A
+    thin posting a `hard_blockers` term caught is listed too.) A reject that
+    fails the gate by more than that either way is low relevance, not a rule
+    hide. An `excluded_locations`
     entry carries no weight, so an irrelevant posting in an excluded location
     is not listed (about seven US postings a day on the owner's store), while
     a relevant one clears the gate, is judged, and is listed from there.
@@ -162,6 +169,9 @@ class ScanResult:
     to_record: list[ScoredJob] = field(default_factory=list)
     """What a real run writes to `seen` once the digest is on disk (2.5.7).
     Empty on a dry run."""
+    gate: int = 0
+    """`profile.min_keyword_score` for this run (2.5.7), so the digest can say
+    "scored 12 of 20" for a reject listed as just under it."""
     dry_run: bool = False
 
     @property
@@ -453,10 +463,20 @@ def _rule_hidden(
     reportable: list[ScoredJob],
     rejects: list[ScoredJob],
     profile: ProfileConfig,
+    *,
+    thin: Sequence[ScoredJob] = (),
 ) -> list[ScoredJob]:
     """The postings a rule or a blocking term caught that the digest does not
     show (see `ScanResult.rule_hidden`): judged ones, then prefilter rejects
     whose terms' `blockers` weights are what put them under the gate.
+
+    2.5.7 adds rejects pushed under by weighted terms alone (listed under
+    `blockers`) and rejects within `hidden_gate_margin` of the gate (listed
+    under `gate`). `thin` is the postings deferred for having no description:
+    they are not rejects, but one whose title matched a `hard_blockers` term
+    is listed all the same, or it would be in no list at all. Only those: a
+    thin near-gate or weighted-term posting would be listed again on every run
+    until its text arrives.
 
     Matched on identity, not equality: `_rank` filters and slices `judged`
     and `run_scan` copies only the postings it marks `digest_cap`, so the
@@ -474,7 +494,29 @@ def _rule_hidden(
         and s.keyword_score + sum(profile.blockers.get(t, 0) for t in s.blocker_hits)
         >= gate
     ]
-    return caught + pushed_under
+    thin_blocked = [s for s in thin if s.blocker_hits]
+
+    def _weight(s: ScoredJob) -> int:
+        return sum(
+            profile.blockers.get(t, 0)
+            for t in s.keyword_penalties
+            if t not in SYNTHETIC_PENALTIES
+        )
+
+    weighted = [
+        s
+        for s in rejects
+        if not s.blocker_hits and _weight(s) and s.keyword_score + _weight(s) >= gate
+    ]
+    listed = {id(s) for s in caught + pushed_under + weighted}
+    near = [
+        s
+        for s in rejects
+        if id(s) not in listed
+        and profile.hidden_gate_margin
+        and gate - profile.hidden_gate_margin <= s.keyword_score < gate
+    ]
+    return caught + pushed_under + thin_blocked + weighted + near
 
 
 async def _check_coverage(
@@ -569,8 +611,9 @@ async def run_scan(
         cut = {s.job.uid: s for s in overflow}
         judged = [cut.get(s.job.uid, s) for s in judged]
         result.deferred = [s for s in judged if s.deferred] + thin
+        result.gate = cfg.profile.min_keyword_score
         result.rule_hidden = _rule_hidden(
-            judged, result.reportable, rejects, cfg.profile
+            judged, result.reportable, rejects, cfg.profile, thin=thin
         )
 
         if not dry_run:

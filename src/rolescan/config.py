@@ -72,8 +72,8 @@ class RulesConfig(BaseModel):
         default=None,
         description=(
             "A stated graduation year above this skips; None = no limit. The "
-            "year is the EARLIEST one the advert accepts, so \"graduating 2027 "
-            "or 2028\" passes a limit of 2027. While this is set, a posting "
+            'year is the EARLIEST one the advert accepts, so "graduating 2027 '
+            'or 2028" passes a limit of 2027. While this is set, a posting '
             "that states a graduation year is judged on the year alone and "
             "`student_only` does not fire for it; `student_only` still decides "
             "postings that state no year. Unset, a stated year changes nothing."
@@ -147,6 +147,21 @@ class ProfileConfig(BaseModel):
     A term listed here keeps whatever weight `blockers` gives it, and costs
     nothing if `blockers` does not mention it. Entries are normalised at load
     and matched on word boundaries - see `rolescan.scoring.keyword`."""
+    title_only_blockers: list[str] = Field(default_factory=list)
+    """`blockers` terms that count only when they appear in the TITLE.
+
+    For words that name a role's level or sector in a title but occur as
+    boilerplate in bodies: `head of` ("head office"), `director` ("board of
+    directors"), `military` ("military or veteran status", the US
+    equal-opportunity line on every internship from a US employer). Measured
+    2026-10-07: 82 cached adverts were rejected on weight alone, mostly these
+    three. A term here keeps its weight from `blockers`."""
+    hidden_gate_margin: Annotated[int, Field(ge=0)] = 10
+    """How far under `min_keyword_score` a reject may be and still be listed
+    in "Hidden by your rules". 0 lists none. The gate is the stage that hides
+    the most good roles (2026-10-07: 20 of 50 labelled good roles sat under
+    it), and a reject is recorded as seen, so the listing is the only chance
+    to notice a weight that is wrong."""
     location_penalty: int = 25
     min_keyword_score: Annotated[int, Field(ge=0)] = 18
     """Prefilter gate. Postings below this never reach the LLM, which is the
@@ -210,6 +225,9 @@ class ProfileConfig(BaseModel):
         permanently: the posting is dropped AND written to `seen`, so the
         reader cannot recover from it.
 
+        `title_only_blockers` goes through the same function so that it can be
+        compared with the `blockers` keys it names.
+
         Normalisation can also collapse two `blockers` keys onto one term,
         which then has to resolve to a single weight. The heaviest wins, and
         the collapse is logged. Heaviest rather than last-written because
@@ -271,6 +289,13 @@ class ProfileConfig(BaseModel):
             if term not in cleaned:
                 cleaned.append(term)
         object.__setattr__(self, "hard_blockers", cleaned)
+
+        # An entry that normalises to nothing is dropped, as in `blockers`: it
+        # cannot name a key, so it changes nothing.
+        title_only = (normalise_term(raw) for raw in self.title_only_blockers)
+        object.__setattr__(
+            self, "title_only_blockers", list(dict.fromkeys(t for t in title_only if t))
+        )
         return self
 
 
