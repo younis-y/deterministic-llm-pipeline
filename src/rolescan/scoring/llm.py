@@ -26,6 +26,7 @@ from rolescan.scoring.examples import load_facts_examples, render_facts_examples
 from rolescan.scoring.facts import (
     PostingFacts,
     resolve_field,
+    resolve_hard_bars,
     resolve_level,
     resolve_student,
     resolve_years,
@@ -288,9 +289,14 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig, *, examples_digest: str = "")
     v11 (2.5.5) adds the deterministic years pass (`resolve_years`): a null
     `years_required` is filled from the advert's own "N+ years of experience"
     wording. A v10 row could replay a null the owner's years rule never sees.
+    v12 (2.5.6) adds the deterministic bar pass (`resolve_hard_bars`): a
+    nationality or clearance bar the model left out is added from the
+    advert's own eligibility wording ("UAE Nationals only", "Emirati Talent"
+    in the title, "active eDV clearance"). A v11 row could replay an APPLY for
+    a role the owner cannot hold.
     """
     if mode == "facts":
-        key = f"{job.content_hash}:facts-v11:{cfg.backend}:{cfg.model}"
+        key = f"{job.content_hash}:facts-v12:{cfg.backend}:{cfg.model}"
         return f"{key}:ex-{examples_digest}" if examples_digest else key
     return job.content_hash
 
@@ -637,7 +643,7 @@ class FitScorer:
         # skip generating prose for a role that will not clear the gate - buys
         # nothing here, and facts mode never runs it.
         verified = verify_facts(await judge.facts(system, user), job)
-        facts = resolve_years(verified, job)
+        facts = resolve_hard_bars(resolve_years(verified, job), job)
         return resolve_field(resolve_level(resolve_student(facts, job), job), job)
 
     async def _call_judge(self, scored: ScoredJob) -> FitVerdict:

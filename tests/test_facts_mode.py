@@ -146,7 +146,7 @@ async def test_cache_key_is_mode_aware() -> None:
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
     assert cache_key(job, "facts", cfg) != cache_key(job, "judge", cfg)
     assert cache_key(job, "judge", cfg) == job.content_hash
-    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v11:ollama:qwen2.5:14b"
+    assert cache_key(job, "facts", cfg) == f"{job.content_hash}:facts-v12:ollama:qwen2.5:14b"
 
 
 async def test_facts_cache_key_changes_with_backend_and_model() -> None:
@@ -482,3 +482,15 @@ async def test_an_unsupported_clearance_bar_does_not_block_on_the_live_path() ->
 
     assert out.fit is not None and out.fit.verdict == Verdict.APPLY
     assert scorer.last_facts[job.job.url].hard_bars == []
+
+
+async def test_a_bar_the_model_left_out_still_blocks_through_the_scorer() -> None:
+    """2.5.6: `_call_facts` chains `resolve_hard_bars` after `verify_facts`."""
+    job = _job("Motivated and hardworking. This role is open to UAE Nationals only.")
+    scorer, _judge = _facts_scorer(_facts(fit_score=85))
+
+    [out] = await scorer.score_all([job])
+
+    assert out.fit is not None
+    assert out.fit.verdict == Verdict.BLOCKED
+    assert "open to UAE Nationals only" in out.fit.reason
