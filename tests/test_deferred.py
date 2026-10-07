@@ -218,7 +218,7 @@ async def test_roles_past_the_digest_cap_come_back_next_run(tmp_path: Path) -> N
 async def test_deferred_posting_with_a_term_is_listed_not_recorded(
     tmp_path: Path,
 ) -> None:
-    """Review focus 1: the ceiling skipped it AND a hard term matched. It is
+    """The ceiling skipped it AND a hard term matched. It is
     listed under the terms group (so the term can be checked) and still not
     recorded, because the term is checked again next run at no cost."""
     mock_ollama()
@@ -250,7 +250,7 @@ async def test_deferred_posting_with_a_term_is_listed_not_recorded(
 
 @respx.mock
 async def test_a_posting_with_no_text_is_deferred_not_recorded(tmp_path: Path) -> None:
-    """Review focus 3, end to end: a posting whose description never arrived
+    """End to end: a posting whose description never arrived
     and whose title scores nothing is held back, not buried. It is counted in
     the digest and absent from `seen`, so the next run (which may have the
     text) sees it again; the on-topic posting beside it is recorded."""

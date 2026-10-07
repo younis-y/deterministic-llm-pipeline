@@ -221,7 +221,7 @@ def scan(
 
     # Recorded only now that the digest is on disk (2.5.7): a crash or a
     # failed write before this point leaves `seen` untouched, so the next run
-    # sees the same postings again instead of losing them (storage audit S2).
+    # sees the same postings again instead of losing them.
     if result.to_record:
 
         async def _record() -> None:

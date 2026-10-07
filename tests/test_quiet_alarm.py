@@ -1,7 +1,7 @@
 """2.5.7: the "went quiet" alarm forgot a dead source after five zero runs
 (the sixth digest said nothing), and the Markdown digest dropped the alarm
 when it was the only problem (`_failures` returned [] before reaching it;
-`/jobscan` reads the Markdown). Both found 2026-10-07."""
+the Markdown digest is what downstream tooling reads). Both found 2026-10-07."""
 
 from __future__ import annotations
 

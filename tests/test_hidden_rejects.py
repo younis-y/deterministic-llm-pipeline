@@ -41,7 +41,7 @@ def _job(title: str, body: str) -> Job:
 
 
 def test_title_only_term_costs_its_weight_only_in_the_title() -> None:
-    """Review focus 3."""
+    """A title-only term is charged its weight in the title and nowhere else."""
     profile = _profile(title_only_blockers=["head of", "military"])
     body = "Data analyst role. We do not discriminate on military or veteran status."
     in_body = score_keywords(_job("Data Analyst", body), profile)

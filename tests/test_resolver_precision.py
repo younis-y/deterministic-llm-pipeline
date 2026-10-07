@@ -1,13 +1,13 @@
-"""2.5.7 resolver fixes, each from a real advert the owner's scan hid.
+"""2.5.7 resolver fixes, each from a real advert shape a scan hid.
 
-Student: Tikehau Capital's private equity internship ("Currently pursuing or
-holding a degree") and LCCC's Energy Analyst Intern ("2:1 degree (or
-expected for those in their penultimate year)") were skipped as students-
-only; both offer graduates a route. Years: "0-2 years" came back as 2 from
-the model and hid Quantcast's ML Engineer under `max_years_required: 1`;
-"3 years as an Associate before being promoted to VP" read as a
-requirement. Graduation year: "2027 Summer Intern" was accepted as a
-graduation year, which switched the student rule off."""
+Student: a private equity internship ("Currently pursuing or holding a
+degree") and an energy analyst internship ("2:1 degree (or expected for those
+in their penultimate year)") were skipped as students-only; both offer
+graduates a route. Years: "0-2 years" came back as 2 from the model and hid
+an ML Engineer under `max_years_required: 1`; "3 years as an Associate before
+being promoted to VP" read as a requirement. Graduation year: "2027 Summer
+Intern" was accepted as a graduation year, which switched the student rule
+off."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def test_plain_enrolment_wording_is_still_students_only() -> None:
 )
 def test_expected_to_graduate_is_still_a_student(text: str) -> None:
     """ "Or expected to graduate" names a student, not a graduate route; only
-    the LCCC shape (a degree word, then "(or expected ...") does. "Or
+    the bracketed shape (a degree word, then "(or expected ...") does. "Or
     completed" is a route only when it completes a degree."""
     assert students_only(text) is not None
     facts = resolve_student(_facts(), _job(text))
@@ -79,7 +79,7 @@ def test_expected_to_graduate_is_still_a_student(text: str) -> None:
 
 
 def test_zero_to_two_years_is_not_a_requirement() -> None:
-    """Review focus 4."""
+    """A "0-2 years" range is no requirement at all, not a requirement of 0."""
     job = _job("0-2 years of experience in machine learning.")
     facts = _facts(years_required=YearsFact(value=2, quote="0-2 years of experience"))
     out = resolve_years(verify_facts(facts, job), job)

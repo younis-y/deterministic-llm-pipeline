@@ -187,11 +187,11 @@ class ProfileConfig(BaseModel):
     advert it writes."""
     nationalities: list[str] = Field(default_factory=list)
     """Nationalities the candidate holds, as the words an advert would use:
-    the demonym and the country ("jordanian", "jordan"). A nationality bar
+    the demonym and the country ("freedonian", "freedonia"). A nationality bar
     whose quote names one of them is not a bar for this candidate. Residence
     permits are not nationalities: a golden visa does not meet "UAE
     nationals only", so it is not listed here. A matching term kept in
-    `hard_blockers` (for example "jordanian nationals only") still blocks at
+    `hard_blockers` (for example "freedonian nationals only") still blocks at
     the keyword stage, so remove such terms from `hard_blockers` when listing
     the nationality."""
     agencies: list[str] = Field(default_factory=list)

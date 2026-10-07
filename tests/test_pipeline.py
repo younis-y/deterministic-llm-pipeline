@@ -919,8 +919,8 @@ async def test_a_source_that_goes_quiet_is_reported(tmp_path: Path) -> None:
 
 
 async def test_a_dry_check_leaves_the_quiet_alarm_armed(tmp_path: Path) -> None:
-    """Storage audit S6: a `--dry` run wrote its counts, and the alarm looks
-    at the last five runs, so a few dry runs of a silent source taught the
+    """A `--dry` run used to write its counts, and the alarm looks back over
+    a window of recent runs, so a few dry runs of a silent source taught the
     store that zero was normal and the real run stayed quiet about it."""
     worked = SourceReport(kind="greenhouse", slug="jane", label="Jane", count=228)
     silent = SourceReport(kind="greenhouse", slug="jane", label="Jane", count=0)

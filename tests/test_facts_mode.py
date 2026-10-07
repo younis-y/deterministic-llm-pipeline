@@ -481,14 +481,14 @@ async def test_an_exempt_company_passes_the_field_rule_on_a_cached_hit(
 
 
 def _job_with_nationality_bar(
-    quote: str = "Jordanian nationals only",
+    quote: str = "Freedonian nationals only",
 ) -> tuple[ScoredJob, HardBar]:
     """A data engineer role with a nationality bar."""
     return (
         ScoredJob(
             job=Job(
                 source="test",
-                company="Amman Tech",
+                company="Example Co",
                 title="Data Engineer",
                 url="https://x/15",
                 description=f"{quote}. Work with our team.",
@@ -504,7 +504,7 @@ async def test_a_nationality_bar_the_candidate_meets_passes_on_a_fresh_call() ->
     facts = _facts(fit_score=75, hard_bars=[bar])
     scorer = FitScorer(
         LLMConfig(enabled=True, backend="ollama", mode="facts"),
-        ProfileConfig(nationalities=["jordanian", "jordan"]),
+        ProfileConfig(nationalities=["freedonian", "freedonia"]),
     )
     judge = _FakeFactsJudge(scorer.cfg, facts)
     scorer._judge = judge
@@ -522,7 +522,7 @@ async def test_a_nationality_bar_the_candidate_meets_passes_on_a_cached_hit(
     async with Store(tmp_path / "store.db") as store:
         scorer1 = FitScorer(
             LLMConfig(enabled=True, backend="ollama", mode="facts"),
-            ProfileConfig(nationalities=["jordanian"]),
+            ProfileConfig(nationalities=["freedonian"]),
             store,
         )
         judge1 = _FakeFactsJudge(scorer1.cfg, facts)
@@ -532,7 +532,7 @@ async def test_a_nationality_bar_the_candidate_meets_passes_on_a_cached_hit(
 
         scorer2 = FitScorer(
             LLMConfig(enabled=True, backend="ollama", mode="facts"),
-            ProfileConfig(nationalities=["jordanian"]),
+            ProfileConfig(nationalities=["freedonian"]),
             store,
         )
         judge2 = _FakeFactsJudge(scorer2.cfg, facts)

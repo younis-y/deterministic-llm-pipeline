@@ -577,7 +577,7 @@ async def _check_coverage(
     `record=False` on a dry run (2.5.7): the alarm looks back over a window of
     recent runs, and a `--dry` run used to write its counts into that window,
     so a few of them taught the store that zero was normal for a source that
-    had gone silent (storage audit S6).
+    had gone silent.
     """
     quiet: list[tuple[str, int]] = []
     for report in reports:

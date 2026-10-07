@@ -68,10 +68,10 @@ _IGNORED_BARS = frozenset({BarKind.work_auth})
 #: Levels that make a posting a programme (an internship, placement or graduate
 #: scheme) rather than a role in one field. `Level` has no `intern` member:
 #: `resolve_level` maps an internship to `graduate_entry`, so that is the only
-#: member here. On 2026-10-07 three programmes the owner wanted (a 2027
-#: internship, a business transformation placement year, a finance project
-#: analyst) were hidden by the field rule because their field read as `other`;
-#: an unknown field on a programme is not a wrong field.
+#: member here. On 2026-10-07 three programme roles (a digital-transformation
+#: internship, a business-transformation placement, a finance project analyst)
+#: were hidden by the field rule because their field read as `other`; an
+#: unknown field on a programme is not a wrong field.
 _PROGRAMME_LEVELS = frozenset({Level.graduate_entry})
 
 
@@ -107,9 +107,9 @@ def _company_exempt(company: str, exempt: Sequence[str]) -> bool:
 def _names_own_nationality(quote: str, nationalities: Sequence[str]) -> bool:
     """True when `quote` names one of the candidate's nationalities.
 
-    Matches word boundaries so "dominica" does not match "dominican" and a
-    bar like "UAE or Jordanian nationals only" matches when "jordanian" is in
-    `nationalities`.
+    Matches word boundaries so "freedonia" does not match "freedonian" and a
+    bar like "Ruritanian or Freedonian nationals only" matches when
+    "freedonian" is in `nationalities`.
     """
     folded = quote.casefold()
     return any(

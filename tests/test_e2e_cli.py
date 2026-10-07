@@ -118,9 +118,9 @@ async def _seen_count(db: Path) -> int:
 def test_seen_is_written_only_after_the_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Review focus 2 and storage S2 in one: `write_digest` fails, so nothing
-    may be recorded and the exit code is non-zero. Before 2.5.7 `seen` was
-    committed inside `run_scan`, before the digest existed."""
+    """`write_digest` fails, so nothing may be recorded and the exit code is
+    non-zero. Before 2.5.7 `seen` was committed inside `run_scan`, before the
+    digest existed, so a crash between the two lost the run for good."""
     import rolescan.cli as cli_module
 
     cfg = _project(tmp_path)
@@ -157,8 +157,8 @@ def test_a_first_dry_run_records_nothing_and_leaves_no_latest(
 
 @respx.mock
 def test_dry_run_writes_its_own_file(tmp_path: Path) -> None:
-    """Review focus 2: a dry run after a real run leaves `latest.md` as the
-    real run's digest and writes `digest-dry.md` beside it."""
+    """A dry run after a real run leaves `latest.md` as the real run's digest
+    and writes `digest-dry.md` beside it."""
     cfg = _project(tmp_path)
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(200, json=BOARD)

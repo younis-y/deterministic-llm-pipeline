@@ -1,11 +1,11 @@
-"""2.5.7: the owner's rulings on the field rule (2026-10-07).
+"""2.5.7: rulings on the field rule (2026-10-07).
 
-Three roles the owner wanted were hidden as "other": Caterpillar's 2027
-Internship Program ("digital transformation projects"), Schroders' Business
-Transformation Placement Year, Dawsongroup's Finance Project Analyst. One
-software role was wanted at a named employer only. An internship or
-graduate programme whose field cannot be named is a programme, not a wrong
-field, so `other` no longer hides one."""
+Three good roles were hidden as "other": an internship programme whose
+projects are "digital transformation", a business-transformation placement
+year, and a finance project analyst. An internship or graduate programme
+whose field cannot be named is a programme, not a wrong field, so `other` no
+longer hides one. A field exemption is by company name, for a profile that
+wants one software role at a named employer only."""
 
 from __future__ import annotations
 

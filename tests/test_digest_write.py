@@ -1,7 +1,7 @@
 """2.5.7: the digest is the record of a run, so it must exist before anything
-is marked seen (storage audit S2: a crash between the two lost the run for
-good), one scan must not overwrite another's file (S3: 28 Sep 2026 had four
-scans and one file), and a dry run must leave `latest.md` alone."""
+is marked seen (a crash between the two lost the run for good), one scan
+must not overwrite another's file (28 Sep 2026 had four scans and one file),
+and a dry run must leave `latest.md` alone."""
 
 from __future__ import annotations
 

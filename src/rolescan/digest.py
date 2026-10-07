@@ -1050,7 +1050,7 @@ def write_digest(text: str, directory: Path, *, name: str | None = None) -> Path
     """Write the digest atomically; one file per scan.
 
     `name` given: write only that file (a dry run writes `digest-dry.md` and
-    must not become `latest.md`, which `rolescan show` and the owner's tools
+    must not become `latest.md`, which `rolescan show` and downstream tooling
     read as the last real run). Otherwise the file is stamped to the minute
     and suffixed if that minute already has one, so a second scan of the day
     cannot overwrite the first (2026-09-28: four scans, one file).

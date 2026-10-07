@@ -93,7 +93,7 @@ def test_a_mid_level_title_is_sourced_from_the_title_by_keyword() -> None:
 # Live repro: title "Data Engineer", model level `mid` quoting "Data Engineer"
 # -> skip 49. Only a level KEYWORD in the title is the title speaking.
 
-#: The owner's rules (rolescan-extra config.yaml, 2026-10-01).
+#: A profile that wants junior and graduate roles only, judged on the title.
 OWNER_RULES = RulesConfig(
     max_years_required=1,
     allowed_levels=[Level.graduate_entry, Level.junior, Level.not_stated],

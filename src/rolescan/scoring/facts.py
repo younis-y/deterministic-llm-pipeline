@@ -611,13 +611,15 @@ def graduates_eligible(text: str) -> str | None:
 #: Enrolment wording that also offers a route to graduates in the same
 #: sentence ("Currently pursuing OR holding a degree", "A 2:1 degree (or
 #: expected for those in their penultimate year)", "studying for, or have
-#: recently completed, a Master's degree"). Seen on Tikehau Capital and LCCC
-#: adverts the owner wanted (2026-10-07); the sentence names students, but
-#: does not restrict to them. Deliberately narrow: "or expected to graduate"
-#: names a student too ("currently enrolled, or expected to graduate in
-#: 2027"), so "expected" counts only in the LCCC shape, in brackets right
-#: after a degree word; "or completed" only when a degree word follows within
-#: the clause ("or completed 2 years of study" is still a student).
+#: recently completed, a Master's degree"). Seen on two real internship
+#: adverts (2026-10-07), one of each sentence shape: "Currently pursuing or
+#: holding a degree", and a "2:1 degree (or expected for those in their
+#: penultimate year)". The sentence names students, but does not restrict to
+#: them. Deliberately narrow: "or expected to graduate" names a student too
+#: ("currently enrolled, or expected to graduate in 2027"), so "expected"
+#: counts only in the bracketed shape, right after a degree word; "or
+#: completed" only when a degree word follows within the clause ("or
+#: completed 2 years of study" is still a student).
 _ALTERNATIVE_ROUTE = re.compile(
     r"\bor\s+(?:holding|hold|graduated)\b"
     r"|\bor\s+(?:have\s+(?:completed|obtained|held|recently\s+completed)"
@@ -879,8 +881,8 @@ _YEARS_RANGE = re.compile(
 def _range_bounds(quote: str) -> tuple[int, int] | None:
     """The (low, high) of a "lo-hi" range in `quote`, or None if it has none.
 
-    The model answered 2 for "0-2 years" (the eval's Quantcast ML Engineer,
-    a good role hidden by `max_years_required: 1`). A range's requirement is
+    The model answered 2 for "0-2 years" (a real ML Engineer advert, a good
+    role hidden by `max_years_required: 1`). A range's requirement is
     its low end, and a low end of 0 is no requirement at all. Decimals round
     down ("0.5-2" is 0 to 2), and a "range" whose low end is not below its
     high end ("7 - 5") is not one.
@@ -1656,8 +1658,8 @@ def resolve_level(facts: PostingFacts, job: Job) -> PostingFacts:
 # Trading" is analytics_bi, "Software Engineer, Trading Systems" is software),
 # and "Marketing Analyst" or "Research Analyst" alone name no field.
 #
-# 2.5.7, from the owner's rulings of 2026-10-07 (three wanted roles were hidden
-# as "other"): "business transformation" and "digital transformation" are
+# 2.5.7, from rulings of 2026-10-07 (three good roles were hidden as "other"):
+# "business transformation" and "digital transformation" are
 # consulting ("Business Transformation Placement Year"), and one word may sit
 # between finance and analyst ("Finance Project Analyst"). "Project Analyst",
 # "Marketing Analyst" and "Digital Analyst" alone still name no field.
