@@ -57,5 +57,26 @@ async def test_the_ceiling_marks_the_weakest_candidate_deferred(tmp_path: Path) 
     assert by_title["Energy Analyst 1"].deferred == "llm_ceiling"
 
 
+@respx.mock
+async def test_facts_mode_ceiling_defers_without_calling_backend(
+    tmp_path: Path,
+) -> None:
+    """Production default mode (facts) also marks ceiling hits as deferred (2.5.7).
+
+    With max_calls_per_run=0, the ceiling fires before any backend call, so no
+    HTTP request is made. The posting is marked deferred and never judged.
+    """
+    mock_ollama()
+    cfg = _cfg(tmp_path, max_calls=0)
+    # Reset mode to production default (facts), not overridden to judge.
+    cfg.llm.mode = "facts"
+    scorer = FitScorer(cfg.llm, cfg.profile, None)
+    out = await scorer.score_all([_scored(1, 50)])
+    assert out[0].fit is None
+    assert out[0].deferred == "llm_ceiling"
+    # No backend call was made because the ceiling fired first.
+    assert respx.post("http://localhost:11434/api/chat").call_count == 0
+
+
 def test_deferred_defaults_to_empty() -> None:
     assert _scored(1, 1).deferred == ""
