@@ -404,6 +404,16 @@ def _bar_supported(bar: HardBar) -> bool:
     return pattern.search(bar.quote.translate(_TYPO_FOLD)) is not None
 
 
+#: A graduation year's quote must say graduation (2.5.7). "2027 Summer
+#: Intern" passed `_year_in_quote` and switched the student rule off for a
+#: programme year that says nothing about when the applicant graduates.
+_GRADUATION_WORD = re.compile(
+    r"\b(?:graduat\w*|class\s+of|completion|complet(?:e|ing)\s+(?:your|the|a|their)\s+"
+    r"(?:degree|studies|programme|program|course)|degree\s+(?:by|in|before|between|no\s+later))\b",
+    re.IGNORECASE,
+)
+
+
 def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     """Downgrade any fact whose quote is not actually in the posting.
 
@@ -427,7 +437,9 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     A graduation year must also appear in its own quote, as a whole number
     (2.5.1): a verbatim "Current students only" proves the quote exists but
     says nothing about which year, so a year the quote does not state is the
-    model's invention and is downgraded like an unverified quote.
+    model's invention and is downgraded like an unverified quote. 2.5.7: the
+    quote must also say graduation (`_GRADUATION_WORD`), so a programme year
+    ("2027 Summer Intern") is not a graduation year.
 
     Likewise a nationality or clearance bar must name its own kind in its
     quote (2.5.2, `_BAR_WORDS`): a verbatim sentence about something else
@@ -456,8 +468,13 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
         student = StudentFact(value=None, quote="")
 
     graduation_year = facts.graduation_year
-    if not _verified(graduation_year.quote) or not _year_in_quote(
-        graduation_year.value, graduation_year.quote
+    if (
+        not _verified(graduation_year.quote)
+        or not _year_in_quote(graduation_year.value, graduation_year.quote)
+        or (
+            graduation_year.value is not None
+            and not _GRADUATION_WORD.search(graduation_year.quote)
+        )
     ):
         graduation_year = GraduationYearFact(value=None, quote="")
 
@@ -543,18 +560,25 @@ _STUDENTS_ONLY = re.compile(
 )
 
 
-def _unnegated_sentence(pattern: re.Pattern[str], text: str) -> str | None:
+def _unnegated_sentence(
+    pattern: re.Pattern[str],
+    text: str,
+    *,
+    exclude: re.Pattern[str] | None = None,
+) -> str | None:
     """The first un-negated match of `pattern`, quoted verbatim, or None.
 
     Returns the match's sentence when it fits in `QUOTE_CHARS`, else the
     phrase itself - verbatim either way, so it passes the quote guard. A
-    phrase with a negation close by in its own sentence does not count.
+    phrase with a negation close by in its own sentence does not count, nor
+    does one whose sentence matches `exclude` (2.5.7).
     """
     folded = text.translate(_TYPO_FOLD)  # one character for one: offsets hold
     ends = [m.end() for m in _SENTENCE_END.finditer(folded)]
     for match in pattern.finditer(folded):
         start = max((e for e in ends if e <= match.start()), default=0)
         end = min((e for e in ends if e >= match.end()), default=len(folded))
+        sentence = text[start:end].strip()
         before = folded[max(start, match.start() - _NEGATION_REACH) : match.start()]
         after = folded[match.end() : min(end, match.end() + _NEGATION_REACH)]
         if (
@@ -563,7 +587,8 @@ def _unnegated_sentence(pattern: re.Pattern[str], text: str) -> str | None:
             or _EXCLUDING_WORD_BEFORE.search(before)
         ):
             continue
-        sentence = text[start:end].strip()
+        if exclude is not None and exclude.search(sentence):
+            continue
         if len(sentence) <= QUOTE_CHARS:
             return sentence
         return text[match.start() : match.end()]
@@ -575,9 +600,25 @@ def graduates_eligible(text: str) -> str | None:
     return _unnegated_sentence(_GRADUATES_ELIGIBLE, text)
 
 
+#: Enrolment wording that also offers a route to graduates in the same
+#: sentence ("Currently pursuing OR holding a degree", "(or expected for
+#: those in their penultimate year)", "studying for, or have recently
+#: completed"). Seen on Tikehau Capital and LCCC adverts the owner wanted
+#: (2026-10-07); the sentence names students, but does not restrict to them.
+_ALTERNATIVE_ROUTE = re.compile(
+    r"\b(?:or\s+(?:holding|hold|have\s+(?:completed|obtained|held|recently\s+completed)"
+    r"|completed|recently\s+completed|graduated|expected)|\(\s*or\s+expected)\b",
+    re.IGNORECASE,
+)
+
+
 def students_only(text: str) -> str | None:
-    """The text's own words restricting it to current students, or None (2.5.3)."""
-    return _unnegated_sentence(_STUDENTS_ONLY, text)
+    """The text's own words restricting it to current students, or None (2.5.3).
+
+    2.5.7: a sentence that also offers graduates a route (`_ALTERNATIVE_ROUTE`)
+    does not restrict to students, so it does not count.
+    """
+    return _unnegated_sentence(_STUDENTS_ONLY, text, exclude=_ALTERNATIVE_ROUTE)
 
 
 # Years of experience an advert requires (2.5.5). The local model left this
@@ -726,7 +767,7 @@ _YEARS_WAIVED_BEFORE = re.compile(
 )
 #: A career path, not a requirement ("3 years as an Associate leads to VP").
 _YEARS_CAREER_PATH = re.compile(
-    r"^[^.\n]{0,60}?\b(?:before\s+(?:being\s+)?promot|progress(?:ion|ing)?\s+to|"
+    r"^[^.\n]{0,60}?\b(?:before\s+(?:being\s+)?promot\w*|progress(?:ion|ing)?\s+to|"
     r"you\s+will\s+(?:progress|move|be\s+promoted)|leads?\s+to|promotion\s+to)\b",
     re.IGNORECASE,
 )
@@ -810,6 +851,23 @@ def years_required_stated(text: str) -> tuple[int, str] | None:
     return None
 
 
+_YEARS_RANGE = re.compile(
+    r"(?<![\d.])(?P<lo>\d{1,2})\s*(?:-|\u2013|\u2014|to)\s*(?P<hi>\d{1,2})\s*\+?\s*(?:years?|yrs?)",
+    re.IGNORECASE,
+)
+
+
+def _range_low(quote: str) -> int | None:
+    """The low end of a "lo-hi years" range in `quote`, or None if it has none.
+
+    The model answered 2 for "0-2 years" (the eval's Quantcast ML Engineer,
+    a good role hidden by `max_years_required: 1`). A range's requirement is
+    its low end, and a low end of 0 is no requirement at all.
+    """
+    m = _YEARS_RANGE.search(quote)
+    return int(m.group("lo")) if m else None
+
+
 def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
     """Fill a null `years_required` from the advert's own words (2.5.5).
 
@@ -822,11 +880,24 @@ def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
     from the title first, quoting the words `years_required_stated` matched,
     which are verbatim and so would pass the guard themselves.
 
+    2.5.7: a stated value that is not the low end of a range in its own quote
+    (the model gave the high end) is corrected to the low end ("0-2 years"
+    answered as 2 becomes no requirement; "3-5 years" answered as 5 becomes 3).
+
     Pure and idempotent; never mutates `facts`. Expects `facts` to have been
     through `verify_facts` already.
     """
-    if facts.years_required.value is not None:
-        return facts
+    stated = facts.years_required
+    if stated.value is not None:
+        low = _range_low(stated.quote)
+        if low is None or low == stated.value:
+            return facts
+        fixed = (
+            YearsFact(value=None, quote="")
+            if low == 0
+            else YearsFact(value=low, quote=stated.quote)
+        )
+        return facts.model_copy(update={"years_required": fixed})
     found = years_required_stated(job.title) or years_required_stated(job.description)
     if found is None:
         return facts
