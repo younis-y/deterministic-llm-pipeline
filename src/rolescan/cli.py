@@ -199,7 +199,16 @@ def _deliver(
         raise typer.Exit(1) from e
 
 
-@app.command()
+#: Shown under `rolescan scan --help`; README.md lists the same codes.
+_SCAN_EXIT_STATUS = (
+    "Exit status: 0 ok; 1 email failed, the day's backup failed its check, or "
+    "the store was written by a newer rolescan (takes precedence over 3); "
+    "2 config error; 3 LLM scoring failed as a whole (after the digest was "
+    "written and sent); 4 another run holds the store's lock."
+)
+
+
+@app.command(epilog=_SCAN_EXIT_STATUS)
 def scan(
     config: ConfigOpt = Path("config.yaml"),
     dry: Annotated[

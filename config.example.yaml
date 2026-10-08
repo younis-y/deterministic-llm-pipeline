@@ -186,10 +186,12 @@ llm:
   cache_days: 30             # verdicts are cached on description text; 0 = never expire
 
   # Ollama only. The context window, in tokens, asked of the model on every
-  # call. Unset, Ollama picks its own from the machine's memory, and a small
-  # one silently cuts the middle out of the prompt. rolescan checks before the
-  # scan that the model can hold this many; a model whose window is smaller
-  # (8k) is refused, and the run falls back to keyword scoring.
+  # call; unset, rolescan sends 12288. (A call with no num_ctx lets Ollama size
+  # the window from the machine's memory, and a small one silently cuts the
+  # middle out of the prompt.) rolescan checks before the scan that the model
+  # can hold this many; a model whose own window is smaller (8k) is refused:
+  # no posting is sent to it, the run falls back to keyword scoring, and
+  # `rolescan scan` exits 3.
   # num_ctx: 12288
   # An answer whose token counts show the prompt was cut is an error, not
   # facts. Set false only if your Ollama counts just the uncached part of a

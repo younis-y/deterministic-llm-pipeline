@@ -266,10 +266,11 @@ prompt, the examples and one posting). rolescan asks Ollama for
 scan that the model can hold that many, and treats an answer whose token
 counts show the prompt was cut as an error rather than as facts. Raise
 `llm.num_ctx` if you add many more examples. A model whose own window is
-smaller than `llm.num_ctx` (an 8k one, under the default) is refused and the
-run falls back to keyword scoring; lower `llm.num_ctx` to its window, or
-choose a longer one. If your Ollama counts only the uncached part of a prompt,
-every call would look cut: set `llm.check_truncation: false`.
+smaller than `llm.num_ctx` (an 8k one, under the default) is refused: no
+posting is sent to it, the run falls back to keyword scoring and exits 3;
+lower `llm.num_ctx` to its window, or choose a longer one. If your Ollama
+counts only the uncached part of a prompt, every call would look cut: set
+`llm.check_truncation: false`.
 
 Facts are cached as the model gave them, per posting text and per
 fingerprint of everything that decides the answer (the prompt, your summary,
@@ -359,10 +360,11 @@ as the last real run's digest. `unsee` takes a posting's URL (as the digest
 prints it) or its uid and removes it from the seen list, so the next scan can
 report it again.
 
-`rolescan scan` exits 0 when the run did its job, 1 when the email failed or
-the day's backup failed its check, 2 for a config error, 3 when LLM scoring
-failed as a whole (the digest, written and sent anyway, says why), and 4
-when another run is using the same store. The store gets a checked copy in
+`rolescan scan` tells a scheduler how the run went. Exit status: 0 ok; 1
+email failed, the day's backup failed its check, or the store was written by
+a newer rolescan (takes precedence over 3); 2 config error; 3 LLM scoring
+failed as a whole (after the digest was written and sent); 4 another run
+holds the store's lock. The digest says why. The store gets a checked copy in
 `backups/` beside it once a day (`output.backup_keep`, default 7), and its
 caches are trimmed after each real scan (`output.retention_days`).
 

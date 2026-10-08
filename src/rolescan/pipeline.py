@@ -472,8 +472,11 @@ def _read_shape(entry: SourceEntry) -> str:
     returns far fewer rows by design. Compared with a history of the whole
     board, that reads as a collapse and raises the shrink alarm for a week, so
     the options are part of the history key and narrowing starts a fresh
-    baseline. An option that is unset or empty adds nothing, so every key
-    written before 2.5.8, and every board with no such option, is unchanged.
+    baseline. An option that is unset or empty adds nothing, so a key written
+    before 2.5.8 is unchanged only for an entry that sets none of
+    `queries`, `exclude_pattern`, `applied_facets` and `search_text`. An
+    entry that already set Adzuna `queries` or an `exclude_pattern` gets a
+    new key at the upgrade, and its alarms start from a fresh history.
     """
     options = entry.options
     shaping = {k: options[k] for k in _READ_SHAPING_OPTIONS if options.get(k)}

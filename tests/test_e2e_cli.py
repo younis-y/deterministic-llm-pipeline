@@ -16,7 +16,7 @@ import respx
 from typer.testing import CliRunner
 
 from conftest import OLLAMA_MODEL, mock_ollama, plain
-from rolescan.cli import app
+from rolescan.cli import _SCAN_EXIT_STATUS, app
 from rolescan.models import Job, ScoredJob
 from rolescan.store import Store
 
@@ -73,6 +73,15 @@ def test_help_lists_every_command() -> None:
     assert result.exit_code == 0
     for command in ("scan", "discover", "sources", "show", "stats", "prune"):
         assert command in plain(result.output)
+
+
+def test_scan_help_and_the_readme_name_the_same_exit_statuses() -> None:
+    result = runner.invoke(app, ["scan", "--help"])
+    assert result.exit_code == 0
+    sentence = " ".join(_SCAN_EXIT_STATUS.split())
+    assert sentence in " ".join(plain(result.output).split())
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+    assert sentence in " ".join(readme.split())
 
 
 def test_missing_config_exits_cleanly(tmp_path: Path) -> None:
