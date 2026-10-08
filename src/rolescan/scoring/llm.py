@@ -421,6 +421,7 @@ class FitScorer:
         extra_prompt: str = "",
         model_digest: str = "",
         facts_cache: bool = True,
+        context_window: int | None = None,
     ) -> None:
         self.cfg = cfg
         self.profile = profile
@@ -436,6 +437,11 @@ class FitScorer:
         #: later be replayed as the answer of weights it never came from. The
         #: final verdict row is still written (2.5.8).
         self.facts_cache = facts_cache
+        #: The model's own context window as the run's preflight read it
+        #: (`backend_status`), or None. Handed to the judge this scorer
+        #: builds, so a backend that checks its answers' token counts checks
+        #: them against the window the server really runs (2.5.8).
+        self.context_window = context_window
         self._fingerprint: str | None = None
         #: Appended to SYSTEM verbatim. The seam for anything this library has
         #: no business knowing about - a caller with private context to add
@@ -543,6 +549,8 @@ class FitScorer:
         the keyword-only path works with no backend installed at all."""
         if self._judge is None:
             self._judge = get_judge(self.cfg.backend, self.cfg)
+            if self.context_window is not None:
+                self._judge.context_window = self.context_window
         return self._judge
 
     def _get_enricher(self) -> Enricher | None:

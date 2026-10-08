@@ -32,7 +32,11 @@ from rolescan.scoring import (
     score_keywords,
     unusable_enricher_reason,
 )
-from rolescan.scoring.judges import backend_status, served_model_digest
+from rolescan.scoring.judges import (
+    BackendStatus,
+    backend_status,
+    served_model_digest,
+)
 from rolescan.scoring.keyword import SYNTHETIC_PENALTIES
 from rolescan.sources import get_source
 from rolescan.sources.base import _REGISTRY, PostingCache, SourceSkipped
@@ -107,6 +111,13 @@ class ScanResult:
     read it (2.5.8). A row keyed on no weights could later be replayed as the
     answer of weights it never came from, so the run asks the model for every
     posting instead."""
+    llm_window_stop: bool = False
+    """The model's own context window is smaller than `llm.num_ctx`, so the
+    LLM stage did not run: no posting was sent to the model and every one
+    kept its keyword score (2.5.8). Not a probe to try past, as every other
+    `llm_unusable` reason is: Ollama never runs a model past its window, so
+    each prompt longer than it would be cut, with token counts that cannot
+    show the cut. `llm_unusable` names the two windows."""
     llm_unusable: str = ""
     """Why the configured judge could not be used at all, or "".
 
@@ -345,14 +356,14 @@ def deduplicate(jobs: list[Job]) -> list[Job]:
     return list(best.values())
 
 
-async def _preflight(cfg: Config) -> tuple[str, str, str]:
-    """(why the configured judge cannot be used at all, why the configured
-    enricher cannot be used, the served model's digest), each "" if it can
-    be used or is not known.
+async def _preflight(cfg: Config) -> tuple[BackendStatus, str]:
+    """(what the check learned about the configured judge: why it cannot be
+    used at all, the served model's digest and its context window; why the
+    configured enricher cannot be used, or "").
 
     Run before anything is fetched, so either kind of misconfiguration says
     so up front instead of surfacing later as a silently degraded digest.
-    Returned as two SEPARATE strings on purpose (round 2 of this task's
+    The two reasons are kept SEPARATE on purpose (round 2 of this task's
     review folded the enricher reason into the backend one, which then read
     as a broken judge backend everywhere `llm_unusable` is consulted -
     `assessed`'s `backend_broke`, the digest's "did not run at all"
@@ -375,7 +386,14 @@ async def _preflight(cfg: Config) -> tuple[str, str, str]:
             cfg.llm.enricher,
             enricher_reason,
         )
-    return backend_reason, enricher_reason, status.model_digest
+    return status, enricher_reason
+
+
+def _window_stops_scoring(cfg: Config, status: BackendStatus) -> bool:
+    """Whether the model's own window is below `llm.num_ctx`: the one
+    pre-scan reason the LLM stage does not run past (2.5.8)."""
+    window = status.context_window
+    return bool(status.reason) and window is not None and window < cfg.llm.num_ctx
 
 
 async def _settle_identity(cfg: Config, result: ScanResult) -> None:
@@ -390,11 +408,13 @@ async def _settle_identity(cfg: Config, result: ScanResult) -> None:
     the run's identity; a server that lists the model with no digest has none
     to report, and "" stands; if the list cannot be read at all, the identity
     is unknown and `facts_cache_skipped` turns the facts cache off for the run.
-    A backend with no digest to give (a hosted one) is never affected.
+    A backend with no digest to give (a hosted one) is never affected, nor a
+    run whose model window stopped scoring: it calls no model.
     """
     llm = cfg.llm
     if (
         result.llm_model_digest
+        or result.llm_window_stop
         or not result.llm_unusable
         or not llm.enabled
         or llm.mode != "facts"
@@ -564,23 +584,41 @@ async def _judge(
     candidates: list[ScoredJob],
     cfg: Config,
     store: Store,
+    result: ScanResult,
     *,
-    model_digest: str,
-    facts_cache: bool = True,
-) -> tuple[list[ScoredJob], FitScorer]:
+    context_window: int | None = None,
+) -> list[ScoredJob]:
     """LLM fit score, cached on the posting's content hash and the prompt's
-    fingerprint, which includes the served model's digest. `facts_cache` is
-    False when the run could not name the weights (see `_settle_identity`)."""
+    fingerprint, which includes the served model's digest; the run's LLM
+    figures are written onto `result`. The facts cache sits out when the run
+    could not name the weights (`facts_cache_skipped`, see
+    `_settle_identity`).
+
+    When the model's own window is below `llm.num_ctx`
+    (`result.llm_window_stop`) no scorer is built: every candidate keeps its
+    keyword score, nothing is scored, and `llm_failure` says why (2.5.8).
+    `context_window` is the window the preflight read, handed to the scorer's
+    judge so its token-count check uses the window the server really runs.
+    """
+    if result.llm_window_stop:
+        return candidates
     scorer = FitScorer(
         cfg.llm,
         cfg.profile,
         store,
         extra_prompt=cfg.llm.extra_prompt,
-        model_digest=model_digest,
-        facts_cache=facts_cache,
+        model_digest=result.llm_model_digest,
+        facts_cache=not result.facts_cache_skipped,
+        context_window=context_window,
     )
     judged = await scorer.score_all(candidates)
-    return judged, scorer
+    result.llm_calls = scorer.calls_made
+    result.llm_cached = sum(1 for s in judged if s.llm_cached)
+    result.llm_errors = scorer.errors
+    result.llm_error_detail = scorer.first_error
+    result.llm_scored = sum(1 for s in judged if s.fit is not None)
+    result.llm_breaker = scorer.tripped
+    return judged
 
 
 def assessed(
@@ -907,12 +945,13 @@ async def run_scan(
     result = ScanResult(
         dry_run=dry_run, llm_backend=cfg.llm.backend, llm_model=cfg.llm.model
     )
+    window: int | None = None
     if check_llm:
-        (
-            result.llm_unusable,
-            result.enricher_unusable,
-            result.llm_model_digest,
-        ) = await _preflight(cfg)
+        status, result.enricher_unusable = await _preflight(cfg)
+        result.llm_unusable = status.reason
+        result.llm_model_digest = status.model_digest
+        result.llm_window_stop = _window_stops_scoring(cfg, status)
+        window = status.context_window
         await _settle_identity(cfg, result)
 
     # The store opens BEFORE fetching, not after: the structured source needs
@@ -944,19 +983,7 @@ async def run_scan(
         if not dry_run:
             result.unread, thin = await _count_thin(thin, store, result.unread_after)
 
-        judged, scorer = await _judge(
-            candidates,
-            cfg,
-            store,
-            model_digest=result.llm_model_digest,
-            facts_cache=not result.facts_cache_skipped,
-        )
-        result.llm_calls = scorer.calls_made
-        result.llm_cached = sum(1 for s in judged if s.llm_cached)
-        result.llm_errors = scorer.errors
-        result.llm_error_detail = scorer.first_error
-        result.llm_scored = sum(1 for s in judged if s.fit is not None)
-        result.llm_breaker = scorer.tripped
+        judged = await _judge(candidates, cfg, store, result, context_window=window)
 
         result.reportable, result.hidden_blocked, overflow = _rank(judged, cfg)
         cut = {s.job.uid: s for s in overflow}
@@ -971,7 +998,7 @@ async def run_scan(
             result.to_record = assessed(
                 rejects,
                 judged,
-                backend_broke=bool(result.llm_unusable) or scorer.errors > 0,
+                backend_broke=bool(result.llm_unusable) or result.llm_errors > 0,
             ) + [(s, "thin_unread") for s in result.unread]
     return result
 

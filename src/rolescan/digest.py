@@ -544,6 +544,17 @@ def _llm_ran(result: ScanResult) -> bool:
     return bool(result.llm_scored)
 
 
+def _not_run_head(result: ScanResult) -> tuple[str, str]:
+    """(the lead, the rest) of the "LLM scoring did not run" note.
+
+    A model window below `llm.num_ctx` is one sentence with the fix in it
+    (2.5.8): the server is up and the model is pulled, so it must not read
+    like an outage. Every other reason follows "did not run at all"."""
+    if result.llm_window_stop:
+        return f"LLM scoring did not run: {result.llm_unusable}.", ""
+    return "LLM scoring did not run at all.", f"{result.llm_unusable}."
+
+
 def _llm_error_hint(result: ScanResult) -> _Frags:
     """One line naming the likely cause, for the backend that was configured.
 
@@ -604,8 +615,9 @@ def _failures(result: ScanResult) -> list[str]:
         # day. It is not one: every posting fell back to a keyword score, and
         # keyword scores are not calibrated against min_report_score, so this
         # digest is close to empty by construction rather than by market.
+        lead, rest = _not_run_head(result)
         lines += [
-            f"**LLM scoring did not run at all.** {result.llm_unusable}.",
+            f"**{lead}**" + (f" {rest}" if rest else ""),
             "",
             _md_frags(_KEYWORD_ONLY_FRAGS),
             "",
@@ -995,7 +1007,7 @@ def _llm_notes_html(result: ScanResult) -> list[str]:
     if result.llm_unusable and not _llm_ran(result):
         out.append(
             _note_html(
-                f"LLM scoring did not run at all. {result.llm_unusable}.",
+                " ".join(filter(None, _not_run_head(result))),
                 [_html_frags(_KEYWORD_ONLY_FRAGS)],
             )
         )

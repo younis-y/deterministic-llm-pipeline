@@ -555,8 +555,8 @@ async def test_preflight_reports_an_unknown_enricher_before_fetching(
             "enricher": "not-a-real-enricher",
         },
     )
-    backend_reason, enricher_reason, _digest = await _preflight(cfg)
-    assert backend_reason == "", "the backend itself is fine"
+    status, enricher_reason = await _preflight(cfg)
+    assert status.reason == "", "the backend itself is fine"
     assert "not-a-real-enricher" in enricher_reason
 
 

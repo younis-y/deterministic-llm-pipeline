@@ -16,13 +16,15 @@ import httpx
 import pytest
 import respx
 
-from rolescan.config import Config, LLMConfig
+from rolescan.config import Config, LLMConfig, ProfileConfig
 from rolescan.pipeline import run_scan
+from rolescan.scoring import FitScorer
 from rolescan.scoring.judges import (
     OllamaJudge,
     OllamaUsage,
     PromptTruncatedError,
     ollama_options,
+    ollama_usage,
 )
 
 CHAT = "http://localhost:11434/api/chat"
@@ -116,6 +118,37 @@ async def test_a_full_context_window_is_an_error() -> None:
 
     with pytest.raises(PromptTruncatedError, match="filled 12000 of the 12288"):
         await judge.facts("s" * 6000, "u")
+
+
+@respx.mock
+async def test_a_known_model_window_below_num_ctx_is_the_limit_checked() -> None:
+    """A server that caps the window at the model's own 8,192 reads about
+    8,000 tokens of a longer prompt: above the character floor, and below 97%
+    of a 12,288 `num_ctx`. Checked against the smaller of the two windows,
+    the cut shows."""
+    respx.post(CHAT).mock(return_value=_answer(prompt=8000, output=100))
+    judge = OllamaJudge(LLMConfig(enabled=True, backend="ollama"))
+    assert (await judge.facts("s" * 6000, "u")).fit_score == 70, "window unknown"
+
+    judge.context_window = 8192
+
+    with pytest.raises(PromptTruncatedError, match="filled 8100 of the 8192"):
+        await judge.facts("s" * 6000, "u")
+
+
+def test_a_window_larger_than_num_ctx_leaves_num_ctx_the_limit() -> None:
+    body = {"prompt_eval_count": 11000, "eval_count": 1000}
+
+    with pytest.raises(PromptTruncatedError, match="of the 12288"):
+        ollama_usage(body, prompt_chars=6000, num_ctx=12288, window=32768)
+
+
+def test_the_scorer_hands_the_preflight_window_to_its_judge() -> None:
+    cfg = LLMConfig(enabled=True, backend="ollama")
+    scorer = FitScorer(cfg, ProfileConfig(), context_window=8192)
+
+    assert scorer._get_judge().context_window == 8192
+    assert FitScorer(cfg, ProfileConfig())._get_judge().context_window is None
 
 
 @respx.mock

@@ -112,7 +112,12 @@ def ollama_options(cfg: LLMConfig, *, num_predict: int | None = None) -> dict[st
 
 
 def ollama_usage(
-    body: object, *, prompt_chars: int, num_ctx: int, check: bool = True
+    body: object,
+    *,
+    prompt_chars: int,
+    num_ctx: int,
+    check: bool = True,
+    window: int | None = None,
 ) -> OllamaUsage | None:
     """The usage an `/api/chat` answer reports; raises if the prompt was cut.
 
@@ -120,9 +125,14 @@ def ollama_usage(
     proxy in between): nothing can be checked then. Raises
     `PromptTruncatedError` when the server evaluated fewer prompt tokens
     than `prompt_chars` can hold (it dropped part of the prompt to fit), or
-    when prompt and answer together reached `_CONTEXT_HEADROOM` of
-    `num_ctx` (the window was full). Either way the answer was made without
-    the whole prompt, and its facts must not be trusted or cached.
+    when prompt and answer together reached `_CONTEXT_HEADROOM` of the
+    window (it was full). Either way the answer was made without the whole
+    prompt, and its facts must not be trusted or cached.
+
+    The window is `num_ctx`, or the model's own `window` when the preflight
+    read one and it is smaller: Ollama never runs a model past its own
+    window, so a server that quietly sized the request down to it is checked
+    against the window it really used.
 
     `check=False` (`llm.check_truncation: false`) returns the counts without
     judging them: the way out for a server whose `prompt_eval_count` does not
@@ -145,11 +155,17 @@ def ollama_usage(
             "cached, set llm.check_truncation: false."
         )
         raise PromptTruncatedError(msg)
-    if prompt + output >= _CONTEXT_HEADROOM * num_ctx:
+    limit = num_ctx if window is None else min(num_ctx, window)
+    if prompt + output >= _CONTEXT_HEADROOM * limit:
+        if limit < num_ctx:
+            source = f"the model's own, below llm.num_ctx ({num_ctx})"
+            fix = "Lower llm.num_ctx to it, or pick a larger model."
+        else:
+            source, fix = "llm.num_ctx", "Raise llm.num_ctx."
         msg = (
             f"ollama's prompt and answer filled {prompt + output} of the "
-            f"{num_ctx}-token context window (llm.num_ctx): the prompt may have "
-            "been cut, or the answer stopped short. Raise llm.num_ctx."
+            f"{limit}-token context window ({source}): the prompt may have "
+            f"been cut, or the answer stopped short. {fix}"
         )
         raise PromptTruncatedError(msg)
     return OllamaUsage(prompt_tokens=prompt, output_tokens=output)
@@ -193,6 +209,11 @@ class Judge(ABC):
     requires_module: ClassVar[str] = ""
     #: One line, shown by `rolescan backends`.
     description: ClassVar[str] = ""
+    #: The model's own context window in tokens, set by `preflight` when the
+    #: backend can tell (2.5.8), else None. `FitScorer` hands the window its
+    #: preflight read to the judge it builds; a backend that checks its
+    #: answers' token counts checks them against it.
+    context_window: int | None = None
 
     def __init__(self, cfg: LLMConfig) -> None:
         self.cfg = cfg
@@ -307,17 +328,29 @@ class BackendStatus:
     """Why it cannot score anything, or "" (see `unusable_backend_reason`)."""
     model_digest: str = ""
     """The served model's digest prefix, when the backend reports one."""
+    context_window: int | None = None
+    """The model's own context window in tokens, when the backend reports one
+    (Ollama does, in `/api/show`), else None. Kept when it is the reason the
+    backend cannot be used: a window below `llm.num_ctx` stops the LLM stage
+    of a scan outright, where every other reason is a probe that scoring
+    still tries past."""
 
 
 async def backend_status(cfg: LLMConfig) -> BackendStatus:
     """`unusable_backend_reason`, plus the model digest the check read.
 
     One preflight, so the digest costs no second request: Ollama's
-    `/api/tags`, which the liveness check already fetches, carries it.
+    `/api/tags`, which the liveness check already fetches, carries it. The
+    model's context window comes from the same check (`/api/show`).
     """
     reason, judge = await _check_backend(cfg)
     digest = getattr(judge, "model_digest", "") if judge is not None else ""
-    return BackendStatus(reason=reason, model_digest=digest if not reason else "")
+    window = getattr(judge, "context_window", None) if judge is not None else None
+    return BackendStatus(
+        reason=reason,
+        model_digest=digest if not reason else "",
+        context_window=window if isinstance(window, int) else None,
+    )
 
 
 async def unusable_backend_reason(cfg: LLMConfig) -> str:
@@ -712,6 +745,7 @@ class OllamaJudge(Judge):
             prompt_chars=len(system) + len(user),
             num_ctx=self.cfg.num_ctx,
             check=self.cfg.check_truncation,
+            window=self.context_window,
         )
         # Both layers are checked, not just the outer one. A body of
         # {"message": "hello"} is JSON, is a dict, and raises AttributeError
@@ -851,11 +885,12 @@ class OllamaJudge(Judge):
 
         `/api/show` reports the window the model was built for, as
         `<architecture>.context_length` in `model_info` (32,768 for
-        qwen2.5:14b). Ollama never runs a model past it, so a larger
-        `num_ctx` is a window the server will not provide, and a prompt longer
-        than the real one is cut. A server that cannot answer (an older
-        Ollama, a proxy) is not checked: this is a guard, not a new way for
-        the scan to fail.
+        qwen2.5:14b), kept on `context_window`. Ollama never runs a model past
+        it, so a larger `num_ctx` is a window the server will not provide, and
+        a prompt longer than the real one is cut with token counts that
+        cannot show it: a scan does not score at all on this reason. A server
+        that cannot answer (an older Ollama, a proxy) is not checked: this is
+        a guard, not a new way for the scan to fail.
         """
         url = f"{self.cfg.base_url.rstrip('/')}/api/show"
         try:
@@ -868,13 +903,12 @@ class OllamaJudge(Judge):
             return ""
         info = body.get("model_info") if isinstance(body, dict) else None
         window = _model_window(info) if isinstance(info, dict) else None
+        self.context_window = window
         if window is None or window >= self.cfg.num_ctx:
             return ""
         return (
-            f"model {self.cfg.model!r} has a {window}-token context window, "
-            f"smaller than llm.num_ctx ({self.cfg.num_ctx}), so Ollama would cut "
-            f"longer prompts to fit. Set llm.num_ctx to {window} or less, or "
-            "choose a model with a longer window."
+            f"the model's context window ({window}) is below llm.num_ctx "
+            f"({self.cfg.num_ctx}); lower llm.num_ctx or pick a larger model"
         )
 
 
