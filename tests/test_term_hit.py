@@ -37,6 +37,7 @@ def _reference(term: str, blob: str) -> bool:
         ("10+ years", "10+ years of experience", True),
         ("military", "", False),
         ("sql", "SQL and Python", False),
+        ("café", "CAFÉ latte", False),
     ],
 )
 def test_the_precheck_changes_no_answer(term: str, blob: str, hit: bool) -> None:

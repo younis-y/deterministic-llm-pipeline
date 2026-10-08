@@ -433,6 +433,7 @@ async def test_llm_failure_is_surfaced_not_silently_downgraded(
     assert sent == ["/v1/messages"], "the injected transport answered, once"
     assert result.llm_errors == 1, "the scan must count scoring failures"
     assert "AuthenticationError" in result.llm_error_detail
+    assert "API key is invalid" in result.llm_error_detail
     text = render_markdown(result)
     assert "scoring failed" in text.casefold(), text
 
