@@ -327,6 +327,29 @@ async def test_a_server_that_reports_no_digest_keeps_its_cache(tmp_path: Path) -
 
 
 @respx.mock
+async def test_a_healthy_probe_with_no_digest_field_is_not_read_again(
+    tmp_path: Path,
+) -> None:
+    """The longer re-read of the model list is for a probe that reported a
+    problem. A probe that answered, listing the model with no digest, is
+    healthy: re-reading would only ask the same server the same question, so
+    each run makes exactly one `/api/tags` request."""
+    _mock_board_and_chat()
+    tags = respx.get("http://localhost:11434/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": "m:1"}]})
+    )
+    cfg = _ollama_cfg(tmp_path)
+
+    result = await run_scan(cfg, dry_run=True)
+
+    assert not result.llm_unusable and result.llm_model_digest == ""
+    assert tags.call_count == 1
+
+    await run_scan(cfg, dry_run=True)
+    assert tags.call_count == 2, "one probe per run, no second read"
+
+
+@respx.mock
 async def test_a_backend_that_names_no_digest_is_unaffected(tmp_path: Path) -> None:
     """A hosted backend has no digest to read and makes no request to look
     for one (any unmocked request would fail this test)."""
