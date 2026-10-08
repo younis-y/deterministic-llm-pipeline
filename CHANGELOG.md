@@ -2,6 +2,13 @@
 
 All notable changes to rolescan. Newest first.
 
+## 2.5.9
+
+### Fixed
+- Hosted backends: `AnthropicJudge` now sends `llm.temperature` (default 0.0) on every call through the SDK's `extra_body`; before this, Anthropic sampling ran at the API default while Ollama honoured the setting. The SDK's `create`/`parse` take no `temperature` keyword in current versions; passing one raises TypeError, which the test client now mirrors.
+- A model that refuses the parameter is not sent it again: the API answers 400 ("`temperature` is deprecated for this model") on `claude-sonnet-5`, the default `llm.model`, and on `claude-sonnet-5-5`. The call is made again without it, once, the judge stops sending it, and the log says so once. Sampling on such a model is the API's, not `llm.temperature`'s.
+- Facts-mode verdicts and facts cached before this release were sampled at the API default. Their cache key already carried `llm.temperature`, which did not change, so they stay valid until `llm.cache_days` expires them (a judge-mode verdict is keyed on the posting's content hash alone, and stays valid for the same reason).
+
 ## 2.5.8
 
 ### Added
