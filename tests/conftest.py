@@ -13,6 +13,7 @@ import respx
 from rolescan.config import Config, ProfileConfig
 from rolescan.models import Job
 from rolescan.pipeline import ScanResult, record_scan, run_scan
+from rolescan.scoring import judges
 
 FIXTURE_CONFIG = """
 profile:
@@ -72,6 +73,22 @@ def mock_ollama(
     respx.get(f"{base_url}/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": model}]})
     )
+    mock_ollama_show(base_url)
+
+
+def mock_ollama_show(
+    base_url: str = "http://localhost:11434", context_length: int = 32768
+) -> respx.Route:
+    """Route the preflight's `/api/show` at a model with `context_length`.
+
+    2.5.8: the preflight reads the model's own context window once the model
+    is found in `/api/tags`, so every test that mocks a healthy server mocks
+    this too, or respx refuses the unrouted call."""
+    return respx.post(f"{base_url}/api/show").mock(
+        return_value=httpx.Response(
+            200, json={"model_info": {"qwen2.context_length": context_length}}
+        )
+    )
 
 
 #: Credentials the library reads straight from the environment. Cleared for
@@ -118,6 +135,13 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
         raise socket.gaierror(msg)
 
     monkeypatch.setattr(socket, "getaddrinfo", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Ollama judge waits `RETRY_DELAY` seconds before its one retry; a
+    test that exercises a 5xx or a timeout should not."""
+    monkeypatch.setattr(judges, "RETRY_DELAY", 0.0)
 
 
 @pytest.fixture

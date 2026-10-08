@@ -21,7 +21,8 @@ from rolescan.pipeline import ScanResult, record_scan, run_scan
 from rolescan.slugs import SlugIndex
 from rolescan.sources import available, get_source
 from rolescan.sources.base import ProbeResult, ProbeStatus
-from rolescan.store import Store
+from rolescan.store import PruneReport, Store, StoreTooNewError, refuse_a_newer_store
+from rolescan.storefile import BackupError, RunLockedError, backup, run_lock
 
 app = typer.Typer(
     add_completion=False,
@@ -90,6 +91,22 @@ def _load(path: Path) -> Config:
         raise typer.Exit(2) from e
 
 
+def _refuse_a_newer_store(db_path: Path) -> None:
+    """Exit 1 with the message, before anything is copied or opened, when the
+    store was written by a newer rolescan (2.5.8).
+
+    Before the backup on purpose: the day's copy would rotate out the oldest,
+    and after `backup_keep` such days the copy taken before the upgrade, the
+    one the message points at, would be gone."""
+    try:
+        refuse_a_newer_store(db_path)
+    except StoreTooNewError as e:
+        console.print(
+            f"[bold red]{e}[/]\n[dim]Nothing was changed, and no copy was taken.[/]"
+        )
+        raise typer.Exit(1) from e
+
+
 def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
     """The loudest thing this command prints, deliberately.
 
@@ -106,9 +123,16 @@ def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
             "[dim]Postings are scored normally, just without that extra "
             "step.[/]\n"
         )
+    if result.facts_cache_skipped:
+        console.print(
+            "\n[yellow]Facts cache skipped: model identity unknown.[/] "
+            "[dim]The model's digest could not be read, so cached facts were "
+            "neither used nor written this run and every posting was sent to "
+            "the model.[/]\n"
+        )
     if not result.llm_unusable:
         return
-    if not (result.llm_calls or result.llm_cached):
+    if not result.llm_scored:
         console.print(
             f"\n[bold red]LLM scoring did not run: {result.llm_unusable}.[/]\n"
             "[bold red]Every posting was ranked on keyword score alone, "
@@ -126,7 +150,8 @@ def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
     console.print(
         f"\n[yellow]The pre-scan backend check failed "
         f"({result.llm_unusable}), but scoring ran anyway: "
-        f"{result.llm_calls} scored, {result.llm_cached} from cache.[/]\n"
+        f"{result.llm_scored - result.llm_cached} scored, "
+        f"{result.llm_cached} from cache.[/]\n"
         "[dim]The liveness probe is deliberately short so an unattended "
         "run cannot hang on it; a loaded server can exceed it.[/]\n"
     )
@@ -174,7 +199,16 @@ def _deliver(
         raise typer.Exit(1) from e
 
 
-@app.command()
+#: Shown under `rolescan scan --help`; README.md lists the same codes.
+_SCAN_EXIT_STATUS = (
+    "Exit status: 0 ok; 1 email failed, the day's backup failed its check, or "
+    "the store was written by a newer rolescan (takes precedence over 3); "
+    "2 config error; 3 LLM scoring failed as a whole (after the digest was "
+    "written and sent); 4 another run holds the store's lock."
+)
+
+
+@app.command(epilog=_SCAN_EXIT_STATUS)
 def scan(
     config: ConfigOpt = Path("config.yaml"),
     dry: Annotated[
@@ -195,10 +229,38 @@ def scan(
     cfg = _load(config)
     if no_llm:
         cfg.llm.enabled = False
+    db_path = cfg.resolve(cfg.output.db_path)
+    try:
+        with run_lock(db_path):
+            _scan(cfg, config, dry=dry, no_llm=no_llm, email=email)
+    except RunLockedError as e:
+        # Exit 4, not 0: the run did not happen, and a wrapper (launchd, a
+        # scheduler) must be able to tell that from a quiet day.
+        console.print(f"[yellow]{e}[/]")
+        raise typer.Exit(4) from e
+
+
+def _scan(cfg: Config, config: Path, *, dry: bool, no_llm: bool, email: bool) -> None:
+    """`scan`'s body, run while this process holds the store's run lock."""
+    db_path = cfg.resolve(cfg.output.db_path)
+    _refuse_a_newer_store(db_path)
+    if cfg.output.backup_keep:
+        try:
+            backup(db_path, keep=cfg.output.backup_keep)
+        except BackupError as e:
+            # The copy failed its integrity check or could not be written:
+            # either way this is the moment to stop writing to the store, not
+            # to carry on and rotate out the last good copy.
+            console.print(
+                f"[bold red]{e}[/]\n[dim]Nothing was scanned. Restore a copy "
+                f"from {db_path.parent / 'backups'}, or free disk space, then "
+                "run again.[/]"
+            )
+            raise typer.Exit(1) from e
 
     async def _go() -> tuple[ScanResult, list[tuple[str, str, str]]]:
         result = await run_scan(cfg, dry_run=dry, check_llm=not no_llm)
-        async with Store(cfg.resolve(cfg.output.db_path)) as store:
+        async with Store(db_path) as store:
             shortlist_rows = await store.shortlist()
         return result, shortlist_rows
 
@@ -225,6 +287,13 @@ def scan(
     # exception while drawing it to the terminal must not leave its postings
     # unrecorded and reported again tomorrow.
     asyncio.run(record_scan(cfg, result))
+    if not dry:
+        try:
+            asyncio.run(_prune(cfg))
+        except Exception as e:
+            # The digest is written and its postings recorded; a cache trim
+            # that fails must not turn a delivered run into a failed one.
+            console.print(f"[yellow]could not trim old caches: {e}[/]")
 
     console.print(Markdown(text))
     console.print(f"\n[dim]written to {path}[/]")
@@ -233,6 +302,12 @@ def scan(
         console.print(_ranked_table(result))
 
     _deliver(text, html_body, cfg, path, email=email)
+
+    if failure := result.llm_failure:
+        # After the digest is written, recorded and sent: the digest says
+        # what happened, and the exit status says it to whatever ran us.
+        console.print(f"[bold red]{failure}.[/] [dim]Exit status 3.[/]")
+        raise typer.Exit(3)
 
 
 def _probe_table(rows: list[tuple[SourceEntry, ProbeResult]]) -> Table:
@@ -436,21 +511,81 @@ def stats(config: ConfigOpt = Path("config.yaml")) -> None:
     console.print(f"{asyncio.run(go())} postings recorded.")
 
 
+def _verdict_retention(cfg: Config) -> int:
+    """Days a cached verdict is kept by an automatic or configured trim; 0
+    keeps them all.
+
+    Never less than `llm.cache_days`: a verdict younger than that is still a
+    valid cache hit, and trimming it would make the next scan pay for the
+    same answer again. So it is `max(retention_days.verdicts, cache_days)`,
+    and `cache_days: 0` (a verdict never expires) means none is trimmed.
+    `rolescan prune --days N` is an explicit request and bypasses this.
+    """
+    keep, cache = cfg.output.retention_days.verdicts, cfg.llm.cache_days
+    return 0 if keep == 0 or cache == 0 else max(keep, cache)
+
+
+async def _prune(cfg: Config, *, verdicts_days: int | None = None) -> PruneReport:
+    """Trim the store's caches to `output.retention_days`."""
+    keep = cfg.output.retention_days
+    async with Store(cfg.resolve(cfg.output.db_path)) as store:
+        return await store.prune_all(
+            postings_days=keep.postings,
+            deferred_days=keep.deferred,
+            verdicts_days=(
+                _verdict_retention(cfg) if verdicts_days is None else verdicts_days
+            ),
+        )
+
+
 @app.command()
 def prune(
     config: ConfigOpt = Path("config.yaml"),
     days: Annotated[
-        int, typer.Option(help="Drop cached verdicts older than this.")
-    ] = 180,
+        int | None,
+        typer.Option(
+            min=1,
+            help="Drop cached verdicts older than this, whatever llm.cache_days "
+            "says (default: output.retention_days.verdicts, never less than "
+            "llm.cache_days).",
+        ),
+    ] = None,
 ) -> None:
-    """Drop stale cached LLM verdicts."""
+    """Trim old caches: verdicts, postings, deferral counts, source counts."""
     cfg = _load(config)
+    try:
+        with run_lock(cfg.resolve(cfg.output.db_path)):
+            _refuse_a_newer_store(cfg.resolve(cfg.output.db_path))
+            report = asyncio.run(_prune(cfg, verdicts_days=days))
+    except RunLockedError as e:
+        console.print(f"[yellow]{e}[/]")
+        raise typer.Exit(4) from e
+    console.print(
+        f"Removed {report.verdicts} cached verdicts, {report.postings} cached "
+        f"postings, {report.deferred} deferral counts and {report.source_counts} "
+        "old source counts" + ("; the file was compacted." if report.vacuumed else ".")
+    )
 
-    async def go() -> int:
-        async with Store(cfg.resolve(cfg.output.db_path)) as store:
-            return await store.prune(days)
 
-    console.print(f"Removed {asyncio.run(go())} cached verdicts.")
+@app.command("backup")
+def backup_store(config: ConfigOpt = Path("config.yaml")) -> None:
+    """Copy the store to backups/ beside it, checked with integrity_check.
+
+    Keeps the newest output.backup_keep daily copies. With backup_keep: 0 the
+    scan takes no copy of its own, and this command copies on demand and never
+    deletes one."""
+    cfg = _load(config)
+    db_path = cfg.resolve(cfg.output.db_path)
+    _refuse_a_newer_store(db_path)
+    try:
+        path = backup(db_path, keep=cfg.output.backup_keep, force=True)
+    except BackupError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from e
+    if path is None:
+        console.print(f"[yellow]No store at {db_path} yet: nothing to back up.[/]")
+        return
+    console.print(f"Backed up to {path} (integrity_check ok).")
 
 
 @app.command()

@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable
+from typing import TYPE_CHECKING, TypeVar
 
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
@@ -38,7 +40,15 @@ from rolescan.scoring.rules import decide
 if TYPE_CHECKING:
     from rolescan.store import Store
 
-__all__ = ["SYSTEM_FACTS", "FitScorer", "cache_key", "final_key"]
+__all__ = [
+    "FACTS_KEY_VERSION",
+    "SYSTEM_FACTS",
+    "FitScorer",
+    "cache_key",
+    "final_key",
+    "finish_facts",
+    "prompt_fingerprint",
+]
 
 #: A verdict worth doing extra work for. `skip` and `blocked` never reach an
 #: enricher, whatever their score - and `decide` always caps their score just
@@ -49,6 +59,14 @@ __all__ = ["SYSTEM_FACTS", "FitScorer", "cache_key", "final_key"]
 _ENRICHABLE_VERDICTS = frozenset({Verdict.APPLY, Verdict.CONSIDER})
 
 log = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+#: Model calls in a row that may fail before the scorer stops calling (2.5.8).
+#: A wedged Ollama runner accepts the connection and never answers, so each
+#: call waits out `llm.timeout`: 250 candidates at 120 s took 8.3 hours to
+#: finish with every posting errored. Five in a row is not a bad posting.
+BREAKER_AFTER = 5
 
 # Three things about this prompt that are easy to "tidy" into a defect.
 #
@@ -227,7 +245,58 @@ List up to 8 keywords_missing: skills or tools the posting asks for that are \
 not evidenced for this candidate."""
 
 
-def cache_key(job: Job, mode: str, cfg: LLMConfig, *, examples_digest: str = "") -> str:
+#: The facts cache's payload version. Bumped by hand only when what a row
+#: HOLDS changes meaning; everything that changes what the model is asked is
+#: in `prompt_fingerprint` and moves the key by itself (2.5.8).
+FACTS_KEY_VERSION = "facts-v14"
+
+
+def prompt_fingerprint(system: str, cfg: LLMConfig, *, model_digest: str = "") -> str:
+    """12 hex characters naming everything that decides the model's answer.
+
+    The rendered system prompt (instructions, the candidate summary and any
+    worked examples, exactly as sent), the user template, the facts schema,
+    the served model's digest, and the settings that change what the model
+    sees or how it samples: `num_ctx`, `description_chars`, `temperature`.
+    Until 2.5.8 the key carried a hand-bumped version and the examples only:
+    editing `SYSTEM_FACTS` or the summary replayed facts made for the old
+    prompt for `cache_days` (measured 2026-10-07: a fit score judged against
+    a data-engineering summary served unchanged to a finance one).
+    """
+    parts = (
+        system,
+        USER_FACTS,
+        json.dumps(PostingFacts.model_json_schema(), sort_keys=True),
+        model_digest,
+        str(cfg.num_ctx),
+        str(cfg.description_chars),
+        repr(cfg.temperature),
+    )
+    return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()[:12]
+
+
+def finish_facts(raw: PostingFacts, job: Job) -> PostingFacts:
+    """The model's raw facts, verified against the advert and resolved.
+
+    `verify_facts` drops what the advert does not say; the five resolvers
+    then correct and fill from the advert's own words. Pure and cheap, so it
+    runs on every read of the cache as well as after every call (2.5.8):
+    a resolver fix reaches cached postings on the next run, where it used to
+    cost a cache bump and a 40-minute re-score of the evaluation set.
+    """
+    verified = verify_facts(raw, job)
+    facts = resolve_hard_bars(resolve_years(verified, job), job)
+    return resolve_field(resolve_level(resolve_student(facts, job), job), job)
+
+
+def cache_key(
+    job: Job,
+    mode: str,
+    cfg: LLMConfig,
+    *,
+    fingerprint: str = "",
+    examples_digest: str = "",
+) -> str:
     """The verdict-cache key for this posting under this scoring mode.
 
     Facts mode and judge mode ask a different question of the same posting
@@ -297,9 +366,21 @@ def cache_key(job: Job, mode: str, cfg: LLMConfig, *, examples_digest: str = "")
     v13 (2.5.7): student alternative routes, range low end, graduation word,
     field rows, nationalities. A v12 row could replay a resolver verdict the
     corrected passes would no longer give.
+    v14 (2.5.8) changes what a row is: the model's RAW facts, before
+    `verify_facts` and the resolvers, which now run on every read
+    (`finish_facts`). So a resolver change needs no bump any more, and the
+    key ends in `fingerprint` (`prompt_fingerprint`: prompt, summary,
+    examples, schema, model digest, `num_ctx`, `description_chars`,
+    `temperature`), so a prompt edit moves the key by itself. A v13 row holds
+    resolved facts and must not be resolved twice. The fingerprint covers
+    the worked examples, so `FitScorer` passes only the fingerprint;
+    `examples_digest` keeps its `:ex-<digest>` suffix for a caller that
+    builds a key with no fingerprint, and is ignored when one is given.
     """
     if mode == "facts":
-        key = f"{job.content_hash}:facts-v13:{cfg.backend}:{cfg.model}"
+        key = f"{job.content_hash}:{FACTS_KEY_VERSION}:{cfg.backend}:{cfg.model}"
+        if fingerprint:
+            return f"{key}:{fingerprint}"
         return f"{key}:ex-{examples_digest}" if examples_digest else key
     return job.content_hash
 
@@ -308,7 +389,8 @@ def final_key(job: Job) -> str:
     """The cache key for the FINISHED verdict: after `decide`, and after any
     enricher.
 
-    `cache_key` in facts mode deliberately holds the verified `PostingFacts`,
+    `cache_key` in facts mode deliberately holds the model's raw
+    `PostingFacts` (verified and resolved on every read, `finish_facts`),
     not a verdict, so that a `rules` or `min_report_score` change is applied
     to every cached posting for free on the next run rather than replaying a
     verdict frozen under whatever was configured when the row was written
@@ -337,10 +419,30 @@ class FitScorer:
         store: Store | None = None,
         *,
         extra_prompt: str = "",
+        model_digest: str = "",
+        facts_cache: bool = True,
+        context_window: int | None = None,
     ) -> None:
         self.cfg = cfg
         self.profile = profile
         self.store = store
+        #: The served model's digest prefix (`backend_status`), part of the
+        #: facts cache key: re-pulled weights under the same tag must not be
+        #: served facts the old weights made (2.5.8). "" when the backend
+        #: reports none.
+        self.model_digest = model_digest
+        #: False when the run could not say which weights it is talking to
+        #: although the backend normally reports them: the facts cache is then
+        #: neither read nor written, because a row keyed on no weights could
+        #: later be replayed as the answer of weights it never came from. The
+        #: final verdict row is still written (2.5.8).
+        self.facts_cache = facts_cache
+        #: The model's own context window as the run's preflight read it
+        #: (`backend_status`), or None. Handed to the judge this scorer
+        #: builds, so a backend that checks its answers' token counts checks
+        #: them against the window the server really runs (2.5.8).
+        self.context_window = context_window
+        self._fingerprint: str | None = None
         #: Appended to SYSTEM verbatim. The seam for anything this library has
         #: no business knowing about - a caller with private context to add
         #: supplies it here rather than teaching the public prompt its
@@ -354,6 +456,8 @@ class FitScorer:
         self._calls = 0
         self._errors = 0
         self._first_error = ""
+        self._failures_in_a_row = 0
+        self._tripped = False
         self._judge: Judge | None = None
         self._enricher: Enricher | None = None
         #: Whether `_get_enricher` has already resolved `cfg.enricher`. Built
@@ -404,11 +508,49 @@ class FitScorer:
     def first_error(self) -> str:
         return self._first_error
 
+    @property
+    def tripped(self) -> bool:
+        """Whether `BREAKER_AFTER` calls in a row failed, so the scorer
+        stopped calling the model and deferred the rest of the run (2.5.8)."""
+        return self._tripped
+
+    async def _counted(self, call: Awaitable[_T]) -> _T:
+        """Await one model call, tracking failures in a row for the breaker.
+
+        The exception still propagates: `score_all` counts it as an error and
+        the posting stays unrecorded, exactly as before the breaker existed.
+        A success resets the run of failures."""
+        try:
+            out = await call
+        except Exception:
+            self._failures_in_a_row += 1
+            if self._failures_in_a_row >= BREAKER_AFTER and not self._tripped:
+                self._tripped = True
+                log.warning(
+                    "%d LLM calls failed in a row; no more calls this run, "
+                    "the remaining postings are deferred to the next one",
+                    self._failures_in_a_row,
+                )
+            raise
+        self._failures_in_a_row = 0
+        return out
+
+    def _stop_reason(self) -> str:
+        """Why no model call may start now ("llm_breaker", "llm_ceiling"),
+        or "" when one may."""
+        if self._tripped:
+            return "llm_breaker"
+        if self._calls >= self.cfg.max_calls_per_run:
+            return "llm_ceiling"
+        return ""
+
     def _get_judge(self) -> Judge:
         """Built lazily so importing rolescan never costs an SDK import, and so
         the keyword-only path works with no backend installed at all."""
         if self._judge is None:
             self._judge = get_judge(self.cfg.backend, self.cfg)
+            if self.context_window is not None:
+                self._judge.context_window = self.context_window
         return self._judge
 
     def _get_enricher(self) -> Enricher | None:
@@ -458,7 +600,12 @@ class FitScorer:
         against `self.errors`, and never a reason to drop the posting.
         Enrichment is additive, not load-bearing for whether a posting is
         reported at all.
+
+        A scorer whose breaker has tripped makes no model call of any kind,
+        enrichment included: the plain verdict stands (2.5.8).
         """
+        if self._tripped:
+            return verdict
         enricher = self._get_enricher()
         if enricher is None:
             return verdict
@@ -467,6 +614,11 @@ class FitScorer:
         if verdict.fit_score < self.profile.min_report_score:
             return verdict
         async with self._sem:
+            # Re-checked here: the breaker may trip while this waits its turn.
+            # Through the property, so the type checker does not read the
+            # guard above as proof that the flag is still false.
+            if self.tripped:
+                return verdict
             if self._calls >= self.cfg.max_calls_per_run:
                 log.info(
                     "LLM call ceiling reached, skipping enrichment for %r",
@@ -510,16 +662,14 @@ class FitScorer:
         return f"{system}\n\n{examples}" if examples else system
 
     def _facts_cache_key(self, job: Job) -> str:
-        """`cache_key` for facts mode, naming the worked examples in use.
-
-        The digest covers the rendered block, so editing any example (or
-        removing the file) stops cached facts extracted under the old
-        examples from being replayed. With no examples the key is the plain
-        `cache_key`, unchanged.
-        """
-        examples = self._facts_examples()
-        digest = hashlib.sha256(examples.encode()).hexdigest()[:12] if examples else ""
-        return cache_key(job, "facts", self.cfg, examples_digest=digest)
+        """`cache_key` for facts mode, ending in this scorer's
+        `prompt_fingerprint` (computed once: the prompt is fixed for the
+        scorer's life, as the examples are)."""
+        if self._fingerprint is None:
+            self._fingerprint = prompt_fingerprint(
+                self.facts_system_prompt(), self.cfg, model_digest=self.model_digest
+            )
+        return cache_key(job, "facts", self.cfg, fingerprint=self._fingerprint)
 
     def _system(self) -> str:
         return SYSTEM.format(
@@ -568,26 +718,26 @@ class FitScorer:
                 return scored.model_copy(update={"fit": cached, "llm_cached": True})
 
         async with self._sem:
-            if self._calls >= self.cfg.max_calls_per_run:
-                log.info(
-                    "LLM call ceiling reached, deferring %r to the next run", job.title
-                )
-                return scored.model_copy(update={"deferred": "llm_ceiling"})
+            if stop := self._stop_reason():
+                log.info("%s: deferring %r to the next run", stop, job.title)
+                return scored.model_copy(update={"deferred": stop})
             self._calls += 1
-            verdict = await self._call_judge(scored)
+            verdict = await self._counted(self._call_judge(scored))
 
         if self.store is not None:
             await self.store.put_verdict(key, verdict)
         return scored.model_copy(update={"fit": verdict})
 
     async def _score_one_facts(self, scored: ScoredJob) -> ScoredJob:
-        """Facts mode's cache holds the VERIFIED `PostingFacts`, not the
+        """Facts mode's cache holds the model's RAW `PostingFacts`, not the
         post-rules `FitVerdict` `decide()` makes from them.
 
-        `rules` and `min_report_score` live in `self.profile`, read fresh on
-        every call, so a cache hit is re-decided under whatever is configured
-        NOW rather than replaying a verdict frozen under whatever was
-        configured when the row was written. That is what lets a rules
+        `finish_facts` (verification and the resolvers) and `decide` run on
+        every read, so a resolver fix reaches cached postings on the next
+        run. `rules` and `min_report_score` live in `self.profile`, read
+        fresh on every call, so a cache hit is re-decided under whatever is
+        configured NOW rather than replaying a verdict frozen under whatever
+        was configured when the row was written. That is what lets a rules
         change (or a `min_report_score` change) apply to every posting
         already in cache at zero extra model calls, and what stops a rule
         skip's score cap from going stale if the gate moves after the row was
@@ -597,11 +747,10 @@ class FitScorer:
         job = scored.job
         key = self._facts_cache_key(job)
 
-        if self.store is not None:
-            cached_facts = await self.store.get_verdict(
-                key, self.cfg.cache_days, PostingFacts
-            )
-            if cached_facts is not None:
+        if self.store is not None and self.facts_cache:
+            raw = await self.store.get_verdict(key, self.cfg.cache_days, PostingFacts)
+            if raw is not None:
+                cached_facts = finish_facts(raw, job)
                 self.last_facts[job.url] = cached_facts
                 verdict = decide(
                     cached_facts,
@@ -615,17 +764,18 @@ class FitScorer:
                 return scored.model_copy(update={"fit": verdict, "llm_cached": True})
 
         async with self._sem:
-            if self._calls >= self.cfg.max_calls_per_run:
-                log.info(
-                    "LLM call ceiling reached, deferring %r to the next run", job.title
-                )
-                return scored.model_copy(update={"deferred": "llm_ceiling"})
+            if stop := self._stop_reason():
+                log.info("%s: deferring %r to the next run", stop, job.title)
+                return scored.model_copy(update={"deferred": stop})
             self._calls += 1
-            facts = await self._call_facts(scored)
+            raw = await self._counted(self._call_facts(scored))
 
+        # The RAW facts are cached; verification and the resolvers run on
+        # every read, so a resolver fix reaches this row without a re-call.
+        if self.store is not None and self.facts_cache:
+            await self.store.put_verdict(key, raw)
+        facts = finish_facts(raw, job)
         self.last_facts[job.url] = facts
-        if self.store is not None:
-            await self.store.put_verdict(key, facts)
         verdict = decide(
             facts,
             self.profile.rules,
@@ -654,10 +804,9 @@ class FitScorer:
         judge = self._get_judge()
         # One call, always: Call 1 is already short, so the cascade - built to
         # skip generating prose for a role that will not clear the gate - buys
-        # nothing here, and facts mode never runs it.
-        verified = verify_facts(await judge.facts(system, user), job)
-        facts = resolve_hard_bars(resolve_years(verified, job), job)
-        return resolve_field(resolve_level(resolve_student(facts, job), job), job)
+        # nothing here, and facts mode never runs it. Returns the model's raw
+        # facts; `finish_facts` verifies and resolves them (2.5.8).
+        return await judge.facts(system, user)
 
     async def _call_judge(self, scored: ScoredJob) -> FitVerdict:
         job = scored.job

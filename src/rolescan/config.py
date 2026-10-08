@@ -14,7 +14,14 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StringConstraints,
+    model_validator,
+)
 
 from rolescan.models import JobField, Level, normalise_term
 
@@ -395,6 +402,20 @@ class LLMConfig(BaseModel):
     Ollama's default of 0.8, so the same posting could score differently on
     a re-run and the measured accuracy never described what shipped."""
     description_chars: Annotated[int, Field(ge=500)] = 6000
+    num_ctx: Annotated[int, Field(ge=2048)] = 12288
+    """Context window, in tokens, asked of a local (Ollama) model on every
+    call (2.5.8). Unset, Ollama picks its own from the machine's memory:
+    32,768 on a 36 GB Mac, 4,096 on a smaller one, where it silently cut the
+    middle (the instructions and worked examples) out of a 7,200-8,300 token
+    facts prompt and still returned valid JSON. 12,288 holds the longest
+    measured prompt (8,333 tokens) plus a full 1,500-token answer."""
+    check_truncation: bool = True
+    """Treat an Ollama answer whose token counts show a cut prompt (or a full
+    window) as an error (2.5.8). The check assumes `prompt_eval_count` counts
+    the whole prompt even when Ollama reuses its cache, as measured on the
+    server this was built against. If a server or version counts only the
+    uncached part, every call would look cut: set this to false, which keeps
+    recording the counts but never judges them."""
     cache_days: Annotated[int, Field(ge=0)] = 30
     mode: Literal["facts", "judge"] = Field(
         default="facts",
@@ -470,13 +491,46 @@ class LLMConfig(BaseModel):
         return self
 
 
+#: Where a site owner can read what is calling (2.5.8): this project's page.
+DEFAULT_CONTACT_URL = "https://github.com/younis-y/deterministic-llm-pipeline"
+
+
+def default_user_agent(contact_url: str = DEFAULT_CONTACT_URL) -> str:
+    """`rolescan/<version> (+<contact_url>)`, the User-Agent every request
+    sends unless `http.user_agent` is set (2.5.8).
+
+    2.5.7 still sent "rolescan/2.2 (personal job search tool)": three
+    releases stale, and no way for a site owner to find out what was
+    calling. The version is imported here, when a config is built, and not
+    at the top of the module: `rolescan/__init__.py` imports this module
+    before it sets `__version__`.
+    """
+    from rolescan import __version__
+
+    return f"rolescan/{__version__} (+{contact_url})"
+
+
 class HTTPConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     timeout: float = 20.0
     max_concurrent: Annotated[int, Field(ge=1, le=64)] = 8
     max_retries: Annotated[int, Field(ge=0, le=10)] = 3
-    user_agent: str = "rolescan/2.2 (personal job search tool)"
+    contact_url: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1)
+    ] = DEFAULT_CONTACT_URL
+    """Sent in the User-Agent, so a site owner can see what is calling and
+    where to read about it (2.5.8). Point it at your fork, or a page of your
+    own. A blank one is a config error, not `rolescan/<version> (+)`."""
+    user_agent: str = ""
+    """The User-Agent header. Empty, the default, means
+    `rolescan/<version> (+<contact_url>)`; anything else is sent as it is."""
+
+    @model_validator(mode="after")
+    def _default_user_agent(self) -> Self:
+        if not self.user_agent:
+            object.__setattr__(self, "user_agent", default_user_agent(self.contact_url))
+        return self
 
 
 class EmailConfig(BaseModel):
@@ -505,6 +559,28 @@ class EmailConfig(BaseModel):
         return self
 
 
+class RetentionConfig(BaseModel):
+    """How many days each cache keeps a row (2.5.8); 0 keeps rows for ever.
+
+    Only caches: `seen` (the record of what has been listed) and
+    `applications` (what the user did) are never trimmed. Before 2.5.8 only
+    `verdicts` could be trimmed, by hand, and `postings` was 83% of the
+    21 MB store after two weeks of daily scans."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    postings: Annotated[int, Field(ge=0)] = 90
+    """Cached posting pages. A trimmed page costs one re-fetch if its source
+    still lists it. Never trimmed: a url with an `applications` row, or an
+    apply/consider role still listed within this many days."""
+    deferred: Annotated[int, Field(ge=0)] = 45
+    """Deferral counts of postings not sighted for this long."""
+    verdicts: Annotated[int, Field(ge=0)] = 180
+    """Cached LLM facts and verdicts; `rolescan prune --days` overrides it.
+    Never less than `llm.cache_days` (a verdict younger than that is still a
+    valid cache hit), and with `llm.cache_days: 0` none is trimmed."""
+
+
 class OutputConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -520,6 +596,13 @@ class OutputConfig(BaseModel):
     never sends text (a Workday board with `details: false`, a structured page
     with no body) would otherwise hold it back for ever, and a pile of such
     postings would crowd out the ones that can be judged."""
+    retention_days: RetentionConfig = Field(default_factory=RetentionConfig)
+    backup_keep: Annotated[int, Field(ge=0)] = 7
+    """Daily copies of the store kept in `backups/` beside it (2.5.8).
+    `rolescan scan` takes the day's copy before it opens the store, so the
+    first scan of a new version is covered before any migration runs. 0: no
+    automatic copy; `rolescan backup` still copies on demand and never
+    deletes."""
     email: EmailConfig = Field(default_factory=EmailConfig)
 
 

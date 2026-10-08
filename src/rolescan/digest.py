@@ -62,6 +62,24 @@ _DISCOVER_FRAGS: _Frags = [
     (" to check the slugs.", False),
 ]
 
+# 2.5.8: the two source alarms beside the quiet one, and what each asks of
+# the reader.
+_SHRUNK_BODY = (
+    "A board rarely loses most of its postings between two runs. These "
+    "returned rows and raised nothing, which is how a broken page or a moved "
+    "cap looks. Check the source before trusting this digest."
+)
+
+_CUT_FRAGS: _Frags = [
+    ("The roles past the cut are in no digest. For a Workday board, raise ", False),
+    ("max_rows", True),
+    (", or narrow it with ", False),
+    ("applied_facets", True),
+    (" or ", False),
+    ("search_text", True),
+    (".", False),
+]
+
 
 def _md_frags(frags: _Frags) -> str:
     return "".join(f"`{text}`" if code else text for text, code in frags)
@@ -434,6 +452,15 @@ def _run_outcome_note(result: ScanResult) -> str:
     )
 
 
+#: How the stats line names each reason a posting was deferred, in order.
+_DEFERRED_LABELS = {
+    "llm_ceiling": "over the LLM budget",
+    "llm_breaker": "after the LLM stopped answering",
+    "digest_cap": "over the digest cap",
+    "thin": "without text yet",
+}
+
+
 def _stats(result: ScanResult) -> str:
     live = sum(1 for r in result.reports if r.ok)
     bits = [
@@ -447,8 +474,15 @@ def _stats(result: ScanResult) -> str:
         # this number is how the reader learns their new sources carry old
         # stock rather than wondering why a board of 228 yielded nothing.
         bits.insert(1, f"{result.stale} too old")
-    if result.llm_calls or result.llm_cached:
-        bits.append(f"{result.llm_calls} scored, {result.llm_cached} from cache")
+    if result.llm_scored:
+        # Disjoint figures: scored by a call this run, and served from the
+        # cache. A run of cache hits alone still ran (2.5.8).
+        bits.append(
+            f"{result.llm_scored - result.llm_cached} scored, "
+            f"{result.llm_cached} from cache" + _model_note(result)
+        )
+    if result.facts_cache_skipped:
+        bits.append("facts cache skipped: model identity unknown")
     if result.hidden_blocked:
         # Only when it happened: a permanent "0 blocked and hidden" on every
         # digest would train the reader to skip the line that matters. These
@@ -464,13 +498,14 @@ def _stats(result: ScanResult) -> str:
     if result.deferred:
         reasons = Counter(s.deferred for s in result.deferred)
         parts = [
-            f"{n} {label}"
-            for key, label in (
-                ("llm_ceiling", "over the LLM budget"),
-                ("digest_cap", "over the digest cap"),
-                ("thin", "without text yet"),
-            )
-            if (n := reasons.get(key))
+            f"{reasons[key]} {label}"
+            for key, label in _DEFERRED_LABELS.items()
+            if reasons.get(key)
+        ]
+        # A marker with no label yet is named as it is, never dropped: an
+        # empty "()" read as nothing held back (2.5.8).
+        parts += [
+            f"{n} {key}" for key, n in reasons.items() if key not in _DEFERRED_LABELS
         ]
         bits.append(
             f"{len(result.deferred)} deferred to the next run ({', '.join(parts)})"
@@ -489,9 +524,35 @@ def _stats(result: ScanResult) -> str:
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
 
+def _model_note(result: ScanResult) -> str:
+    """ " by <model> (<digest>)", or "" when the run named no model (2.5.8).
+
+    A verdict is only as reproducible as the model behind it, and a tag can
+    be re-pulled under the same name: the digest says which weights ran."""
+    if not result.llm_model:
+        return ""
+    digest = f" ({result.llm_model_digest})" if result.llm_model_digest else ""
+    return f" by {result.llm_model}{digest}"
+
+
 def _llm_ran(result: ScanResult) -> bool:
-    """Whether any posting in this digest actually carries an LLM score."""
-    return bool(result.llm_calls or result.llm_cached)
+    """Whether any posting in this digest actually carries an LLM score.
+
+    `llm_scored` counts postings that got a verdict, by a call or from the
+    cache. `llm_calls` counts calls attempted, so five failed calls read as
+    scoring that ran (2.5.8)."""
+    return bool(result.llm_scored)
+
+
+def _not_run_head(result: ScanResult) -> tuple[str, str]:
+    """(the lead, the rest) of the "LLM scoring did not run" note.
+
+    A model window below `llm.num_ctx` is one sentence with the fix in it
+    (2.5.8): the server is up and the model is pulled, so it must not read
+    like an outage. Every other reason follows "did not run at all"."""
+    if result.llm_window_stop:
+        return f"LLM scoring did not run: {result.llm_unusable}.", ""
+    return "LLM scoring did not run at all.", f"{result.llm_unusable}."
 
 
 def _llm_error_hint(result: ScanResult) -> _Frags:
@@ -541,6 +602,7 @@ def _failures(result: ScanResult) -> list[str]:
         not failed
         and not skipped
         and not result.quiet_sources
+        and not _source_alarms(result)
         and not result.llm_errors
         and not result.llm_unusable
         and not result.enricher_unusable
@@ -553,8 +615,9 @@ def _failures(result: ScanResult) -> list[str]:
         # day. It is not one: every posting fell back to a keyword score, and
         # keyword scores are not calibrated against min_report_score, so this
         # digest is close to empty by construction rather than by market.
+        lead, rest = _not_run_head(result)
         lines += [
-            f"**LLM scoring did not run at all.** {result.llm_unusable}.",
+            f"**{lead}**" + (f" {rest}" if rest else ""),
             "",
             _md_frags(_KEYWORD_ONLY_FRAGS),
             "",
@@ -616,6 +679,7 @@ def _failures(result: ScanResult) -> list[str]:
             "nothing now. Check the source before trusting this digest.",
             "",
         ]
+    lines += _shrunk_and_cut_md(result)
     if failed:
         lines += ["**Sources that failed this run**", ""]
         lines += [f"- `{r.kind}/{r.slug}` {r.error}" for r in failed]
@@ -626,7 +690,58 @@ def _failures(result: ScanResult) -> list[str]:
         lines += ["**Sources skipped (not searched)**", ""]
         lines += [f"- `{r.kind}/{r.slug}` {r.error}" for r in skipped]
         lines += [""]
+    lines += _notes_md(result)
     return lines
+
+
+def _source_alarms(result: ScanResult) -> bool:
+    """Whether a 2.5.8 source section is due. Each is shown even when it is
+    the only thing to report: the rule the quiet alarm set in 2.5.7, when the
+    Markdown digest dropped it whenever it was the only problem."""
+    return bool(result.shrunk_sources or result.truncated_sources or result.notes)
+
+
+def _shrunk_line(n: int, median: float) -> str:
+    return f"returned {n}, under 30% of its recent median of {median:g}"
+
+
+def _cut_line(read: int, total: int | None, why: str) -> str:
+    """What follows a cut-short source's label: "(500 of 2000 read): <why>",
+    or "(60 read): <why>" when the board stated no total."""
+    of = f" of {total}" if total is not None else ""
+    return f"({read}{of} read): {why}"
+
+
+def _shrunk_and_cut_md(result: ScanResult) -> list[str]:
+    """The "Sources that shrank" and "Sources that were cut short" sections
+    (2.5.8), straight after the quiet alarm: the same silent defect, caught
+    while the source still returns rows."""
+    lines: list[str] = []
+    if result.shrunk_sources:
+        lines += ["**Sources that shrank**", ""]
+        lines += [
+            f"- **{label}** {_shrunk_line(n, median)}"
+            for label, n, median in result.shrunk_sources
+        ]
+        lines += ["", _SHRUNK_BODY, ""]
+    if result.truncated_sources:
+        lines += ["**Sources that were cut short**", ""]
+        lines += [
+            f"- **{label}** {_cut_line(n, total, why)}"
+            for label, n, total, why in result.truncated_sources
+        ]
+        lines += ["", _md_frags(_CUT_FRAGS), ""]
+    return lines
+
+
+def _notes_md(result: ScanResult) -> list[str]:
+    """The "Notes" section (2.5.8): last, and apart from the failures,
+    because a posting skipped as unreadable or a backlog waiting is not a
+    broken source."""
+    if not result.notes:
+        return []
+    lines = [f"- **{label}**: {note}" for label, note in result.notes]
+    return ["**Notes**", "", *lines, ""]
 
 
 # --- HTML -----------------------------------------------------------------
@@ -892,7 +1007,7 @@ def _llm_notes_html(result: ScanResult) -> list[str]:
     if result.llm_unusable and not _llm_ran(result):
         out.append(
             _note_html(
-                f"LLM scoring did not run at all. {result.llm_unusable}.",
+                " ".join(filter(None, _not_run_head(result))),
                 [_html_frags(_KEYWORD_ONLY_FRAGS)],
             )
         )
@@ -936,6 +1051,7 @@ def _failures_html(result: ScanResult) -> list[str]:
         not failed
         and not skipped
         and not result.quiet_sources
+        and not _source_alarms(result)
         and not result.llm_errors
         and not result.llm_unusable
         and not result.enricher_unusable
@@ -960,6 +1076,7 @@ def _failures_html(result: ScanResult) -> list[str]:
                 ],
             )
         )
+    out += _shrunk_and_cut_html(result)
     if failed:
         out.append(
             _note_html(
@@ -971,7 +1088,48 @@ def _failures_html(result: ScanResult) -> list[str]:
         out.append(
             _note_html("Sources skipped (not searched)", [_sources_html(skipped)])
         )
+    out += _notes_html(result)
     return out
+
+
+def _labelled_list_html(rows: list[tuple[str, str]], sep: str = " ") -> str:
+    """`<ul>` of "<strong>label</strong><sep>text", every part escaped."""
+    items = "".join(
+        f"<li><strong>{_esc(label)}</strong>{_esc(sep)}{_esc(text)}</li>"
+        for label, text in rows
+    )
+    return f"<ul>{items}</ul>"
+
+
+def _shrunk_and_cut_html(result: ScanResult) -> list[str]:
+    """The HTML counterpart of `_shrunk_and_cut_md`."""
+    out: list[str] = []
+    if result.shrunk_sources:
+        rows = [(lb, _shrunk_line(n, m)) for lb, n, m in result.shrunk_sources]
+        out.append(
+            _note_html(
+                "Sources that shrank",
+                [_labelled_list_html(rows), f"<p>{_esc(_SHRUNK_BODY)}</p>"],
+            )
+        )
+    if result.truncated_sources:
+        rows = [
+            (lb, _cut_line(n, t, why)) for lb, n, t, why in result.truncated_sources
+        ]
+        out.append(
+            _note_html(
+                "Sources that were cut short",
+                [_labelled_list_html(rows), f"<p>{_html_frags(_CUT_FRAGS)}</p>"],
+            )
+        )
+    return out
+
+
+def _notes_html(result: ScanResult) -> list[str]:
+    """The HTML counterpart of `_notes_md`."""
+    if not result.notes:
+        return []
+    return [_note_html("Notes", [_labelled_list_html(result.notes, sep=": ")])]
 
 
 def _shortlist_html(

@@ -533,6 +533,7 @@ def test_a_failed_preflight_does_not_claim_nothing_was_scored() -> None:
         llm_unusable="could not reach ollama at http://localhost:11434",
         llm_calls=4,
         llm_cached=1,
+        llm_scored=5,
     )
     text = render_markdown(result)
     assert "did not run at all" not in text

@@ -710,7 +710,16 @@ _YEARS_CAP = re.compile(
     r"\bwithin(?:\s+the)?(?:\s+last|\s+past)?|\bno|\bnot|"
     r"\bfirst|\bnext|\blast|\bpast|\bprevious|\bfollowing|\bafter|"
     r"\bspen[dt]|\bserved?|\bgain(?:ing)?|\bgives?\s+you|\boffers?(?:\s+you)?|"
-    r"\bproviding|\bprovides?|\bcover(?:s|ing)?)\s*$",
+    r"\bproviding|\bprovides?|\bcover(?:s|ing)?|\bat\s+most|\bacross|\bduring|"
+    r"\bthroughout|\bover\s+the\s+course\s+of|\bruns?\s+for|\blasts?)\s*$",
+    re.IGNORECASE,
+)
+#: A cap or an exclusion after the count ("2 years of experience or less",
+#: "Applicants with more than 2 years of experience are not eligible") (2.5.8).
+_YEARS_CAP_AFTER = re.compile(
+    r"^\s*,?\s*or\s+(?:less|fewer)\b|^[^.;!?\n]{0,60}?\b(?:(?:are|is)\s+"
+    r"(?:not\s+eligible|ineligible)|will\s+not\s+be\s+considered|need\s+not\s+apply"
+    r"|should\s+apply\s+(?:to|for)\s+(?:our\s+)?experienced)\b",
     re.IGNORECASE,
 )
 #: "Max." ends a clause by its own full stop, so it is read across one.
@@ -719,7 +728,9 @@ _YEARS_CAP_TIGHT = re.compile(r"\bmax\.?\s*$", re.IGNORECASE)
 #: in a heading ("ideally with 6+ years", "Preferred qualifications:") ...
 _YEARS_SOFT = re.compile(
     r"\b(?:ideally|preferabl[ey]|preferred|desired|nice\s+to\s+have|"
-    r"good\s+to\s+have|bonus(?:\s+points)?|desirable|a\s+plus|advantage(?:ous)?)\b",
+    r"good\s+to\s+have|bonus(?:\s+points)?|desirable|a\s+plus|advantage(?:ous)?|"
+    r"even\s+better|we['\u2019]d\s+love|extra\s+points|stand\s+out|"
+    r"would\s+be\s+great|pluses)\b",
     re.IGNORECASE,
 )
 #: ... or shortly after it ("3+ years of experience with Spark is preferred").
@@ -727,7 +738,10 @@ _YEARS_SOFT = re.compile(
 _YEARS_SOFT_AFTER = re.compile(
     r"^[^.;!?\n]{0,60}?\b(?:preferred|preferable|a\s+plus|an?\s+advantage|"
     r"advantageous|desirable|desired|nice\s+to\s+have|bonus|beneficial|helpful|"
-    r"optional|welcome|valued|not\s+(?:required|essential|a\s+requirement)|"
+    r"optional|welcome|valued|"
+    r"not\s+(?:required|essential|a\s+requirement|mandatory|necessary)|"
+    r"(?:is|are|would\s+be)\s+(?:an?\s+)?(?:asset|ideal|great|useful)|"
+    r"would\s+(?:set\s+you\s+apart|help)|"
     r"preferably(?!\s+(?:in|within|with|from|across|at|for|on)\b))\b",
     re.IGNORECASE,
 )
@@ -745,8 +759,8 @@ _YEARS_OTHERS = re.compile(
 #: requires 5+ years", "our team is looking for someone with 3+ years") ...
 _YEARS_REQ_VERB = re.compile(
     r"\b(?:requires?|required|need(?:s|ed)?|looking\s+for|seeking|seeks?|wants?|"
-    r"must\s+have|should\s+have|and\s+have|will\s+have|have\s+at\s+least|brings?|"
-    r"with\s+at\s+least)\b",
+    r"must\s+have|should\s+have|and\s+have|will\s+have|have\s+at\s+least|"
+    r"you(?:\s+will|['\u2019]ll)?\s+bring|with\s+at\s+least)\b",
     re.IGNORECASE,
 )
 #: ... or "who has" follows the candidate ("someone who has 5 years").
@@ -859,6 +873,7 @@ def years_required_stated(text: str) -> tuple[int, str] | None:
                 )
             )
             or _YEARS_SOFT_AFTER.search(after)
+            or _YEARS_CAP_AFTER.search(after)
             or _YEARS_COMPANY_AFTER.search(after)
             or _YEARS_WAIVED.search(after)
             or _YEARS_WAIVED_BEFORE.search(clause)
@@ -869,11 +884,23 @@ def years_required_stated(text: str) -> tuple[int, str] | None:
     return None
 
 
-#: "lo-hi" with an optional decimal on either end and, since the labelled
-#: shape ("Years of experience: 0-2") has no years word, no trailing word.
-_YEARS_RANGE = re.compile(
+#: "lo-hi", with an optional decimal on either end.
+_RANGE = (
     r"(?<![\d.])(?P<lo>\d{1,2}(?:\.\d+)?)\s*(?:-|\u2013|\u2014|to)\s*"
-    r"(?P<hi>\d{1,2}(?:\.\d+)?)(?!\d)",
+    r"(?P<hi>\d{1,2}(?:\.\d+)?)(?!\d)"
+)
+#: A range of years: the years word after it ("3-5 years", "0.5-2 yrs",
+#: "3-5 YOE") ...
+_YEARS_RANGE = re.compile(rf"{_RANGE}\s*\+?\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
+#: ... or a years-of-experience label right before it, which carries the unit
+#: ("Years of experience: 0-2", "Experience: 3-5", "Experience required: 2-5",
+#: "Experience level: 2-4", "Experience: Minimum 2-3", "YOE: 3-5"). 2.5.7 took
+#: any "N-M" in the quote, so "a team of 2-5; 5 years of experience" answered
+#: 5 was "corrected" to 2 (2.5.8).
+_YEARS_RANGE_LABELLED = re.compile(
+    r"\b(?:(?:(?:years?|yrs?)\s+of\s+(?:[\w-]+\s+)?)?experience"
+    r"(?:\s+(?:required|level|needed))?|yoe)\s*[:\-\u2013]?\s*"
+    rf"(?:min(?:imum)?\.?\s*)?{_RANGE}",
     re.IGNORECASE,
 )
 
@@ -887,9 +914,14 @@ def _range_bounds(quote: str) -> tuple[int, int] | None:
     down ("0.5-2" is 0 to 2), and a "range" whose low end is not below its
     high end ("7 - 5") is not one.
     """
-    m = _YEARS_RANGE.search(quote)
-    if m is None:
+    found = [
+        m
+        for m in (_YEARS_RANGE.search(quote), _YEARS_RANGE_LABELLED.search(quote))
+        if m
+    ]
+    if not found:
         return None
+    m = min(found, key=lambda m: m.start("lo"))
     low, high = int(float(m.group("lo"))), int(float(m.group("hi")))
     return (low, high) if low < high else None
 
@@ -1163,7 +1195,8 @@ _CLEARANCE_DUTY = re.compile(
 )
 #: ... someone else holding it ("Our customers hold active SC clearance") ...
 _CLEARANCE_HOLDERS = re.compile(
-    r"\b(?:customers|clients|users|colleagues|partners)\s+(?:(?:who|that)\s+)?"
+    r"\b(?:customers|clients|users|colleagues|partners|contractors|suppliers"
+    r"|employees|new\s+joiners)\s+(?:(?:who|that)\s+)?"
     r"(?:(?:hold|holds|have|has|with|holding)\s+(?:an?\s+)?"
     r"(?:(?:active|current|valid)\s+)?)?$",
     re.IGNORECASE,
@@ -1207,7 +1240,7 @@ _BAR_NEGATED_BEFORE = re.compile(
     re.IGNORECASE,
 )
 _BAR_NEGATED_AFTER = re.compile(
-    r"^\s*(?:[:(-]\s*|(?:is|are|will\s+be)\s+)(?:not|none|n/a|no)\b"
+    r"^\s*(?:[:(-]\s*|(?:is|are|will\s+be)\s+)(?:not|none|n/a|no|never)\b"
     r"|^\s*(?:is|are)n't\b"
     r"|^[^.;\n]{0,30}?\bnot\s+(?:required|needed|necessary|essential|mandatory"
     r"|a\s+requirement)\b",

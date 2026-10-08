@@ -67,7 +67,7 @@ The hard part is not fetching. It is knowing that Octopus Energy's board is
 |---|---|---|
 | `greenhouse` `lever` `ashby` `workable` | no | public JSON, one request per board |
 | `smartrecruiters` | no | paginated. Returns 200 with zero rows for a slug that does not exist, so `discover` reports `UNKNOWN` rather than lying |
-| `workday` | no | needs tenant, site and host, all three readable from the careers URL |
+| `workday` | no | needs tenant, site and host, all three readable from the careers URL. Reads up to 500 postings a board (`max_rows` raises it; `applied_facets` and `search_text` narrow a big board) and says when a board held more |
 | `structured` | no | any site publishing schema.org `JobPosting` plus a sitemap. Covers Phenom People, SAP SuccessFactors, Teamtailor and Harbour today, by configuration rather than by adapter |
 | `adzuna` | yes | the one aggregator. Free tier, 20 countries |
 
@@ -260,16 +260,24 @@ graduation year must appear in its quote, a nationality or clearance bar must
 name its kind, and an example must not mark students-only an advert that
 also accepts graduates. No file, no change to the prompt.
 
-With examples, a facts-mode call needs a model context of roughly 8k tokens
-(the prompt, the examples and one posting). Ollama's default context can be
-smaller, and a prompt that overflows it is cut without an error, so the
-examples or the posting are silently lost. Raise it with
-`OLLAMA_CONTEXT_LENGTH=8192` in the environment the Ollama server runs in,
-or set `num_ctx` on the model (a Modelfile `PARAMETER num_ctx 8192`).
+With examples, a facts-mode call needs about 8k tokens of context (the
+prompt, the examples and one posting). rolescan asks Ollama for
+`llm.num_ctx` tokens on every call (12,288 by default), checks before the
+scan that the model can hold that many, and treats an answer whose token
+counts show the prompt was cut as an error rather than as facts. Raise
+`llm.num_ctx` if you add many more examples. A model whose own window is
+smaller than `llm.num_ctx` (an 8k one, under the default) is refused: no
+posting is sent to it, the run falls back to keyword scoring and exits 3;
+lower `llm.num_ctx` to its window, or choose a longer one. If your Ollama
+counts only the uncached part of a prompt, every call would look cut: set
+`llm.check_truncation: false`.
 
-Facts are cached per posting text, backend, model and examples file, and
-re-decided on every run, so a rules change applies to cached postings at no
-model cost.
+Facts are cached as the model gave them, per posting text and per
+fingerprint of everything that decides the answer (the prompt, your summary,
+the examples, the model's digest, `num_ctx`). Verification, the resolvers
+and your rules run on every read, so a rules or resolver change applies to
+cached postings at no model cost, and a prompt or model change asks the
+model again.
 `llm.mode: judge` restores the older single-call judge; it is kept for one
 release so the two can be compared, then removed.
 
@@ -335,7 +343,8 @@ rolescan mark URL S   record what you did with a posting: shortlist, applied, di
 rolescan unsee URL    forget a posting (url or uid) so the next scan can report it again
 rolescan show         reprint the latest digest
 rolescan stats        how many postings the store has seen
-rolescan prune        drop stale cached verdicts
+rolescan backup       copy the store to backups/ and check the copy
+rolescan prune        trim old caches (output.retention_days); never seen or applications
 ```
 
 `mark` takes one of three states. `shortlist` keeps a posting in the digest's
@@ -350,6 +359,14 @@ boards go on listing it. Every shortlist row in the digest carries the exact
 as the last real run's digest. `unsee` takes a posting's URL (as the digest
 prints it) or its uid and removes it from the seen list, so the next scan can
 report it again.
+
+`rolescan scan` tells a scheduler how the run went. Exit status: 0 ok; 1
+email failed, the day's backup failed its check, or the store was written by
+a newer rolescan (takes precedence over 3); 2 config error; 3 LLM scoring
+failed as a whole (after the digest was written and sent); 4 another run
+holds the store's lock. The digest says why. The store gets a checked copy in
+`backups/` beside it once a day (`output.backup_keep`, default 7), and its
+caches are trimmed after each real scan (`output.retention_days`).
 
 `discover` distinguishes five outcomes on purpose. `EMPTY` means a real board
 with no openings; `UNKNOWN` means an API that cannot tell an empty board from a

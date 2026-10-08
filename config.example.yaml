@@ -183,12 +183,28 @@ llm:
   max_concurrent: 5
   max_calls_per_run: 60      # hard spend ceiling
   description_chars: 6000
-  cache_days: 30             # verdicts are cached on description text
+  cache_days: 30             # verdicts are cached on description text; 0 = never expire
+
+  # Ollama only. The context window, in tokens, asked of the model on every
+  # call; unset, rolescan sends 12288. (A call with no num_ctx lets Ollama size
+  # the window from the machine's memory, and a small one silently cuts the
+  # middle out of the prompt.) rolescan checks before the scan that the model
+  # can hold this many; a model whose own window is smaller (8k) is refused:
+  # no posting is sent to it, the run falls back to keyword scoring, and
+  # `rolescan scan` exits 3.
+  # num_ctx: 12288
+  # An answer whose token counts show the prompt was cut is an error, not
+  # facts. Set false only if your Ollama counts just the uncached part of a
+  # prompt, so every call would look cut.
+  # check_truncation: true
 
 http:
   timeout: 20.0
   max_concurrent: 8
   max_retries: 3
+  # Every request says "rolescan/<version> (+<contact_url>)", so a site owner
+  # can see what is calling. Point it at your fork or a page of your own.
+  # contact_url: https://example.org/about-my-job-scanner
 
 output:
   dir: digests
@@ -196,6 +212,17 @@ output:
   max_roles: 15
   show_blocked: true         # blocked roles are worth seeing once
   thin_unread_after: 3       # runs a posting may lack text before it is listed as unread
+  # Daily copies of the store kept in backups/ beside it, taken before a scan
+  # opens it. 0 turns the automatic copy off; `rolescan backup` still copies
+  # on demand and never deletes.
+  # backup_keep: 7
+  # How many days each cache keeps a row; 0 keeps a table whole. Never touches
+  # `seen` or `applications`. A scan trims after it records; so does
+  # `rolescan prune`. `verdicts` is never less than llm.cache_days.
+  # retention_days:
+  #   postings: 90
+  #   deferred: 45
+  #   verdicts: 180
   email:
     enabled: false
     smtp_host: smtp.example.com
@@ -226,6 +253,11 @@ sources:
   # From discover: 422 means no such tenant (slug or host wrong); 404 means the
   # tenant exists and the site value is wrong.
   # - {kind: workday, slug: example, site: Example_Careers, host: wd3, label: Example Co}
+  # A board holding more than 500 postings is read to 500 and listed under
+  # "Sources that were cut short". Lift the cap with max_rows: 2000, or narrow
+  # the read with Workday's own facets (applied_facets: {<facet parameter>:
+  # [<value id>]}, ids from the board's listing answer) or with one pass per
+  # search (search_text: [data, analyst]).
 
   # The generic source: any careers site that publishes schema.org JobPosting
   # and a sitemap. Covers Phenom People, SAP SuccessFactors, Teamtailor and

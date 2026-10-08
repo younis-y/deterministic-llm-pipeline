@@ -25,7 +25,9 @@ import json
 import logging
 import re
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from contextlib import closing
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
@@ -36,7 +38,7 @@ from pydantic import BaseModel, ValidationError
 
 from rolescan.models import FitVerdict, Job, ScoredJob
 
-__all__ = ["Store"]
+__all__ = ["PruneReport", "Store", "StoreTooNewError", "refuse_a_newer_store"]
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +115,21 @@ _MIGRATIONS: tuple[str, ...] = (
         last_seen  TEXT NOT NULL
     );
     """,
+    # 2.5.8: `unsee` and `mark` look a posting up by url, which scanned the
+    # whole of `seen`; and `source_counts_key` duplicated the primary key's
+    # own index exactly, so it was pure write cost.
+    """
+    CREATE INDEX IF NOT EXISTS seen_url ON seen(url);
+    DROP INDEX IF EXISTS source_counts_key;
+    """,
+    # 2.5.8: the board's own total beside what was read, so a read cut at a
+    # cap is on record as one. 0 = no total stated (every row written before
+    # 2.5.8, and every source that does not report one), or an empty board;
+    # nothing reads it yet. SQLite cannot make `ADD COLUMN` `IF NOT EXISTS`;
+    # `_migrate` skips it when the column is already there.
+    """
+    ALTER TABLE source_counts ADD COLUMN total INTEGER NOT NULL DEFAULT 0;
+    """,
 )
 
 
@@ -147,6 +164,73 @@ def _statements(script: str) -> list[str]:
     return out
 
 
+#: `source_counts` rows older than this are trimmed by `prune_all`. The
+#: quiet-source alarm reads 14 days (`source_high_water`), so this only ever
+#: removes rows nothing reads.
+_SOURCE_COUNTS_DAYS = 90
+
+#: `prune_all` rebuilds the file (VACUUM) once more than this share of its
+#: pages are free: a DELETE alone frees pages inside the file but never
+#: shrinks it (measured 2026-10-07: 21.35 MB before and after a trim, 9.64 MB
+#: after VACUUM, which took 0.03 s).
+_VACUUM_FREE_SHARE = 0.2
+
+
+@dataclass(frozen=True, slots=True)
+class PruneReport:
+    """Rows `Store.prune_all` removed per table, and whether it vacuumed."""
+
+    verdicts: int = 0
+    postings: int = 0
+    deferred: int = 0
+    source_counts: int = 0
+    vacuumed: bool = False
+
+
+class StoreTooNewError(RuntimeError):
+    """The file was written by a newer rolescan than the one opening it.
+
+    Opening it anyway ran old code against a schema it does not know: the
+    first write that disagreed failed half way through a scan (2.5.8).
+    """
+
+
+def _too_new(path: Path, version: int) -> StoreTooNewError | None:
+    """The error for a file at schema `version`, or None when this rolescan
+    knows that version."""
+    if version <= len(_MIGRATIONS):
+        return None
+    msg = (
+        f"{path} is at schema version {version}, and this rolescan "
+        f"knows versions up to {len(_MIGRATIONS)}: it was written by a "
+        "newer rolescan. Upgrade rolescan, or restore a copy of the "
+        "store taken before the upgrade."
+    )
+    return StoreTooNewError(msg)
+
+
+def refuse_a_newer_store(path: Path) -> None:
+    """Raise `StoreTooNewError` when the file at `path` was written by a newer
+    rolescan, read through a read-only connection (2.5.8).
+
+    For a caller that must know before it touches the file in any other way:
+    `rolescan scan` asks before the day's backup, which would otherwise rotate
+    out the very copy the error tells the reader to restore. No file, or one
+    whose version cannot be read (not a database, damaged, locked), passes:
+    whatever opens or copies it next says what is wrong with it.
+    """
+    if not path.is_file():
+        return
+    try:
+        uri = f"{path.resolve().as_uri()}?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as conn:
+            row = conn.execute("PRAGMA user_version").fetchone()
+    except sqlite3.Error:
+        return
+    if (error := _too_new(path, int(row[0]) if row else 0)) is not None:
+        raise error
+
+
 class Store:
     """Async SQLite store. Use as an async context manager."""
 
@@ -160,14 +244,22 @@ class Store:
     async def __aenter__(self) -> Self:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.path)
-        # WAL lets a long scan run while you read the digest from another shell.
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA foreign_keys=ON")
         try:
+            # Before any PRAGMA that writes: `journal_mode=WAL` rewrites the
+            # header of a rollback-journal file, so a newer file refused after
+            # it would be refused and changed (2.5.8).
+            await self._refuse_a_newer_file()
+            # WAL lets a long scan run while you read the digest from another
+            # shell.
+            await self._db.execute("PRAGMA journal_mode=WAL")
+            await self._db.execute("PRAGMA foreign_keys=ON")
             await self._migrate()
         except BaseException:
-            # A failed migration used to leave the connection open, and its
-            # worker thread kept the process alive after the error.
+            # `__aexit__` does not run when `__aenter__` raises, and
+            # aiosqlite's worker is a non-daemon thread: a connection left
+            # open kept the process alive after the traceback. 2.5.7 closed it
+            # for a failed migration only; a file that is not a database fails
+            # on the first PRAGMA, before the migration (2.5.8).
             await self._db.close()
             self._db = None
             raise
@@ -179,8 +271,17 @@ class Store:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if self._db is not None:
-            await self._db.commit()
+        if self._db is None:
+            return
+        try:
+            # Commit on a clean exit only. Committing on the way out of an
+            # exception left a PREFIX of `record_all`'s rows behind when it
+            # was interrupted: marked seen, and in no digest (2.5.8).
+            if exc_type is None:
+                await self._db.commit()
+            else:
+                await self._db.rollback()
+        finally:
             await self._db.close()
             self._db = None
 
@@ -195,6 +296,17 @@ class Store:
         cur = await self.db.execute("PRAGMA user_version")
         row = await cur.fetchone()
         return int(row[0]) if row else 0
+
+    async def _refuse_a_newer_file(self) -> None:
+        """Raise `StoreTooNewError` for a file from a newer rolescan.
+
+        Older code used to open such a file silently and fail at the first
+        write the newer schema disagreed with, half way through a scan
+        (2.5.8). Called first thing after the connection opens, with nothing
+        written: the refused file is left byte for byte as it was.
+        """
+        if (error := _too_new(self.path, await self._user_version())) is not None:
+            raise error
 
     async def _migrate(self) -> None:
         """Bring the file up to `len(_MIGRATIONS)`, one step at a time.
@@ -217,8 +329,12 @@ class Store:
         Statements are executed one at a time, not through `executescript`,
         because `executescript` commits first and so cannot join a
         transaction.
+
+        A file at a higher version than this code knows is refused before
+        this runs (`_refuse_a_newer_file`).
         """
-        for i in range(await self._user_version(), len(_MIGRATIONS)):
+        version = await self._user_version()
+        for i in range(version, len(_MIGRATIONS)):
             script = _MIGRATIONS[i]
             await self.db.execute("BEGIN IMMEDIATE")
             try:
@@ -252,22 +368,49 @@ class Store:
         cur = await self.db.execute("SELECT 1 FROM seen WHERE uid=?", (job.uid,))
         return await cur.fetchone() is None
 
-    async def filter_new(self, scored: list[ScoredJob]) -> list[ScoredJob]:
-        """Partition in one query rather than N."""
+    async def filter_new(
+        self, scored: list[ScoredJob], *, touch: bool = False
+    ) -> list[ScoredJob]:
+        """The postings not yet in `seen`, looked up 500 uids per query.
+
+        One placeholder per posting used to go into a single `IN (...)`, and
+        SQLite refuses more than its bound-variable limit: 999 before 3.32,
+        32,766 after, so a scan of a real store's ~2,850 postings failed outright
+        on an older SQLite and a 10x board list would fail on any (2.5.8).
+
+        `touch` refreshes `last_seen` on the postings found already seen, so
+        "when did a scan last see this role" can be answered: before 2.5.8
+        the only write to `last_seen` was an upsert branch `filter_new` made
+        unreachable, and 4,616 of 5,048 live rows had `first_seen ==
+        last_seen`. Only postings that reach this call are touched: one the
+        scan drops earlier (stale, or merged into a near-duplicate) keeps its
+        older `last_seen` even though a board still lists it. Off by default,
+        so the call stays a pure read for any caller that does not ask; a scan
+        passes `touch=not dry_run`.
+
+        The only thing interpolated into the SQL is a run of `?` placeholders,
+        whose length comes from the chunk and nothing else. Every value is
+        bound. Written down because bandit's S608 flags the shape on sight.
+        """
         if not scored:
             return []
-        uids = [s.job.uid for s in scored]
-        # The only thing interpolated is a run of `?` placeholders, whose
-        # length comes from len(uids) and nothing else. Every value is bound.
-        # Checked because bandit's S608 flags this shape on sight and the
-        # answer should be written down rather than rediscovered: there is no
-        # SQL builder here and no posting text anywhere near the statement.
-        placeholders = ",".join("?" * len(uids))
-        cur = await self.db.execute(
-            f"SELECT uid FROM seen WHERE uid IN ({placeholders})",
-            uids,
-        )
-        known = {row[0] for row in await cur.fetchall()}
+        uids = list(dict.fromkeys(s.job.uid for s in scored))
+        known: set[str] = set()
+        for chunk in _chunks(uids):
+            placeholders = ",".join("?" * len(chunk))
+            rows = await self.db.execute_fetchall(
+                f"SELECT uid FROM seen WHERE uid IN ({placeholders})", chunk
+            )
+            known.update(str(row[0]) for row in rows)
+        if touch and known:
+            now = datetime.now(UTC).isoformat(timespec="seconds")
+            for chunk in _chunks(sorted(known)):
+                placeholders = ",".join("?" * len(chunk))
+                await self.db.execute(
+                    f"UPDATE seen SET last_seen = ? WHERE uid IN ({placeholders})",
+                    [now, *chunk],
+                )
+            await self.db.commit()
         return [s for s in scored if s.job.uid not in known]
 
     async def record(self, scored: ScoredJob, *, reason: str = "") -> None:
@@ -327,18 +470,17 @@ class Store:
         if not wanted:
             return {}
         now = datetime.now(UTC).isoformat(timespec="seconds")
-        for uid in wanted:
-            await self.db.execute(
-                """
-                INSERT INTO deferred (uid, reason, times, first_seen, last_seen)
-                VALUES (?, ?, 1, ?, ?)
-                ON CONFLICT(uid) DO UPDATE SET
-                    times=times + 1,
-                    reason=excluded.reason,
-                    last_seen=excluded.last_seen
-                """,
-                (uid, reason, now, now),
-            )
+        await self.db.executemany(
+            """
+            INSERT INTO deferred (uid, reason, times, first_seen, last_seen)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(uid) DO UPDATE SET
+                times=times + 1,
+                reason=excluded.reason,
+                last_seen=excluded.last_seen
+            """,
+            [(uid, reason, now, now) for uid in wanted],
+        )
         await self.db.commit()
         counts: dict[str, int] = {}
         for chunk in _chunks(wanted):
@@ -544,7 +686,9 @@ class Store:
             rows = await cur.fetchall()
         return {str(r[0]) for r in rows}
 
-    async def record_source_counts(self, counts: dict[str, int]) -> None:
+    async def record_source_counts(
+        self, counts: Mapping[str, int | tuple[int, int | None]]
+    ) -> None:
         """Remember what each source returned, so a silent zero is detectable.
 
         Every serious defect in this project has been a component that stopped
@@ -553,12 +697,20 @@ class Store:
         deep. None of them raised. All of them were obvious the moment you
         compared a source against what it returned yesterday, which is the one
         thing nothing was keeping.
+
+        2.5.8: a value may be `(count, total)`, the board's own total beside
+        what was read (None when the source stated none, kept as 0). A plain
+        count is still accepted, for any caller written before 2.5.8.
         """
         now = datetime.now(UTC).isoformat(timespec="seconds")
+        rows: list[tuple[str, str, int, int]] = []
+        for key, value in counts.items():
+            count, total = value if isinstance(value, tuple) else (value, None)
+            rows.append((key, now, count, total or 0))
         await self.db.executemany(
-            "INSERT OR REPLACE INTO source_counts (source_key, ran, count) "
-            "VALUES (?, ?, ?)",
-            [(key, now, n) for key, n in counts.items()],
+            "INSERT OR REPLACE INTO source_counts (source_key, ran, count, total) "
+            "VALUES (?, ?, ?, ?)",
+            rows,
         )
         await self.db.commit()
 
@@ -581,6 +733,89 @@ class Store:
             (key, since),
         )
         return max((int(r[0]) for r in rows), default=0)
+
+    async def source_counts_recent(self, key: str, *, days: int = 14) -> list[int]:
+        """The non-zero counts this source returned in the last `days` days,
+        newest first (2.5.8): the baseline for the shrink alarm.
+
+        Zero runs are left out. A source that returned nothing is the quiet
+        alarm's case (`source_high_water`), and a run of zeros in the baseline
+        would drag the median down until a collapse to a handful looked
+        normal.
+        """
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+        rows = await self.db.execute_fetchall(
+            "SELECT count FROM source_counts "
+            "WHERE source_key = ? AND ran >= ? AND count > 0 ORDER BY ran DESC",
+            (key, since),
+        )
+        return [int(r[0]) for r in rows]
+
+    async def prune_all(
+        self, *, postings_days: int, deferred_days: int, verdicts_days: int
+    ) -> PruneReport:
+        """Trim every cache to its retention, then VACUUM if it is worth it.
+
+        A `*_days` of 0 keeps that table whole. `seen` and `applications` are
+        never touched here: `seen` is the "listed once" record, and deleting a
+        row re-lists the role. A cached posting is kept past its age while it
+        has an `applications` row, or while it is an apply/consider role whose
+        `seen.last_seen` is within `postings_days`: `rolescan mark` reads such
+        a page back to fill in the company and title, and the structured
+        source's cache reads a page back instead of fetching it again.
+        """
+        verdicts = await self.prune(verdicts_days) if verdicts_days else 0
+        counts: dict[str, int] = {}
+        for table, days, sql in (
+            (
+                "postings",
+                postings_days,
+                """
+                DELETE FROM postings
+                WHERE fetched < :cutoff
+                  AND url NOT IN (SELECT url FROM applications)
+                  AND url NOT IN (SELECT url FROM seen
+                                  WHERE verdict IN ('apply', 'consider')
+                                    AND last_seen >= :cutoff)
+                """,
+            ),
+            (
+                "deferred",
+                deferred_days,
+                "DELETE FROM deferred WHERE last_seen < :cutoff",
+            ),
+            (
+                "source_counts",
+                _SOURCE_COUNTS_DAYS,
+                "DELETE FROM source_counts WHERE ran < :cutoff",
+            ),
+        ):
+            if not days:
+                counts[table] = 0
+                continue
+            cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat(
+                timespec="seconds"
+            )
+            cur = await self.db.execute(sql, {"cutoff": cutoff})
+            counts[table] = cur.rowcount or 0
+        await self.db.commit()
+        return PruneReport(
+            verdicts=verdicts,
+            postings=counts["postings"],
+            deferred=counts["deferred"],
+            source_counts=counts["source_counts"],
+            vacuumed=await self._vacuum_if_worth_it(),
+        )
+
+    async def _vacuum_if_worth_it(self) -> bool:
+        """VACUUM when more than `_VACUUM_FREE_SHARE` of the pages are free."""
+        [(free,)] = await self.db.execute_fetchall("PRAGMA freelist_count")
+        [(pages,)] = await self.db.execute_fetchall("PRAGMA page_count")
+        if not pages or free <= pages * _VACUUM_FREE_SHARE:
+            return False
+        await self.db.execute("VACUUM")
+        await self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return True
 
     async def prune(self, days: int = 180) -> int:
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat(

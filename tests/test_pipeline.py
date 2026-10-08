@@ -8,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from conftest import OLLAMA_MODEL, mock_ollama, scan_and_record
+from conftest import OLLAMA_MODEL, mock_ollama, mock_ollama_show, scan_and_record
 from rolescan.config import Config
 from rolescan.digest import render_html, render_markdown
 from rolescan.models import (
@@ -19,6 +19,7 @@ from rolescan.models import (
     Verdict,
 )
 from rolescan.pipeline import (
+    Coverage,
     ScanResult,
     SourceReport,
     _check_coverage,
@@ -374,19 +375,36 @@ async def test_a_second_scan_does_not_refetch_an_unchanged_posting(
 
 
 @respx.mock
-async def test_llm_failure_is_surfaced_not_silently_downgraded(tmp_path: Path) -> None:
+async def test_llm_failure_is_surfaced_not_silently_downgraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A revoked ANTHROPIC_API_KEY makes every scoring call 401. Each failure
     was caught per-job and logged at WARNING, so the digest rendered a normal
     scan with every role marked "keyword only" — indistinguishable from a
     deliberate --no-llm run. Twelve hours of postings scored by keywords alone,
-    with nothing in the output saying so."""
+    with nothing in the output saying so.
+
+    The 401 comes from a transport injected into the SDK's client (2.5.8). The
+    SDK sends through its own HTTP library (`httpx2`, not `httpx`), which
+    respx does not patch, so the respx route this test used was never called:
+    it passed on the real API's 401 for a fake key, then, once the suite
+    blocked the network, on a DNS error. The right outcome, for the wrong
+    reason both times."""
+    import httpx2
+    from anthropic import AsyncAnthropic
+
+    from rolescan.scoring.judges import AnthropicJudge
+
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200, json=_payload("Power Market Analyst", "Forecasting day-ahead prices.")
         )
     )
-    respx.post("https://api.anthropic.com/v1/messages").mock(
-        return_value=httpx.Response(
+    sent: list[str] = []
+
+    def reject(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request.url.path)
+        return httpx2.Response(
             401,
             json={
                 "type": "error",
@@ -396,7 +414,13 @@ async def test_llm_failure_is_surfaced_not_silently_downgraded(tmp_path: Path) -
                 },
             },
         )
+
+    client = AsyncAnthropic(
+        api_key="test-key-rejected-by-the-api",
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reject)),
+        max_retries=0,
     )
+    monkeypatch.setattr(AnthropicJudge, "_get_client", lambda self: client)
     cfg = Config.model_validate(
         {
             "profile": {"min_keyword_score": 0, "min_report_score": 0},
@@ -407,7 +431,10 @@ async def test_llm_failure_is_surfaced_not_silently_downgraded(tmp_path: Path) -
     )
     result = await run_scan(cfg)
 
+    assert sent == ["/v1/messages"], "the injected transport answered, once"
     assert result.llm_errors == 1, "the scan must count scoring failures"
+    assert "AuthenticationError" in result.llm_error_detail
+    assert "API key is invalid" in result.llm_error_detail
     text = render_markdown(result)
     assert "scoring failed" in text.casefold(), text
 
@@ -528,8 +555,8 @@ async def test_preflight_reports_an_unknown_enricher_before_fetching(
             "enricher": "not-a-real-enricher",
         },
     )
-    backend_reason, enricher_reason = await _preflight(cfg)
-    assert backend_reason == "", "the backend itself is fine"
+    status, enricher_reason = await _preflight(cfg)
+    assert status.reason == "", "the backend itself is fine"
     assert "not-a-real-enricher" in enricher_reason
 
 
@@ -559,6 +586,7 @@ async def test_a_posting_the_scorer_errored_on_is_not_buried_either(
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
+    mock_ollama_show()
     cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL})
     result = await scan_and_record(cfg)
     assert result.llm_unusable == "", "the backend was usable; the call is what failed"
@@ -948,12 +976,12 @@ async def test_a_source_that_goes_quiet_is_reported(tmp_path: Path) -> None:
         kind="greenhouse", slug="janestreet", label="Jane Street", count=228
     )
     async with Store(tmp_path / "s.db") as store:
-        assert await _check_coverage([worked], store) == []
+        assert await _check_coverage([worked], store) == Coverage()
 
         silent = SourceReport(
             kind="greenhouse", slug="janestreet", label="Jane Street", count=0
         )
-        quiet = await _check_coverage([silent], store)
+        quiet = (await _check_coverage([silent], store)).quiet
     assert quiet == [("Jane Street", 228)]
 
 
@@ -966,10 +994,9 @@ async def test_a_dry_check_leaves_the_quiet_alarm_armed(tmp_path: Path) -> None:
     async with Store(tmp_path / "s.db") as store:
         await _check_coverage([worked], store)
         for _ in range(5):
-            assert await _check_coverage([silent], store, record=False) == [
-                ("Jane", 228)
-            ]
-        assert await _check_coverage([silent], store) == [("Jane", 228)]
+            dry = await _check_coverage([silent], store, record=False)
+            assert dry.quiet == [("Jane", 228)]
+        assert (await _check_coverage([silent], store)).quiet == [("Jane", 228)]
 
 
 async def test_a_source_that_never_worked_is_not_called_quiet(tmp_path: Path) -> None:
@@ -977,8 +1004,8 @@ async def test_a_source_that_never_worked_is_not_called_quiet(tmp_path: Path) ->
     trains the reader to ignore the line that matters."""
     never = SourceReport(kind="adzuna", slug="gb", label="Adzuna", count=0)
     async with Store(tmp_path / "s.db") as store:
-        assert await _check_coverage([never], store) == []
-        assert await _check_coverage([never], store) == []
+        assert await _check_coverage([never], store) == Coverage()
+        assert await _check_coverage([never], store) == Coverage()
 
 
 async def test_a_failed_source_is_not_also_called_quiet(tmp_path: Path) -> None:
@@ -990,7 +1017,7 @@ async def test_a_failed_source_is_not_also_called_quiet(tmp_path: Path) -> None:
         broke = SourceReport(
             kind="lever", slug="prima", label="Prima", count=0, error="HTTP 500"
         )
-        assert await _check_coverage([broke], store) == []
+        assert await _check_coverage([broke], store) == Coverage()
 
 
 async def test_two_entries_sharing_a_slug_keep_separate_histories(
@@ -1002,7 +1029,7 @@ async def test_two_entries_sharing_a_slug_keep_separate_histories(
     wide = SourceReport(kind="adzuna", slug="gb", label="Adzuna UK-wide", count=12)
     async with Store(tmp_path / "s.db") as store:
         await _check_coverage([london, wide], store)
-        quiet = await _check_coverage(
+        coverage = await _check_coverage(
             [
                 SourceReport(kind="adzuna", slug="gb", label="Adzuna London", count=0),
                 SourceReport(
@@ -1011,7 +1038,7 @@ async def test_two_entries_sharing_a_slug_keep_separate_histories(
             ],
             store,
         )
-    assert quiet == [("Adzuna London", 203)]
+    assert coverage.quiet == [("Adzuna London", 203)]
 
 
 def test_an_ats_boards_dates_are_not_treated_as_freshness() -> None:
@@ -1140,6 +1167,7 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
+    mock_ollama_show()
 
     cfg = Config.model_validate(
         {
@@ -1304,6 +1332,7 @@ async def test_rule_hidden_carries_what_the_rules_kept_out_of_the_digest(
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
+    mock_ollama_show()
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200,
@@ -1589,6 +1618,7 @@ async def test_a_judge_mode_model_block_is_listed_under_hard_bar(
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
+    mock_ollama_show()
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200,

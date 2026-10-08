@@ -323,10 +323,11 @@ def test_examples_change_the_facts_cache_key(tmp_path: Path) -> None:
     without, _ = _scorer(None)
     job = _job().job
 
-    plain = cache_key(job, "facts", without.cfg)
-    assert without._facts_cache_key(job) == plain
+    base = cache_key(job, "facts", without.cfg)
+    plain = without._facts_cache_key(job)
     keyed = with_examples._facts_cache_key(job)
-    assert keyed != plain and keyed.startswith(plain + ":ex-")
+    assert plain.startswith(base + ":") and keyed.startswith(base + ":")
+    assert keyed != plain
 
     path.write_text(EXAMPLES_YAML.replace("fit_score: 60", "fit_score: 61"), encoding="utf-8")
     edited, _ = _scorer(path)

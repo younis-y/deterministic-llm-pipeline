@@ -32,7 +32,7 @@ from rolescan.scoring.facts import (
     YearsFact,
 )
 from rolescan.scoring.judges import Judge
-from rolescan.scoring.llm import FitScorer, cache_key, final_key
+from rolescan.scoring.llm import FitScorer, final_key
 from rolescan.store import Store
 
 
@@ -136,11 +136,6 @@ class _ConcurrencyTrackingEnricher(Enricher):
         await asyncio.sleep(0.01)
         self.in_flight -= 1
         return verdict
-
-
-#: The facts cache key names the backend and model; every scorer in this file
-#: is `backend="ollama"` with the default model, so they all share this key.
-_KEY_CFG = LLMConfig(enabled=True, backend="ollama", mode="facts")
 
 
 @pytest.fixture
@@ -337,9 +332,9 @@ async def test_final_verdict_is_rewritten_on_a_facts_cache_hit(
     job = _job()
 
     async with Store(tmp_path / "store.db") as store:
-        await store.put_verdict(cache_key(job.job, "facts", _KEY_CFG), facts)
-
         scorer, judge = _facts_scorer(facts, enricher_name="fake-enricher", store=store)
+        await store.put_verdict(scorer._facts_cache_key(job.job), facts)
+
         [out] = await scorer.score_all([job])
 
         assert judge.facts_calls == 0, "facts were already cached"
@@ -403,11 +398,6 @@ async def test_enrichment_never_exceeds_max_concurrent(
     )
 
     async with Store(tmp_path / "store.db") as store:
-        # Both postings' facts are already cached, so no model call competes
-        # for the semaphore - only the two enrichments do.
-        await store.put_verdict(cache_key(job1.job, "facts", _KEY_CFG), facts)
-        await store.put_verdict(cache_key(job2.job, "facts", _KEY_CFG), facts)
-
         cfg = LLMConfig(
             enabled=True,
             backend="ollama",
@@ -416,6 +406,10 @@ async def test_enrichment_never_exceeds_max_concurrent(
             max_concurrent=1,
         )
         scorer = FitScorer(cfg, ProfileConfig(min_report_score=55), store)
+        # Both postings' facts are already cached, so no model call competes
+        # for the semaphore - only the two enrichments do.
+        await store.put_verdict(scorer._facts_cache_key(job1.job), facts)
+        await store.put_verdict(scorer._facts_cache_key(job2.job), facts)
 
         out = await scorer.score_all([job1, job2])
 
@@ -437,8 +431,6 @@ async def test_enrichment_is_skipped_once_the_call_ceiling_is_reached(
     job = _job()
 
     async with Store(tmp_path / "store.db") as store:
-        await store.put_verdict(cache_key(job.job, "facts", _KEY_CFG), facts)
-
         cfg = LLMConfig(
             enabled=True,
             backend="ollama",
@@ -447,6 +439,7 @@ async def test_enrichment_is_skipped_once_the_call_ceiling_is_reached(
             max_calls_per_run=0,
         )
         scorer = FitScorer(cfg, ProfileConfig(min_report_score=55), store)
+        await store.put_verdict(scorer._facts_cache_key(job.job), facts)
 
         [out] = await scorer.score_all([job])
 

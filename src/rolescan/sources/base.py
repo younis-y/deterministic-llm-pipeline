@@ -99,7 +99,21 @@ class ProbeResult:
 
 
 class Source(ABC):
-    """Base class for a job board integration."""
+    """Base class for a job board integration.
+
+    `fetch` returns the jobs. Three attributes say how the read went (2.5.8),
+    all optional for a plugin, and the pipeline copies them onto the
+    source's `SourceReport` once `fetch` returns:
+
+      total      the board's own count of what it lists, when it states one;
+                 None when it does not.
+      truncated  why the read stopped short of the whole board (a row cap, a
+                 page that never came), or "" when it did not. A source that
+                 stops short must say so: a read cut at a cap and a small
+                 board are otherwise the same number, and the run reads ok.
+      note       one line for the digest's "Notes" that is not a failure
+                 (postings skipped as unreadable, a backlog waiting).
+    """
 
     name: ClassVar[str] = ""
     #: Human-readable hint shown by `rolescan discover` when a slug fails.
@@ -128,6 +142,12 @@ class Source(ABC):
         #: per posting have anything to gain from it; the JSON APIs return a
         #: whole board in one request and ignore it.
         self.cache = cache
+        #: The board's own count, when it states one (2.5.8). Set by `fetch`.
+        self.total: int | None = None
+        #: Why `fetch` read less than the board holds, or "" (2.5.8).
+        self.truncated = ""
+        #: A line for the digest's "Notes", not a failure (2.5.8).
+        self.note = ""
 
     async def probe(self) -> ProbeResult:
         """Test this slug and classify the outcome honestly."""

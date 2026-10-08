@@ -15,7 +15,7 @@ import httpx
 import pytest
 import respx
 
-from conftest import plain
+from conftest import mock_ollama_show, plain
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob
 from rolescan.scoring import FitScorer
@@ -126,7 +126,7 @@ async def test_ollama_judge_returns_a_validated_verdict() -> None:
 @respx.mock
 async def test_ollama_connection_refused_is_a_useful_message() -> None:
     """The most likely failure is that ollama simply is not running."""
-    respx.post("http://localhost:11434/api/chat").mock(
+    route = respx.post("http://localhost:11434/api/chat").mock(
         side_effect=httpx.ConnectError("connection refused")
     )
     judge = get_judge("ollama", LLMConfig(enabled=True, backend="ollama"))
@@ -134,6 +134,7 @@ async def test_ollama_connection_refused_is_a_useful_message() -> None:
         await judge.verdict("s", "u")
     assert "ollama" in str(e.value).casefold()
     assert "11434" in str(e.value)
+    assert route.call_count == 1, "a server that is not running is not retried"
 
 
 @respx.mock
@@ -168,7 +169,11 @@ async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
 
     cfg = LLMConfig(enabled=True, backend="ollama")
     await get_judge("ollama", cfg).verdict("s", "u")
-    assert seen["options"] == {"num_predict": cfg.max_tokens, "temperature": 0.0}
+    assert seen["options"] == {
+        "num_ctx": 12288,
+        "num_predict": cfg.max_tokens,
+        "temperature": 0.0,
+    }
 
     seen.clear()
     cfg = LLMConfig(enabled=True, backend="ollama", temperature=0.7)
@@ -312,6 +317,7 @@ async def test_a_usable_backend_reports_nothing() -> None:
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:8b"}]})
     )
+    mock_ollama_show()
     cfg = LLMConfig(enabled=True, backend="ollama", model="llama3.1:8b")
     assert await unusable_backend_reason(cfg) == ""
 
@@ -365,6 +371,7 @@ async def test_ollama_preflight_passes_when_the_model_is_pulled() -> None:
             json={"models": [{"name": "llama3.1:8b"}, {"name": "qwen2.5:7b"}]},
         )
     )
+    mock_ollama_show()
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
     judge = get_judge("ollama", cfg)
     assert await judge.preflight() == ""
@@ -490,6 +497,7 @@ async def test_preflight_ignores_junk_entries_in_the_model_list() -> None:
             200, json={"models": ["qwen2.5:7b", None, {"name": "qwen2.5:7b"}]}
         )
     )
+    mock_ollama_show()
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
     assert await get_judge("ollama", cfg).preflight() == ""
 
@@ -524,6 +532,7 @@ async def test_an_untagged_model_matches_the_latest_tag() -> None:
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:latest"}]})
     )
+    mock_ollama_show()
     cfg = LLMConfig(enabled=True, backend="ollama", model="llama3.1")
     assert await get_judge("ollama", cfg).preflight() == ""
 

@@ -15,7 +15,10 @@ sources and store.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -27,8 +30,12 @@ from rolescan.models import Job, ScoredJob, Verdict
 from rolescan.scoring import (
     FitScorer,
     score_keywords,
-    unusable_backend_reason,
     unusable_enricher_reason,
+)
+from rolescan.scoring.judges import (
+    BackendStatus,
+    backend_status,
+    served_model_digest,
 )
 from rolescan.scoring.keyword import SYNTHETIC_PENALTIES
 from rolescan.sources import get_source
@@ -50,6 +57,16 @@ class SourceReport:
     skipped: bool = False
     """Declined to run (no credentials, unsupported region). Not a failure,
     but not a success either: nothing was tested."""
+    total: int | None = None
+    """The board's own count, when the source states one (2.5.8)."""
+    truncated: str = ""
+    """Why the source read less than the board holds, or "" (2.5.8)."""
+    note: str = ""
+    """A line for the digest's "Notes" that is not a failure (2.5.8)."""
+    read_shape: str = ""
+    """A short hash of the options that decide what the source reads, or ""
+    when none is set (2.5.8). It is part of the history key, so narrowing a
+    board starts a fresh baseline; see `_read_shape`."""
 
     @property
     def ok(self) -> bool:
@@ -67,6 +84,13 @@ class ScanResult:
     llm_cached: int = 0
     llm_errors: int = 0
     llm_error_detail: str = ""
+    llm_scored: int = 0
+    """Postings that got a verdict from the model this run, by a call or
+    from the cache (2.5.8). Less `llm_cached`, plus `llm_errors`, it is the
+    denominator of the error rate `llm_failure` reads."""
+    llm_breaker: bool = False
+    """The scorer stopped calling the model after `BREAKER_AFTER` failures in
+    a row and deferred the rest (2.5.8)."""
     llm_backend: str = ""
     """The backend scoring was configured to use, whether or not it ran.
 
@@ -74,6 +98,26 @@ class ScanResult:
     ANTHROPIC_API_KEY is missing" is exactly wrong advice for someone whose
     local server returned HTTP 500, and the digest is the one place the end
     user reads."""
+    llm_model: str = ""
+    """`llm.model` for this run, whether or not it ran (2.5.8)."""
+    llm_model_digest: str = ""
+    """The first 12 hex characters of the served model's digest, when the
+    backend reports one (Ollama does, in `/api/tags`), else "" (2.5.8). A tag
+    can be re-pulled under the same name; this is what says the weights
+    behind the run's verdicts changed."""
+    facts_cache_skipped: bool = False
+    """The facts cache was neither read nor written this run, because the
+    backend normally reports the served model's digest and this run could not
+    read it (2.5.8). A row keyed on no weights could later be replayed as the
+    answer of weights it never came from, so the run asks the model for every
+    posting instead."""
+    llm_window_stop: bool = False
+    """The model's own context window is smaller than `llm.num_ctx`, so the
+    LLM stage did not run: no posting was sent to the model and every one
+    kept its keyword score (2.5.8). Not a probe to try past, as every other
+    `llm_unusable` reason is: Ollama never runs a model past its window, so
+    each prompt longer than it would be cut, with token counts that cannot
+    show the cut. `llm_unusable` names the two windows."""
     llm_unusable: str = ""
     """Why the configured judge could not be used at all, or "".
 
@@ -108,6 +152,19 @@ class ScanResult:
     source that stops working without raising, leaving a run that exits 0 and
     delivers less than it should. Nothing else notices - the digest still has
     content from the sources that do work."""
+    shrunk_sources: list[tuple[str, int, float]] = field(default_factory=list)
+    """Sources that returned rows, but under 30% of their recent median
+    (2.5.8), as (label, rows this run, the median of their non-zero runs in
+    the last 14 days). The quiet alarm fires only at zero, and a board that
+    falls from 400 to 10 because its paging broke raises nothing either."""
+    truncated_sources: list[tuple[str, int, int | None, str]] = field(
+        default_factory=list
+    )
+    """Sources that said they read less than the board holds (2.5.8), as
+    (label, rows read, the board's own total or None, the source's reason).
+    Four large Workday boards were read as exactly 500 postings on 2026-10-06
+    against totals of 2,000 to 3,891, and the run said nothing: the roles
+    past the cut are in no digest."""
     hidden_blocked: int = 0
     """Postings that scored high enough for the digest and were removed from
     it solely because they were blocked, with `output.show_blocked` false.
@@ -146,17 +203,21 @@ class ScanResult:
     with `show_blocked: true`) is already in the digest and is not repeated.
 
     A prefilter reject is included when its terms are what put it under
-    the gate: its keyword score plus the `blockers` weights of its
-    `blocker_hits` clears `min_keyword_score`. (2.5.7: so is one whose
+    the gate: it has a `blocker_hits` entry, and its keyword score plus the
+    `blockers` weights of every term it was charged (`keyword_penalties`)
+    clears `min_keyword_score`. (2.5.7: so is one whose
     weighted `blockers` terms alone did it, and one within
     `profile.hidden_gate_margin` of the gate, whatever put it there; both
     carry no rule, and the digest groups them as `blockers` and `gate`. A
     thin posting a `hard_blockers` term caught is listed too.) A reject that
     fails the gate by more than that either way is low relevance, not a rule
-    hide. An `excluded_locations`
-    entry carries no weight, so an irrelevant posting in an excluded location
-    is not listed (about seven US postings a day on the owner's store), while
-    a relevant one clears the gate, is judged, and is listed from there.
+    hide. An `excluded_locations` entry carries no weight, so an irrelevant
+    posting in an excluded location is not listed (about seven a day on one
+    real store), while a relevant one clears the gate, is judged, and is
+    listed from there. One whose only hit is its location but whose weighted
+    terms pushed it under is listed under the terms group, showing the
+    location: whatever put a posting under the gate, its hit is shown (kept
+    in 2.5.8 when the 2.5.7 review asked whether that was noise).
     Rejects are still recorded as seen, so a wrongly hidden posting is listed
     once, on the run it is first seen, and not again (a `--dry` run records
     nothing, so it lists it every time)."""
@@ -188,6 +249,29 @@ class ScanResult:
     dry_run: bool = False
 
     @property
+    def llm_failure(self) -> str:
+        """Why this run's LLM scoring failed as a whole, or "" (2.5.8).
+
+        Non-empty is what makes `rolescan scan` exit 3, so a wrapper (launchd,
+        a scheduler) sees what the digest says. An Ollama outage used
+        to print a loud banner and exit 0. Three ways: the judge was
+        configured and nothing was scored, with the pre-scan check saying
+        why; the breaker stopped the scorer; or more than 20% of the postings
+        that reached the model failed. Only those count: a cache hit asked
+        the model nothing, so 40 hits beside 10 calls of which 5 failed is
+        half the calls failing, not a tenth. A deliberate keyword-only run
+        (no judge asked for) is never a failure.
+        """
+        if self.llm_unusable and not self.llm_scored:
+            return f"LLM scoring did not run: {self.llm_unusable}"
+        if self.llm_breaker:
+            return "LLM scoring stopped after repeated failures in a row"
+        attempted = (self.llm_scored - self.llm_cached) + self.llm_errors
+        if attempted and self.llm_errors > 0.2 * attempted:
+            return f"LLM scoring failed for {self.llm_errors} of {attempted} postings"
+        return ""
+
+    @property
     def failed_sources(self) -> list[SourceReport]:
         return [r for r in self.reports if r.error and not r.skipped]
 
@@ -195,11 +279,24 @@ class ScanResult:
     def skipped_sources(self) -> list[SourceReport]:
         return [r for r in self.reports if r.skipped]
 
+    @property
+    def notes(self) -> list[tuple[str, str]]:
+        """(label, note) for each source that ran and left a note (2.5.8):
+        something to know that is not a failure, such as postings it skipped
+        as unreadable. A failed or skipped source's note is left out: its
+        error line already says what happened."""
+        return [(r.label or r.slug, r.note) for r in self.reports if r.ok and r.note]
+
 
 async def _fetch_one(
     entry: SourceEntry, fetcher: Fetcher, cache: PostingCache | None = None
 ) -> tuple[SourceReport, list[Job]]:
-    report = SourceReport(kind=entry.kind, slug=entry.slug, label=entry.label)
+    report = SourceReport(
+        kind=entry.kind,
+        slug=entry.slug,
+        label=entry.label,
+        read_shape=_read_shape(entry),
+    )
     try:
         source = get_source(entry, fetcher, cache)
         jobs = await source.fetch()
@@ -216,7 +313,21 @@ async def _fetch_one(
         log.warning("source %s/%s failed: %s", entry.kind, entry.slug, report.error)
         return report, []
     report.count = len(jobs)
+    _copy_read_report(source, report)
     return report, jobs
+
+
+def _copy_read_report(source: object, report: SourceReport) -> None:
+    """Copy what the source said about its read onto its report (2.5.8).
+
+    Read with `getattr`: a plugin written before 2.5.8, or one whose
+    `__init__` does not call `Source.__init__`, has none of the three, and
+    that reads as "said nothing", never as a failed source."""
+    total = getattr(source, "total", None)
+    valid = isinstance(total, int) and not isinstance(total, bool) and total >= 0
+    report.total = total if valid else None
+    report.truncated = str(getattr(source, "truncated", "") or "")
+    report.note = str(getattr(source, "note", "") or "")
 
 
 async def fetch_all(
@@ -247,20 +358,22 @@ def deduplicate(jobs: list[Job]) -> list[Job]:
     return list(best.values())
 
 
-async def _preflight(cfg: Config) -> tuple[str, str]:
-    """(why the configured judge cannot be used at all, why the configured
-    enricher cannot be used), each "" if it can.
+async def _preflight(cfg: Config) -> tuple[BackendStatus, str]:
+    """(what the check learned about the configured judge: why it cannot be
+    used at all, the served model's digest and its context window; why the
+    configured enricher cannot be used, or "").
 
     Run before anything is fetched, so either kind of misconfiguration says
     so up front instead of surfacing later as a silently degraded digest.
-    Returned as two SEPARATE strings on purpose (round 2 of this task's
+    The two reasons are kept SEPARATE on purpose (round 2 of this task's
     review folded the enricher reason into the backend one, which then read
     as a broken judge backend everywhere `llm_unusable` is consulted -
     `assessed`'s `backend_broke`, the digest's "did not run at all"
     note, the CLI's matching warning - for a fault that does not stop
     scoring at all, only the extra step an enricher adds on top of it).
     """
-    backend_reason = await unusable_backend_reason(cfg.llm)
+    status = await backend_status(cfg.llm)
+    backend_reason = status.reason
     if backend_reason:
         log.warning(
             "LLM scoring is unavailable: %s. Postings will be ranked on "
@@ -275,11 +388,55 @@ async def _preflight(cfg: Config) -> tuple[str, str]:
             cfg.llm.enricher,
             enricher_reason,
         )
-    return backend_reason, enricher_reason
+    return status, enricher_reason
+
+
+def _window_stops_scoring(cfg: Config, status: BackendStatus) -> bool:
+    """Whether the model's own window is below `llm.num_ctx`: the one
+    pre-scan reason the LLM stage does not run past (2.5.8)."""
+    window = status.context_window
+    return bool(status.reason) and window is not None and window < cfg.llm.num_ctx
+
+
+async def _settle_identity(cfg: Config, result: ScanResult) -> None:
+    """Never let the facts cache be keyed on weights this run cannot name.
+
+    Ollama reports a model digest in `/api/tags`; the pre-scan check blanks it
+    when its short probe fails (a server busy loading a model can miss 3 s).
+    Keying on the blank digest would miss every cached row and write new ones
+    that belong to no weights, and a later run after a re-pull would be handed
+    them (2.5.8). So when the probe reported a problem and gave no digest, the
+    list is read once more with a longer timeout. A digest from that read is
+    the run's identity; a server that lists the model with no digest has none
+    to report, and "" stands; if the list cannot be read at all, the identity
+    is unknown and `facts_cache_skipped` turns the facts cache off for the run.
+    A backend with no digest to give (a hosted one) is never affected, nor a
+    run whose model window stopped scoring: it calls no model.
+    """
+    llm = cfg.llm
+    if (
+        result.llm_model_digest
+        or result.llm_window_stop
+        or not result.llm_unusable
+        or not llm.enabled
+        or llm.mode != "facts"
+        or llm.backend != "ollama"
+    ):
+        return
+    digest = await served_model_digest(llm)
+    if digest is None:
+        result.facts_cache_skipped = True
+        log.warning(
+            "could not read the model's digest from %s: the facts cache is "
+            "skipped for this run (not read, not written)",
+            llm.base_url,
+        )
+    else:
+        result.llm_model_digest = digest
 
 
 async def _drop_already_handled(
-    scored: list[ScoredJob], store: Store
+    scored: list[ScoredJob], store: Store, *, touch: bool
 ) -> list[ScoredJob]:
     """Everything the reader has already dealt with, in one stage.
 
@@ -291,20 +448,52 @@ async def _drop_already_handled(
 
     The caller counts both as already seen, before taking that total, so the
     stats line still reconciles: unique = already seen + filtered before
-    scoring + whatever reached the scorer.
+    scoring + whatever reached the scorer. `touch` refreshes `seen.last_seen`
+    for the ones still listed (2.5.8); a dry run passes False and writes
+    nothing.
     """
-    fresh = await store.filter_new(scored)
+    fresh = await store.filter_new(scored, touch=touch)
     dismissed = await store.dismissed_urls()
     if dismissed:
         fresh = [s for s in fresh if s.job.url not in dismissed]
     return fresh
 
 
+#: The options that decide what a source reads (2.5.8): Workday's own filters
+#: and search texts, Adzuna's queries, a structured source's url exclusion.
+_READ_SHAPING_OPTIONS = ("applied_facets", "search_text", "queries", "exclude_pattern")
+
+
+def _read_shape(entry: SourceEntry) -> str:
+    """8 hex characters standing for the read-shaping options this entry sets,
+    or "" when it sets none (2.5.8).
+
+    A board narrowed to what the reader wants (Workday facets, a search text)
+    returns far fewer rows by design. Compared with a history of the whole
+    board, that reads as a collapse and raises the shrink alarm for a week, so
+    the options are part of the history key and narrowing starts a fresh
+    baseline. An option that is unset or empty adds nothing, so a key written
+    before 2.5.8 is unchanged only for an entry that sets none of
+    `queries`, `exclude_pattern`, `applied_facets` and `search_text`. An
+    entry that already set Adzuna `queries` or an `exclude_pattern` gets a
+    new key at the upgrade, and its alarms start from a fresh history.
+    """
+    options = entry.options
+    shaping = {k: options[k] for k in _READ_SHAPING_OPTIONS if options.get(k)}
+    if not shaping:
+        return ""
+    blob = json.dumps(shaping, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:8]
+
+
 def _source_key(report: SourceReport) -> str:
     """Identity for count history. Includes the label because two entries can
     share a kind and slug - the Adzuna config has one per location - and would
-    otherwise overwrite each other's history."""
-    return f"{report.kind}:{report.slug}:{report.label}"
+    otherwise overwrite each other's history. Includes the read-shaping
+    options, when there are any, because a narrowed board is a different
+    series (see `_read_shape`)."""
+    key = f"{report.kind}:{report.slug}:{report.label}"
+    return f"{key}:{report.read_shape}" if report.read_shape else key
 
 
 def _ages_meaningfully(source: str) -> bool:
@@ -397,12 +586,44 @@ async def _count_thin(
 
 
 async def _judge(
-    candidates: list[ScoredJob], cfg: Config, store: Store
-) -> tuple[list[ScoredJob], FitScorer]:
-    """LLM fit score, cached on the posting's content hash."""
-    scorer = FitScorer(cfg.llm, cfg.profile, store, extra_prompt=cfg.llm.extra_prompt)
+    candidates: list[ScoredJob],
+    cfg: Config,
+    store: Store,
+    result: ScanResult,
+    *,
+    context_window: int | None = None,
+) -> list[ScoredJob]:
+    """LLM fit score, cached on the posting's content hash and the prompt's
+    fingerprint, which includes the served model's digest; the run's LLM
+    figures are written onto `result`. The facts cache sits out when the run
+    could not name the weights (`facts_cache_skipped`, see
+    `_settle_identity`).
+
+    When the model's own window is below `llm.num_ctx`
+    (`result.llm_window_stop`) no scorer is built: every candidate keeps its
+    keyword score, nothing is scored, and `llm_failure` says why (2.5.8).
+    `context_window` is the window the preflight read, handed to the scorer's
+    judge so its token-count check uses the window the server really runs.
+    """
+    if result.llm_window_stop:
+        return candidates
+    scorer = FitScorer(
+        cfg.llm,
+        cfg.profile,
+        store,
+        extra_prompt=cfg.llm.extra_prompt,
+        model_digest=result.llm_model_digest,
+        facts_cache=not result.facts_cache_skipped,
+        context_window=context_window,
+    )
     judged = await scorer.score_all(candidates)
-    return judged, scorer
+    result.llm_calls = scorer.calls_made
+    result.llm_cached = sum(1 for s in judged if s.llm_cached)
+    result.llm_errors = scorer.errors
+    result.llm_error_detail = scorer.first_error
+    result.llm_scored = sum(1 for s in judged if s.fit is not None)
+    result.llm_breaker = scorer.tripped
+    return judged
 
 
 def assessed(
@@ -604,43 +825,111 @@ def _rule_hidden(
     )
 
 
+#: The shrink alarm (2.5.8): a source that returns rows, but under
+#: `_SHRINK_PERCENT`% of the median of its non-zero runs in the last
+#: `_SHRINK_DAYS` days, with at least `_SHRINK_MIN_RUNS` such runs and a
+#: median of at least `_SHRINK_MIN_MEDIAN`. Below that median a swing from 9
+#: to 2 is an ordinary week, not a defect; with fewer runs there is no
+#: baseline yet.
+_SHRINK_PERCENT = 30
+_SHRINK_MIN_RUNS = 3
+_SHRINK_MIN_MEDIAN = 10
+_SHRINK_DAYS = 14
+
+
+@dataclass(frozen=True, slots=True)
+class Coverage:
+    """What `_check_coverage` found, one list per alarm (2.5.8)."""
+
+    quiet: list[tuple[str, int]] = field(default_factory=list)
+    shrunk: list[tuple[str, int, float]] = field(default_factory=list)
+    truncated: list[tuple[str, int, int | None, str]] = field(default_factory=list)
+
+
 async def _check_coverage(
     reports: list[SourceReport], store: Store, *, record: bool = True
-) -> list[tuple[str, int]]:
-    """Record what each source returned, and name the ones that went quiet.
+) -> Coverage:
+    """Record what each source returned, and name the ones that went quiet,
+    shrank, or were cut short.
 
     Quiet means: returned nothing this run, raised nothing, and has returned
     rows within the last 14 days. A source that has never worked is not
     quiet, it is unconfigured, and saying so every morning would train the
     reader to ignore the line that matters.
 
-    Sources that errored or skipped are excluded - those already have their
-    own line in the digest, and reporting them twice buries the silent case
-    among the loud ones.
+    Shrunk (2.5.8) means: returned rows, but under 30% of the median of its
+    non-zero runs in the last 14 days, given at least three such runs and a
+    median of 10 or more. Three of the nine silent defects in the 2026-10-07
+    audit returned rows (paging stuck on page one, a Workday board read to 40,
+    a 400-row cap on a board of 1,412), so an alarm at zero alone missed
+    them. The history is read before this run is recorded: a run is never its
+    own baseline.
 
-    `record=False` on a dry run (2.5.7): the alarm looks back over a window of
-    recent runs, and a `--dry` run used to write its counts into that window,
-    so a few of them taught the store that zero was normal for a source that
-    had gone silent.
+    Cut short (2.5.8) means: the source said it read less than the board
+    holds (`SourceReport.truncated`), listed with its count, the board's
+    total when stated, and its reason. A count under the stated total with
+    no reason is not enough: a posting skipped as unreadable, or a repeat
+    dropped, would read as cut short on every run, so a source names its own
+    stops.
+
+    Sources that errored or skipped are in none of the three - those already
+    have their own line in the digest, and reporting them twice buries the
+    silent case among the loud ones.
+
+    `record=False` on a dry run (2.5.7): the alarms look back over a window
+    of recent runs, and a `--dry` run used to write its counts into that
+    window, so a few of them taught the store that zero was normal for a
+    source that had gone silent. A real run records each count with the
+    board's own total beside it (2.5.8).
     """
-    quiet: list[tuple[str, int]] = []
+    found = Coverage()
     for report in reports:
         if not report.ok:
             continue
+        label = report.label or report.slug
+        if report.truncated:
+            found.truncated.append(
+                (label, report.count, report.total, report.truncated)
+            )
         if report.count == 0:
             previous = await store.source_high_water(_source_key(report))
             if previous > 0:
-                quiet.append((report.label or report.slug, previous))
+                found.quiet.append((label, previous))
                 log.warning(
                     "source %s returned nothing; it returned up to %d recently",
-                    report.label or report.slug,
+                    label,
                     previous,
                 )
+        elif median := await _shrunk_from(store, _source_key(report), report.count):
+            found.shrunk.append((label, report.count, median))
+            log.warning(
+                "source %s returned %d, under %d%% of its recent median of %g",
+                label,
+                report.count,
+                _SHRINK_PERCENT,
+                median,
+            )
     if record:
         await store.record_source_counts(
-            {_source_key(r): r.count for r in reports if r.ok}
+            {_source_key(r): (r.count, r.total) for r in reports if r.ok}
         )
-    return quiet
+    return found
+
+
+async def _shrunk_from(store: Store, key: str, count: int) -> float:
+    """The recent median `count` collapsed from, or 0.0 when it did not.
+
+    Compared as `count * 100` against `median * 30`, which is exact for the
+    median of whole numbers: in floating point 30% of 10 is
+    3.0000000000000004, which would call a count of exactly 30% a collapse.
+    """
+    recent = await store.source_counts_recent(key, days=_SHRINK_DAYS)
+    if len(recent) < _SHRINK_MIN_RUNS:
+        return 0.0
+    median = float(statistics.median(recent))
+    if median < _SHRINK_MIN_MEDIAN or count * 100 >= median * _SHRINK_PERCENT:
+        return 0.0
+    return median
 
 
 async def run_scan(
@@ -658,9 +947,17 @@ async def run_scan(
     re-reports every posting on every run, so any new caller of `run_scan`
     must do the same.
     """
-    result = ScanResult(dry_run=dry_run, llm_backend=cfg.llm.backend)
+    result = ScanResult(
+        dry_run=dry_run, llm_backend=cfg.llm.backend, llm_model=cfg.llm.model
+    )
+    window: int | None = None
     if check_llm:
-        result.llm_unusable, result.enricher_unusable = await _preflight(cfg)
+        status, result.enricher_unusable = await _preflight(cfg)
+        result.llm_unusable = status.reason
+        result.llm_model_digest = status.model_digest
+        result.llm_window_stop = _window_stops_scoring(cfg, status)
+        window = status.context_window
+        await _settle_identity(cfg, result)
 
     # The store opens BEFORE fetching, not after: the structured source needs
     # the posting cache during fetch to skip detail pages whose sitemap lastmod
@@ -675,13 +972,14 @@ async def run_scan(
         unique = merge_near_duplicates(deduplicate(fresh_raw))
         result.unique = len(unique)
 
-        result.quiet_sources = await _check_coverage(
-            result.reports, store, record=not dry_run
-        )
+        coverage = await _check_coverage(result.reports, store, record=not dry_run)
+        result.quiet_sources = coverage.quiet
+        result.shrunk_sources = coverage.shrunk
+        result.truncated_sources = coverage.truncated
 
         scored = [score_keywords(j, cfg.profile) for j in unique]
 
-        fresh = await _drop_already_handled(scored, store)
+        fresh = await _drop_already_handled(scored, store, touch=not dry_run)
         result.already_seen = len(scored) - len(fresh)
 
         candidates, rejects, thin = _prefilter(fresh, cfg.profile.min_keyword_score)
@@ -690,11 +988,7 @@ async def run_scan(
         if not dry_run:
             result.unread, thin = await _count_thin(thin, store, result.unread_after)
 
-        judged, scorer = await _judge(candidates, cfg, store)
-        result.llm_calls = scorer.calls_made
-        result.llm_cached = sum(1 for s in judged if s.llm_cached)
-        result.llm_errors = scorer.errors
-        result.llm_error_detail = scorer.first_error
+        judged = await _judge(candidates, cfg, store, result, context_window=window)
 
         result.reportable, result.hidden_blocked, overflow = _rank(judged, cfg)
         cut = {s.job.uid: s for s in overflow}
@@ -709,7 +1003,7 @@ async def run_scan(
             result.to_record = assessed(
                 rejects,
                 judged,
-                backend_broke=bool(result.llm_unusable) or scorer.errors > 0,
+                backend_broke=bool(result.llm_unusable) or result.llm_errors > 0,
             ) + [(s, "thin_unread") for s in result.unread]
     return result
 

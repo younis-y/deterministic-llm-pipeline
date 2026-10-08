@@ -206,3 +206,43 @@ def test_a_graduate_programme_name_is_not_a_graduation_word(quote: str) -> None:
     job = _job(quote, title=quote)
     facts = _facts(graduation_year=GraduationYearFact(value=2027, quote=quote))
     assert verify_facts(facts, job).graduation_year.value is None
+
+
+@pytest.mark.parametrize(
+    ("quote", "stated", "expected"),
+    [
+        ("a team of 2-5 people; 5 years of experience", 5, 5),
+        ("offices in 3-4 countries, 4+ years of experience", 4, 4),
+        ("Experience: 3-5", 5, 3),
+        ("a team of 2-5 people; 3-5 years of experience", 5, 3),
+        ("Years of Experience Required: 1-3", 3, 1),
+        ("Experience required: 2-5", 5, 2),
+        ("Experience level: 2-4", 4, 2),
+        ("Experience: Minimum 2-3", 3, 2),
+        ("3-5 YOE", 5, 3),
+        ("Experience needed: 2-4", 4, 2),
+        ("YOE: 3-5", 5, 3),
+    ],
+    ids=[
+        "team-size",
+        "office-count",
+        "labelled-without-years-word",
+        "team-size-then-a-years-range",
+        "label-with-required",
+        "label-with-required-lowercase",
+        "label-with-level",
+        "label-with-minimum",
+        "yoe",
+        "label-with-needed",
+        "yoe-as-a-label",
+    ],
+)
+def test_only_a_range_of_years_corrects_the_value(
+    quote: str, stated: int, expected: int
+) -> None:
+    """2.5.7 took any "N-M" in the quote for the years range, so a team size
+    before the requirement turned the model's 5 into 2 (2.5.8). A range
+    counts when the years word follows it or a years label precedes it."""
+    job = _job(f"Join {quote}.")
+    facts = _facts(years_required=YearsFact(value=stated, quote=quote))
+    assert resolve_years(verify_facts(facts, job), job).years_required.value == expected

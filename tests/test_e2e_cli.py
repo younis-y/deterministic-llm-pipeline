@@ -16,7 +16,7 @@ import respx
 from typer.testing import CliRunner
 
 from conftest import OLLAMA_MODEL, mock_ollama, plain
-from rolescan.cli import app
+from rolescan.cli import _SCAN_EXIT_STATUS, app
 from rolescan.models import Job, ScoredJob
 from rolescan.store import Store
 
@@ -73,6 +73,15 @@ def test_help_lists_every_command() -> None:
     assert result.exit_code == 0
     for command in ("scan", "discover", "sources", "show", "stats", "prune"):
         assert command in plain(result.output)
+
+
+def test_scan_help_and_the_readme_name_the_same_exit_statuses() -> None:
+    result = runner.invoke(app, ["scan", "--help"])
+    assert result.exit_code == 0
+    sentence = " ".join(_SCAN_EXIT_STATUS.split())
+    assert sentence in " ".join(plain(result.output).split())
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+    assert sentence in " ".join(readme.split())
 
 
 def test_missing_config_exits_cleanly(tmp_path: Path) -> None:
@@ -146,12 +155,13 @@ def test_seen_is_written_even_if_terminal_rendering_fails(
     an exception there left a digest whose postings were reported again on the
     next run. The exit code is still non-zero: the command did fail."""
     import rolescan.cli as cli_module
+    import rolescan.digest as digest_module
 
     cfg = _project(tmp_path)
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(200, json=BOARD)
     )
-    real_write = cli_module.write_digest
+    real_write = digest_module.write_digest
     real_print = cli_module.console.print
     written: list[Path] = []
 
