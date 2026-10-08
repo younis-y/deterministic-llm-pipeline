@@ -36,7 +36,7 @@ from pydantic import BaseModel, ValidationError
 
 from rolescan.models import FitVerdict, Job, ScoredJob
 
-__all__ = ["Store"]
+__all__ = ["Store", "StoreTooNewError"]
 
 log = logging.getLogger(__name__)
 
@@ -147,6 +147,14 @@ def _statements(script: str) -> list[str]:
     return out
 
 
+class StoreTooNewError(RuntimeError):
+    """The file was written by a newer rolescan than the one opening it.
+
+    Opening it anyway ran old code against a schema it does not know: the
+    first write that disagreed failed half way through a scan (2.5.8).
+    """
+
+
 class Store:
     """Async SQLite store. Use as an async context manager."""
 
@@ -160,14 +168,18 @@ class Store:
     async def __aenter__(self) -> Self:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.path)
-        # WAL lets a long scan run while you read the digest from another shell.
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute("PRAGMA foreign_keys=ON")
         try:
+            # WAL lets a long scan run while you read the digest from another
+            # shell.
+            await self._db.execute("PRAGMA journal_mode=WAL")
+            await self._db.execute("PRAGMA foreign_keys=ON")
             await self._migrate()
         except BaseException:
-            # A failed migration used to leave the connection open, and its
-            # worker thread kept the process alive after the error.
+            # `__aexit__` does not run when `__aenter__` raises, and
+            # aiosqlite's worker is a non-daemon thread: a connection left
+            # open kept the process alive after the traceback. 2.5.7 closed it
+            # for a failed migration only; a file that is not a database fails
+            # on the first PRAGMA, before the migration (2.5.8).
             await self._db.close()
             self._db = None
             raise
@@ -179,8 +191,17 @@ class Store:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if self._db is not None:
-            await self._db.commit()
+        if self._db is None:
+            return
+        try:
+            # Commit on a clean exit only. Committing on the way out of an
+            # exception left a PREFIX of `record_all`'s rows behind when it
+            # was interrupted: marked seen, and in no digest (2.5.8).
+            if exc_type is None:
+                await self._db.commit()
+            else:
+                await self._db.rollback()
+        finally:
             await self._db.close()
             self._db = None
 
@@ -217,8 +238,22 @@ class Store:
         Statements are executed one at a time, not through `executescript`,
         because `executescript` commits first and so cannot join a
         transaction.
+
+        A file at a higher version than this code knows is refused with
+        `StoreTooNewError` and left untouched (2.5.8): older code used to open
+        it silently and fail at the first write the newer schema disagreed
+        with, half way through a scan.
         """
-        for i in range(await self._user_version(), len(_MIGRATIONS)):
+        version = await self._user_version()
+        if version > len(_MIGRATIONS):
+            msg = (
+                f"{self.path} is at schema version {version}, and this rolescan "
+                f"knows versions up to {len(_MIGRATIONS)}: it was written by a "
+                "newer rolescan. Upgrade rolescan, or restore a copy of the "
+                "store taken before the upgrade."
+            )
+            raise StoreTooNewError(msg)
+        for i in range(version, len(_MIGRATIONS)):
             script = _MIGRATIONS[i]
             await self.db.execute("BEGIN IMMEDIATE")
             try:
