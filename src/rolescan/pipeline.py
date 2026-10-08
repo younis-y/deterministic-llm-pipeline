@@ -50,6 +50,12 @@ class SourceReport:
     skipped: bool = False
     """Declined to run (no credentials, unsupported region). Not a failure,
     but not a success either: nothing was tested."""
+    total: int | None = None
+    """The board's own count, when the source states one (2.5.8)."""
+    truncated: str = ""
+    """Why the source read less than the board holds, or "" (2.5.8)."""
+    note: str = ""
+    """A line for the digest's "Notes" that is not a failure (2.5.8)."""
 
     @property
     def ok(self) -> bool:
@@ -257,7 +263,21 @@ async def _fetch_one(
         log.warning("source %s/%s failed: %s", entry.kind, entry.slug, report.error)
         return report, []
     report.count = len(jobs)
+    _copy_read_report(source, report)
     return report, jobs
+
+
+def _copy_read_report(source: object, report: SourceReport) -> None:
+    """Copy what the source said about its read onto its report (2.5.8).
+
+    Read with `getattr`: a plugin written before 2.5.8, or one whose
+    `__init__` does not call `Source.__init__`, has none of the three, and
+    that reads as "said nothing", never as a failed source."""
+    total = getattr(source, "total", None)
+    valid = isinstance(total, int) and not isinstance(total, bool) and total >= 0
+    report.total = total if valid else None
+    report.truncated = str(getattr(source, "truncated", "") or "")
+    report.note = str(getattr(source, "note", "") or "")
 
 
 async def fetch_all(

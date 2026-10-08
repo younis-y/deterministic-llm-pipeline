@@ -226,6 +226,11 @@ sources:
   # From discover: 422 means no such tenant (slug or host wrong); 404 means the
   # tenant exists and the site value is wrong.
   # - {kind: workday, slug: example, site: Example_Careers, host: wd3, label: Example Co}
+  # A board holding more than 500 postings is read to 500 and listed under
+  # "Sources that were cut short". Lift the cap with max_rows: 2000, or narrow
+  # the read with Workday's own facets (applied_facets: {<facet parameter>:
+  # [<value id>]}, ids from the board's listing answer) or with one pass per
+  # search (search_text: [data, analyst]).
 
   # The generic source: any careers site that publishes schema.org JobPosting
   # and a sitemap. Covers Phenom People, SAP SuccessFactors, Teamtailor and

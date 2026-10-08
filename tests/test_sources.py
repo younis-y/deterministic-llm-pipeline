@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import httpx
 import pytest
@@ -9,8 +10,15 @@ import respx
 from rolescan.config import HTTPConfig, SourceEntry
 from rolescan.http import Fetcher, FetchError
 from rolescan.models import Job
+from rolescan.pipeline import _fetch_one
 from rolescan.sources import available, get_source
-from rolescan.sources.base import Source, SourceSkipped, strip_html
+from rolescan.sources.base import (
+    _REGISTRY,
+    PostingCache,
+    Source,
+    SourceSkipped,
+    strip_html,
+)
 
 
 async def _fetch(entry: SourceEntry) -> list[Job]:
@@ -538,3 +546,275 @@ async def test_lever_wrong_slug_still_fails_loudly() -> None:
     async with Fetcher() as f:
         with pytest.raises(FetchError):
             await get_source(SourceEntry(kind="lever", slug="nope"), f).fetch()
+
+
+# --- 2.5.8: how much of the board a source read ----------------------------
+
+WD = "https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/Careers"
+
+
+async def _read(entry: SourceEntry) -> tuple[Source, list[Job]]:
+    """The source as well as its jobs: `fetch` reports on the source."""
+    async with Fetcher(HTTPConfig(max_retries=0)) as f:
+        source = get_source(entry, f)
+        return source, await source.fetch()
+
+
+def _acme(**options: Any) -> SourceEntry:
+    """acme's Workday board; no detail calls unless `details=True`."""
+    board: dict[str, Any] = {"kind": "workday", "slug": "acme", "label": "Acme"}
+    board |= {"site": "Careers", "host": "wd3", "details": False} | options
+    return SourceEntry.model_validate(board)
+
+
+def _workday_board(
+    ids: range, *, by_text: dict[str, range] | None = None
+) -> list[dict[str, Any]]:
+    """Serve acme's listing as Workday does: `limit` postings a page, and the
+    board's `total` on the first page only (0 on later ones, as in
+    `test_workday_pages_past_the_second_page`). `by_text` serves a different
+    board per `searchText`. Returns every request body, in order."""
+    bodies: list[dict[str, Any]] = []
+
+    def page(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        board = (by_text or {}).get(body["searchText"], ids)
+        offset = body["offset"]
+        rows = [
+            {"title": f"Job {i}", "externalPath": f"/job/X/J_{i}"}
+            for i in board[offset : offset + body["limit"]]
+        ]
+        return httpx.Response(
+            200,
+            json={"total": len(board) if offset == 0 else 0, "jobPostings": rows},
+        )
+
+    respx.post(f"{WD}/jobs").mock(side_effect=page)
+    return bodies
+
+
+def test_a_source_starts_with_nothing_to_report() -> None:
+    source = get_source(SourceEntry(kind="greenhouse", slug="acme"), Fetcher())
+    assert (source.total, source.truncated, source.note) == (None, "", "")
+
+
+@respx.mock
+async def test_workday_asks_for_the_whole_board_by_default() -> None:
+    bodies = _workday_board(range(3))
+    source, jobs = await _read(_acme())
+    assert bodies == [{"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": ""}]
+    assert len(jobs) == 3
+    assert (source.total, source.truncated, source.note) == (3, "", "")
+
+
+@respx.mock
+async def test_workday_reads_to_max_rows_and_says_it_stopped_short() -> None:
+    """Four large boards were each read as exactly 500 postings on 2026-10-06,
+    against live totals of 2,000 to 3,891, and every run read ok: 2.5.7
+    stopped at 25 pages of 20 and said nothing. The default cap is still
+    500; the read now says where it stopped."""
+    _workday_board(range(2000))
+    source, jobs = await _read(_acme())
+    assert len(jobs) == 500
+    assert source.total == 2000
+    assert source.truncated == "stopped at 500 of 2000 postings (max_rows 500)"
+
+
+@respx.mock
+async def test_a_board_exactly_max_rows_long_is_not_cut_short() -> None:
+    """A false "cut short" on every run would teach the reader to ignore it."""
+    _workday_board(range(500))
+    source, jobs = await _read(_acme())
+    assert len(jobs) == 500
+    assert (source.total, source.truncated) == (500, "")
+
+
+@pytest.mark.parametrize(
+    ("max_rows", "read", "truncated"),
+    [
+        ("30", 30, "stopped at 30 of 45 postings (max_rows 30)"),
+        (45, 45, ""),
+        ("2000", 45, ""),
+    ],
+)
+@respx.mock
+async def test_workday_max_rows_sets_the_cap(
+    max_rows: object, read: int, truncated: str
+) -> None:
+    """A number or a string: a plugin passes options through from its own
+    config, where every value is a string. 30 is not a multiple of the page
+    size, so the second page is trimmed to fit."""
+    _workday_board(range(45))
+    source, jobs = await _read(_acme(max_rows=max_rows))
+    assert [j.raw_id for j in jobs] == [f"/job/X/J_{i}" for i in range(read)]
+    assert source.truncated == truncated
+
+
+@pytest.mark.parametrize("max_rows", ["lots", 0, "-5"])
+@respx.mock
+async def test_workday_refuses_a_max_rows_that_is_not_a_positive_number(
+    max_rows: object,
+) -> None:
+    with pytest.raises(ValueError, match="max_rows"):
+        await _read(_acme(max_rows=max_rows))
+
+
+@pytest.mark.parametrize(
+    "facets",
+    [
+        {"Country_and_Jurisdiction": ["a1b2", "c3d4"], "jobFamilyGroup": "e5f6"},
+        '{"Country_and_Jurisdiction": ["a1b2", "c3d4"], "jobFamilyGroup": "e5f6"}',
+    ],
+)
+@respx.mock
+async def test_workday_sends_applied_facets(facets: object) -> None:
+    """A mapping in YAML, or the same as a JSON string; one id is a list."""
+    bodies = _workday_board(range(3))
+    await _read(_acme(applied_facets=facets))
+    assert bodies[0]["appliedFacets"] == {
+        "Country_and_Jurisdiction": ["a1b2", "c3d4"],
+        "jobFamilyGroup": ["e5f6"],
+    }
+
+
+@pytest.mark.parametrize("facets", ['["a", "list"]', "{not json", {"Country": [1, 2]}])
+@respx.mock
+async def test_workday_refuses_applied_facets_it_cannot_send(facets: object) -> None:
+    with pytest.raises(ValueError, match="applied_facets"):
+        await _read(_acme(applied_facets=facets))
+
+
+@respx.mock
+async def test_one_search_text_is_one_pass_with_the_boards_total() -> None:
+    bodies = _workday_board(range(0), by_text={"data": range(7)})
+    source, jobs = await _read(_acme(search_text="data"))
+    assert [b["searchText"] for b in bodies] == ["data"]
+    assert (len(jobs), source.total) == (7, 7)
+
+
+@respx.mock
+async def test_workday_reads_a_pass_per_search_text_and_keeps_each_posting_once() -> (
+    None
+):
+    bodies = _workday_board(
+        range(0), by_text={"data": range(30), "analyst": range(20, 45)}
+    )
+    source, jobs = await _read(_acme(search_text='["data", "analyst"]'))
+    assert sorted({b["searchText"] for b in bodies}) == ["analyst", "data"]
+    assert sorted(int(j.raw_id.rsplit("_", 1)[1]) for j in jobs) == list(range(45))
+    assert source.total is None, "overlapping passes state no one board total"
+    assert source.truncated == ""
+
+
+@respx.mock
+async def test_workday_names_the_search_pass_that_was_cut_short() -> None:
+    _workday_board(range(0), by_text={"data": range(45), "analyst": range(100, 110)})
+    source, jobs = await _read(_acme(search_text=["data", "analyst"], max_rows=20))
+    assert len(jobs) == 30
+    assert source.truncated == (
+        'stopped at 20 of 45 postings for search "data" (max_rows 20)'
+    )
+
+
+@respx.mock
+async def test_a_board_whose_pages_end_before_its_total_is_cut_short() -> None:
+    """The board states 45 and serves 20; the other 25 were never read."""
+
+    def page(request: httpx.Request) -> httpx.Response:
+        offset = json.loads(request.content)["offset"]
+        rows = [
+            {"title": f"Job {i}", "externalPath": f"/job/X/J_{i}"}
+            for i in range(20 if offset == 0 else 0)
+        ]
+        return httpx.Response(
+            200, json={"total": 45 if offset == 0 else 0, "jobPostings": rows}
+        )
+
+    respx.post(f"{WD}/jobs").mock(side_effect=page)
+    source, jobs = await _read(_acme())
+    assert len(jobs) == 20
+    assert source.truncated == "the board lists 45 postings but its pages ended at 20"
+
+
+@respx.mock
+async def test_workday_skips_a_posting_that_is_not_a_job_and_reads_the_rest() -> None:
+    """On 2026-10-07 a live board failed whole with "1 validation error for
+    Job": one posting had no title, and the exception took every other
+    posting on the board with it. The detail call proves the survivors stay
+    paired with their own listing rows."""
+    respx.post(f"{WD}/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "total": 2,
+                "jobPostings": [
+                    {"title": "", "externalPath": "/job/X/Blank_0"},
+                    {
+                        "title": "Data Scientist",
+                        "externalPath": "/job/X/DS_1",
+                        "locationsText": "London",
+                    },
+                ],
+            },
+        )
+    )
+    respx.get(f"{WD}/job/X/DS_1").mock(
+        return_value=httpx.Response(
+            200, json={"jobPostingInfo": {"jobDescription": "<p>Python and SQL</p>"}}
+        )
+    )
+    source, jobs = await _read(_acme(details=True))
+    assert [(j.title, j.description) for j in jobs] == [
+        ("Data Scientist", "Python and SQL")
+    ]
+    assert source.note.startswith(
+        "skipped 1 posting(s) that are not valid jobs (first: /job/X/Blank_0: "
+    )
+    assert source.truncated == "", "a posting read and refused is not a cut"
+
+
+class _SaysHowItWent(Source):
+    """A plugin that reports its read, as Workday now does."""
+
+    name = "says_how_it_went"
+
+    async def fetch(self) -> list[Job]:
+        self.total = 3891
+        self.truncated = "stopped at 2000 of 3891 postings"
+        self.note = "1 posting skipped"
+        return [
+            Job(source=self.name, company="Acme", title="Analyst", url="https://a/1")
+        ]
+
+
+class _OlderPlugin(Source):
+    """A plugin written before 2.5.8 whose __init__ skips Source.__init__."""
+
+    name = "older_plugin"
+
+    def __init__(
+        self, entry: SourceEntry, fetcher: Fetcher, cache: PostingCache | None = None
+    ) -> None:
+        self.entry = entry
+
+    async def fetch(self) -> list[Job]:
+        return []
+
+
+async def test_the_report_carries_what_the_source_said(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(_REGISTRY, "says_how_it_went", _SaysHowItWent)
+    monkeypatch.setitem(_REGISTRY, "older_plugin", _OlderPlugin)
+    async with Fetcher(HTTPConfig()) as f:
+        said, _ = await _fetch_one(SourceEntry(kind="says_how_it_went", slug="a"), f)
+        older, _ = await _fetch_one(SourceEntry(kind="older_plugin", slug="b"), f)
+
+    assert (said.count, said.total, said.truncated, said.note) == (
+        1,
+        3891,
+        "stopped at 2000 of 3891 postings",
+        "1 posting skipped",
+    )
+    assert (older.ok, older.total, older.truncated, older.note) == (True, None, "", "")
