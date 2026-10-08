@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -93,6 +94,40 @@ async def test_prune_all_trims_each_cache_and_keeps_what_is_still_needed(
         assert await _column(store, "SELECT url FROM applications") == {
             "https://old.example/applied"
         }
+
+
+async def test_a_listed_consider_role_is_kept_and_a_long_gone_apply_role_is_not(
+    tmp_path: Path,
+) -> None:
+    """The keep rule is "apply or consider, AND listed within the window":
+    drop `consider` from it, or the `last_seen` clause, and one of these two
+    postings is treated wrongly."""
+    recent = (datetime.now(UTC) - timedelta(days=10)).isoformat(timespec="seconds")
+    async with Store(tmp_path / "s.db") as store:
+        for uid, title, verdict, last_seen in (
+            ("c1", "Listed Consider", "consider", recent),
+            ("a1", "Long Gone Apply", "apply", OLD),
+        ):
+            url = f"https://old.example/{uid}"
+            await store.db.execute(
+                "INSERT INTO postings VALUES (?, '', '{}', ?)", (url, OLD)
+            )
+            await store.db.execute(
+                "INSERT INTO seen (uid, company, title, url, verdict, first_seen, "
+                "last_seen) VALUES (?, 'Acme', ?, ?, ?, ?, ?)",
+                (uid, title, url, verdict, OLD, last_seen),
+            )
+        await store.db.commit()
+
+        report = await store.prune_all(
+            postings_days=90, deferred_days=45, verdicts_days=180
+        )
+
+        assert report.postings == 1
+        assert await _column(store, "SELECT url FROM postings") == {
+            "https://old.example/c1"
+        }
+        assert await _column(store, "SELECT uid FROM seen") == {"c1", "a1"}
 
 
 async def test_zero_days_keeps_a_table_whole(tmp_path: Path) -> None:
@@ -238,3 +273,79 @@ def test_prune_days_must_be_at_least_one(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["prune", "-c", str(config), "--days", "0"])
 
     assert result.exit_code == 2
+
+
+def _config_with(tmp_path: Path, llm_line: str = "", retention: str = "") -> Path:
+    """`_CONFIG` with extra `llm:` keys and, optionally, `retention_days`."""
+    text = _CONFIG.replace("  enabled: false\n", f"  enabled: false\n{llm_line}")
+    if retention:
+        text += f"  retention_days: {retention}\n"
+    path = tmp_path / "config.yaml"
+    path.write_text(text)
+    return path
+
+
+def _verdict_aged(path: Path, days: int) -> None:
+    """A store holding one cached verdict created `days` days ago."""
+    created = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+
+    async def go() -> None:
+        async with Store(path) as store:
+            await store.db.execute(
+                "INSERT INTO verdicts VALUES ('v1', '{}', ?)", (created,)
+            )
+            await store.db.commit()
+
+    asyncio.run(go())
+
+
+def _verdicts_left(path: Path) -> int:
+    with closing(sqlite3.connect(path)) as conn:
+        return int(conn.execute("SELECT count(*) FROM verdicts").fetchone()[0])
+
+
+@pytest.mark.parametrize(
+    ("cache_days", "left"),
+    [(30, 0), (400, 1)],
+    ids=["cache_days under the retention", "cache_days over the retention"],
+)
+def test_verdicts_are_never_trimmed_younger_than_llm_cache_days(
+    tmp_path: Path, cache_days: int, left: int
+) -> None:
+    """A verdict 300 days old is past the default 180-day retention. While
+    `llm.cache_days` is 400 it is still a valid cache hit, so it stays."""
+    config = _config_with(tmp_path, f"  cache_days: {cache_days}\n")
+    _verdict_aged(tmp_path / "seen.db", 300)
+
+    result = CliRunner().invoke(app, ["prune", "-c", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert _verdicts_left(tmp_path / "seen.db") == left
+
+
+def test_verdicts_that_never_expire_are_never_trimmed(tmp_path: Path) -> None:
+    """`cache_days: 0` means a verdict is valid for ever, so no retention
+    shorter than for ever may remove one."""
+    config = _config_with(tmp_path, "  cache_days: 0\n")
+    _verdict_aged(tmp_path / "seen.db", 5000)
+
+    result = CliRunner().invoke(app, ["prune", "-c", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert _verdicts_left(tmp_path / "seen.db") == 1
+
+
+def test_prune_days_overrides_the_configured_retention(tmp_path: Path) -> None:
+    """The flag is an explicit request: it replaces the configured retention
+    and is not lifted to `llm.cache_days` (30 here, above the 5 asked for)."""
+    config = _config_with(tmp_path, retention="{verdicts: 3650}")
+    _verdict_aged(tmp_path / "seen.db", 10)
+
+    kept = CliRunner().invoke(app, ["prune", "-c", str(config)])
+    assert kept.exit_code == 0, kept.output
+    assert _verdicts_left(tmp_path / "seen.db") == 1
+
+    result = CliRunner().invoke(app, ["prune", "-c", str(config), "--days", "5"])
+
+    assert result.exit_code == 0, result.output
+    assert _verdicts_left(tmp_path / "seen.db") == 0

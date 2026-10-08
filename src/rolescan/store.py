@@ -341,11 +341,14 @@ class Store:
         on an older SQLite and a 10x board list would fail on any (2.5.8).
 
         `touch` refreshes `last_seen` on the postings found already seen, so
-        "when was this role last on a board" can be answered: before 2.5.8
+        "when did a scan last see this role" can be answered: before 2.5.8
         the only write to `last_seen` was an upsert branch `filter_new` made
         unreachable, and 4,616 of 5,048 live rows had `first_seen ==
-        last_seen`. Off by default, so the call stays a pure read for any
-        caller that does not ask; a scan passes `touch=not dry_run`.
+        last_seen`. Only postings that reach this call are touched: one the
+        scan drops earlier (stale, or merged into a near-duplicate) keeps its
+        older `last_seen` even though a board still lists it. Off by default,
+        so the call stays a pure read for any caller that does not ask; a scan
+        passes `touch=not dry_run`.
 
         The only thing interpolated into the SQL is a run of `?` placeholders,
         whose length comes from the chunk and nothing else. Every value is
@@ -692,7 +695,9 @@ class Store:
         never touched here: `seen` is the "listed once" record, and deleting a
         row re-lists the role. A cached posting is kept past its age while it
         has an `applications` row, or while it is an apply/consider role whose
-        `seen.last_seen` is within `postings_days` (`prepare` reads its text).
+        `seen.last_seen` is within `postings_days`: `rolescan mark` reads such
+        a page back to fill in the company and title, and the structured
+        source's cache reads a page back instead of fetching it again.
         """
         verdicts = await self.prune(verdicts_days) if verdicts_days else 0
         counts: dict[str, int] = {}

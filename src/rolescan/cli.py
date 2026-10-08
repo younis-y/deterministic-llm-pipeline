@@ -471,6 +471,20 @@ def stats(config: ConfigOpt = Path("config.yaml")) -> None:
     console.print(f"{asyncio.run(go())} postings recorded.")
 
 
+def _verdict_retention(cfg: Config) -> int:
+    """Days a cached verdict is kept by an automatic or configured trim; 0
+    keeps them all.
+
+    Never less than `llm.cache_days`: a verdict younger than that is still a
+    valid cache hit, and trimming it would make the next scan pay for the
+    same answer again. So it is `max(retention_days.verdicts, cache_days)`,
+    and `cache_days: 0` (a verdict never expires) means none is trimmed.
+    `rolescan prune --days N` is an explicit request and bypasses this.
+    """
+    keep, cache = cfg.output.retention_days.verdicts, cfg.llm.cache_days
+    return 0 if keep == 0 or cache == 0 else max(keep, cache)
+
+
 async def _prune(cfg: Config, *, verdicts_days: int | None = None) -> PruneReport:
     """Trim the store's caches to `output.retention_days`."""
     keep = cfg.output.retention_days
@@ -478,7 +492,9 @@ async def _prune(cfg: Config, *, verdicts_days: int | None = None) -> PruneRepor
         return await store.prune_all(
             postings_days=keep.postings,
             deferred_days=keep.deferred,
-            verdicts_days=keep.verdicts if verdicts_days is None else verdicts_days,
+            verdicts_days=(
+                _verdict_retention(cfg) if verdicts_days is None else verdicts_days
+            ),
         )
 
 
@@ -489,8 +505,9 @@ def prune(
         int | None,
         typer.Option(
             min=1,
-            help="Drop cached verdicts older than this "
-            "(default: output.retention_days.verdicts).",
+            help="Drop cached verdicts older than this, whatever llm.cache_days "
+            "says (default: output.retention_days.verdicts, never less than "
+            "llm.cache_days).",
         ),
     ] = None,
 ) -> None:

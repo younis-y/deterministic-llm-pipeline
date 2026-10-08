@@ -522,7 +522,9 @@ class RetentionConfig(BaseModel):
     deferred: Annotated[int, Field(ge=0)] = 45
     """Deferral counts of postings not sighted for this long."""
     verdicts: Annotated[int, Field(ge=0)] = 180
-    """Cached LLM facts and verdicts; `rolescan prune --days` overrides it."""
+    """Cached LLM facts and verdicts; `rolescan prune --days` overrides it.
+    Never less than `llm.cache_days` (a verdict younger than that is still a
+    valid cache hit), and with `llm.cache_days: 0` none is trimmed."""
 
 
 class OutputConfig(BaseModel):
