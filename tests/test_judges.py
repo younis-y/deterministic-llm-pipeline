@@ -168,7 +168,11 @@ async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
 
     cfg = LLMConfig(enabled=True, backend="ollama")
     await get_judge("ollama", cfg).verdict("s", "u")
-    assert seen["options"] == {"num_predict": cfg.max_tokens, "temperature": 0.0}
+    assert seen["options"] == {
+        "num_ctx": 12288,
+        "num_predict": cfg.max_tokens,
+        "temperature": 0.0,
+    }
 
     seen.clear()
     cfg = LLMConfig(enabled=True, backend="ollama", temperature=0.7)

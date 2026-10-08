@@ -395,6 +395,20 @@ class LLMConfig(BaseModel):
     Ollama's default of 0.8, so the same posting could score differently on
     a re-run and the measured accuracy never described what shipped."""
     description_chars: Annotated[int, Field(ge=500)] = 6000
+    num_ctx: Annotated[int, Field(ge=2048)] = 12288
+    """Context window, in tokens, asked of a local (Ollama) model on every
+    call (2.5.8). Unset, Ollama picks its own from the machine's memory:
+    32,768 on a 36 GB Mac, 4,096 on a smaller one, where it silently cut the
+    middle (the instructions and worked examples) out of a 7,200-8,300 token
+    facts prompt and still returned valid JSON. 12,288 holds the longest
+    measured prompt (8,333 tokens) plus a full 1,500-token answer."""
+    check_truncation: bool = True
+    """Treat an Ollama answer whose token counts show a cut prompt (or a full
+    window) as an error (2.5.8). The check assumes `prompt_eval_count` counts
+    the whole prompt even when Ollama reuses its cache, as measured on the
+    server this was built against. If a server or version counts only the
+    uncached part, every call would look cut: set this to false, which keeps
+    recording the counts but never judges them."""
     cache_days: Annotated[int, Field(ge=0)] = 30
     mode: Literal["facts", "judge"] = Field(
         default="facts",

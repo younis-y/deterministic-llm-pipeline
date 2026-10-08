@@ -13,6 +13,7 @@ import respx
 from rolescan.config import Config, ProfileConfig
 from rolescan.models import Job
 from rolescan.pipeline import ScanResult, record_scan, run_scan
+from rolescan.scoring import judges
 
 FIXTURE_CONFIG = """
 profile:
@@ -118,6 +119,13 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
         raise socket.gaierror(msg)
 
     monkeypatch.setattr(socket, "getaddrinfo", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Ollama judge waits `RETRY_DELAY` seconds before its one retry; a
+    test that exercises a 5xx or a timeout should not."""
+    monkeypatch.setattr(judges, "RETRY_DELAY", 0.0)
 
 
 @pytest.fixture

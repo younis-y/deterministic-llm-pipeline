@@ -18,10 +18,12 @@ ship one from another package under the `rolescan.judges` entry-point group.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from importlib.metadata import entry_points
 from typing import Annotated, Any, ClassVar
 
@@ -34,8 +36,11 @@ from rolescan.scoring.facts import PostingFacts
 
 __all__ = [
     "Judge",
+    "OllamaUsage",
+    "PromptTruncatedError",
     "available_judges",
     "get_judge",
+    "ollama_options",
     "register",
     "unusable_backend_reason",
 ]
@@ -49,6 +54,94 @@ _REGISTRY: dict[str, type[Judge]] = {}
 #: it must never become a new way for the tool to hang. `LLMConfig.timeout`
 #: is for a chat completion and is far too long for this.
 PREFLIGHT_TIMEOUT = 3.0
+
+#: Seconds before the one retry of an Ollama call that timed out or got a 5xx.
+#: A runner restarting mid-call, or a model being reloaded under memory
+#: pressure, answers on the second try; a server that is really down fails
+#: twice and is counted once.
+RETRY_DELAY = 2.0
+
+#: The fewest prompt tokens per character a real prompt has ever measured.
+#: 2026-10-07, 27 calls to qwen2.5:14b with `prompt_eval_count`: 0.23 tokens
+#: per character of instructions and examples, 0.18 per character of advert.
+#: A prompt therefore holds at least one token per 6 characters; Ollama
+#: reporting fewer means it cut the prompt (forced to num_ctx 4,096, it
+#: evaluated 2,050 tokens of a 7,290-token prompt and still returned facts).
+_CHARS_PER_TOKEN_CEILING = 6
+
+#: Prompt plus answer this close to `num_ctx` is a prompt that may have been
+#: cut to fit, or an answer cut off before its closing brace.
+_CONTEXT_HEADROOM = 0.97
+
+
+class PromptTruncatedError(RuntimeError):
+    """Ollama read less of the prompt than was sent, or filled its window."""
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaUsage:
+    """The token counts Ollama reports on every `/api/chat` answer."""
+
+    prompt_tokens: int
+    output_tokens: int
+
+
+def ollama_options(cfg: LLMConfig, *, num_predict: int | None = None) -> dict[str, Any]:
+    """The `options` block for every Ollama call rolescan makes (2.5.8).
+
+    One helper so no call can leave `num_ctx` out: without it Ollama sizes
+    the context window from the machine's memory, and a smaller machine cut
+    the facts prompt in half with no error. A plugin that talks to Ollama
+    itself (an enricher, a cover-letter writer) builds its options here too,
+    passing its own `num_predict`.
+    """
+    return {
+        "num_ctx": cfg.num_ctx,
+        "num_predict": cfg.max_tokens if num_predict is None else num_predict,
+        "temperature": cfg.temperature,
+    }
+
+
+def ollama_usage(
+    body: object, *, prompt_chars: int, num_ctx: int, check: bool = True
+) -> OllamaUsage | None:
+    """The usage an `/api/chat` answer reports; raises if the prompt was cut.
+
+    Returns None when the server reports no counts (an old Ollama, or a
+    proxy in between): nothing can be checked then. Raises
+    `PromptTruncatedError` when the server evaluated fewer prompt tokens
+    than `prompt_chars` can hold (it dropped part of the prompt to fit), or
+    when prompt and answer together reached `_CONTEXT_HEADROOM` of
+    `num_ctx` (the window was full). Either way the answer was made without
+    the whole prompt, and its facts must not be trusted or cached.
+
+    `check=False` (`llm.check_truncation: false`) returns the counts without
+    judging them: the way out for a server whose `prompt_eval_count` does not
+    count the whole prompt.
+    """
+    if not isinstance(body, dict):
+        return None
+    prompt, output = body.get("prompt_eval_count"), body.get("eval_count")
+    if not isinstance(prompt, int) or not isinstance(output, int):
+        return None
+    if not check:
+        return OllamaUsage(prompt_tokens=prompt, output_tokens=output)
+    floor = prompt_chars // _CHARS_PER_TOKEN_CEILING
+    if prompt < floor:
+        msg = (
+            f"ollama read {prompt} prompt tokens of a prompt that holds at least "
+            f"{floor}: it cut the prompt to fit its context window. Raise "
+            f"llm.num_ctx (now {num_ctx}), or check the server's own limit."
+        )
+        raise PromptTruncatedError(msg)
+    if prompt + output >= _CONTEXT_HEADROOM * num_ctx:
+        msg = (
+            f"ollama's prompt and answer filled {prompt + output} of the "
+            f"{num_ctx}-token context window (llm.num_ctx): the prompt may have "
+            "been cut, or the answer stopped short. Raise llm.num_ctx."
+        )
+        raise PromptTruncatedError(msg)
+    return OllamaUsage(prompt_tokens=prompt, output_tokens=output)
 
 
 class Judge(ABC):
@@ -415,11 +508,42 @@ class OllamaJudge(Judge):
 
     cheap_triage = True
 
+    #: The token counts of the last answer, or None before the first call or
+    #: when the server reported none (2.5.8).
+    last_usage: OllamaUsage | None = None
+
+    async def _post(self, url: str, payload: dict[str, Any]) -> httpx.Response:
+        """POST, and once more after `RETRY_DELAY` on a timeout or a 5xx.
+
+        Only those two: a refused connection is a server that is not running
+        (the preflight's business, and a retry only doubles the wait), and a
+        4xx will not change on a second asking.
+        """
+        try:
+            return await self._post_once(url, payload)
+        except httpx.TimeoutException:
+            pass
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code < 500:
+                raise
+        log.info("ollama call failed; retrying once in %.0fs", RETRY_DELAY)
+        await asyncio.sleep(RETRY_DELAY)
+        return await self._post_once(url, payload)
+
+    async def _post_once(self, url: str, payload: dict[str, Any]) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=self.cfg.timeout) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            return response
+
     async def _chat(self, system: str, user: str, schema: dict[str, Any]) -> str:
         """One /api/chat round trip under `schema`, returning the raw content.
 
         Shared by `verdict` and `triage` so the two passes cannot drift apart
-        in how they talk to the server - only in what they ask it for.
+        in how they talk to the server - only in what they ask it for. Sends
+        `ollama_options` (so `num_ctx` always), retries once on a timeout or
+        a 5xx, and raises `PromptTruncatedError` when the answer's token
+        counts show the prompt was cut (2.5.8).
         """
         url = f"{self.cfg.base_url.rstrip('/')}/api/chat"
         payload = {
@@ -430,15 +554,10 @@ class OllamaJudge(Judge):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "options": {
-                "num_predict": self.cfg.max_tokens,
-                "temperature": self.cfg.temperature,
-            },
+            "options": ollama_options(self.cfg),
         }
         try:
-            async with httpx.AsyncClient(timeout=self.cfg.timeout) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
+            response = await self._post(url, payload)
         except httpx.ConnectError as e:
             msg = (
                 f"could not reach ollama at {self.cfg.base_url} ({e}). Start it "
@@ -460,6 +579,12 @@ class OllamaJudge(Judge):
             # what the digest would print at the reader.
             msg = f"ollama returned a 200 that was not JSON: {e}"
             raise RuntimeError(msg) from e
+        self.last_usage = ollama_usage(
+            body,
+            prompt_chars=len(system) + len(user),
+            num_ctx=self.cfg.num_ctx,
+            check=self.cfg.check_truncation,
+        )
         # Both layers are checked, not just the outer one. A body of
         # {"message": "hello"} is JSON, is a dict, and raises AttributeError
         # on .get - which is exactly the raw exception in the digest that
