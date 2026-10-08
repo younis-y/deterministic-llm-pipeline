@@ -443,6 +443,9 @@ class AnthropicJudge(Judge):
     def __init__(self, cfg: LLMConfig) -> None:
         super().__init__(cfg)
         self._client: Any = None
+        #: Cleared the first time the API refuses `temperature` for this
+        #: model (see `_parse`); from then on it is not sent.
+        self._send_temperature = True
 
     def _get_client(self) -> Any:
         """Built lazily so importing rolescan never costs an SDK import, and so
@@ -468,14 +471,54 @@ class AnthropicJudge(Judge):
             {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
         ]
 
+    async def _parse(
+        self, system: str, user: str, output_format: Any, max_tokens: int
+    ) -> Any:
+        """One structured call, sampling at `llm.temperature`.
+
+        The SDK's `messages.create` and `messages.parse` have no `temperature`
+        parameter in current versions (passing one raises TypeError), so it
+        goes in `extra_body`, which is merged into the request body. Until
+        this was sent, the hosted backend sampled at the API's default (1.0)
+        while Ollama honoured the setting.
+
+        Some models refuse the parameter outright, with a 400 ("`temperature`
+        is deprecated for this model", seen on claude-sonnet-5, the default
+        `llm.model`). That call is made again without it, once, and the judge
+        stops sending it: such a model's sampling is not ours to set, which is
+        what every call did before.
+        """
+        client = self._get_client()
+        request: dict[str, Any] = {
+            "model": self.cfg.model,
+            "max_tokens": max_tokens,
+            "system": self._cached_system(system),
+            "messages": [{"role": "user", "content": user}],
+            "output_format": output_format,
+        }
+        if self._send_temperature:
+            try:
+                return await client.messages.parse(
+                    **request, extra_body={"temperature": self.cfg.temperature}
+                )
+            except Exception as e:
+                if not _rejects_temperature(e):
+                    raise
+                # Every call in flight when the first 400 lands sees it, and
+                # each one retries; only the first to get here says so. There
+                # is no `await` between the check and the clear.
+                if self._send_temperature:
+                    self._send_temperature = False
+                    log.warning(
+                        "model %s rejects the temperature setting (%s); calling "
+                        "it without llm.temperature from now on",
+                        self.cfg.model,
+                        e,
+                    )
+        return await client.messages.parse(**request)
+
     async def verdict(self, system: str, user: str) -> FitVerdict:
-        response = await self._get_client().messages.parse(
-            model=self.cfg.model,
-            max_tokens=self.cfg.max_tokens,
-            system=self._cached_system(system),
-            messages=[{"role": "user", "content": user}],
-            output_format=FitVerdict,
-        )
+        response = await self._parse(system, user, FitVerdict, self.cfg.max_tokens)
         parsed = response.parsed_output
         if not isinstance(parsed, FitVerdict):  # pragma: no cover - enforced upstream
             msg = f"model returned {type(parsed).__name__}, expected FitVerdict"
@@ -483,13 +526,7 @@ class AnthropicJudge(Judge):
         return _without_rule(parsed)
 
     async def facts(self, system: str, user: str) -> PostingFacts:
-        response = await self._get_client().messages.parse(
-            model=self.cfg.model,
-            max_tokens=self.cfg.max_tokens,
-            system=self._cached_system(system),
-            messages=[{"role": "user", "content": user}],
-            output_format=PostingFacts,
-        )
+        response = await self._parse(system, user, PostingFacts, self.cfg.max_tokens)
         parsed = response.parsed_output
         if parsed is None:
             stop = getattr(response, "stop_reason", None)
@@ -507,13 +544,7 @@ class AnthropicJudge(Judge):
         under a small output cap, returned as a FitVerdict stub marked with
         TRIAGE_REASON.
         """
-        response = await self._get_client().messages.parse(
-            model=self.cfg.model,
-            max_tokens=TRIAGE_MAX_TOKENS,
-            system=self._cached_system(system),
-            messages=[{"role": "user", "content": user}],
-            output_format=_TriageOutput,
-        )
+        response = await self._parse(system, user, _TriageOutput, TRIAGE_MAX_TOKENS)
         parsed = response.parsed_output
         if parsed is None:
             stop = getattr(response, "stop_reason", None)
@@ -525,6 +556,19 @@ class AnthropicJudge(Judge):
             confidence=parsed.confidence,
             reason=TRIAGE_REASON,
         )
+
+
+def _rejects_temperature(error: Exception) -> bool:
+    """Whether `error` is the API's 400 for a model that takes no temperature.
+
+    Duck-typed on `status_code`, which the SDK's status errors carry, so this
+    needs no SDK import. Anything else - another 400, a 429, a 5xx, a network
+    error - is not this, and is raised as before.
+    """
+    return (
+        getattr(error, "status_code", None) == 400
+        and "temperature" in str(error).casefold()
+    )
 
 
 def _without_rule(verdict: FitVerdict) -> FitVerdict:
