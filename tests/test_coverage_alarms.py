@@ -10,6 +10,7 @@ one that says it stopped short."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from contextlib import closing
@@ -22,12 +23,15 @@ import pytest
 import respx
 
 import rolescan.store as store_module
-from rolescan.config import Config
+from rolescan.config import Config, HTTPConfig, SourceEntry
+from rolescan.http import Fetcher
 from rolescan.pipeline import (
     Coverage,
     ScanResult,
     SourceReport,
     _check_coverage,
+    _fetch_one,
+    _source_key,
     run_scan,
 )
 from rolescan.store import _MIGRATIONS, Store
@@ -141,6 +145,10 @@ async def test_recent_counts_are_the_non_zero_runs_in_the_window_newest_first(
         (2, (10, 10, 10), [("Acme", 2, 10.0)]),
         (3, (10, 10, 10), []),  # 30% of 10 exactly, not 3.0000000000000004
         (10, (400, 400, 0, 0, 0), []),  # zero runs are no baseline
+        # an even number of runs: the median is the mean of the middle two
+        # (20, 20, 400, 400 -> 210), and 30% of 210 is exactly 63
+        (62, (400, 400, 20, 20), [("Acme", 62, 210.0)]),
+        (63, (400, 400, 20, 20), []),
     ],
 )
 async def test_a_collapse_in_rows_is_named(
@@ -265,3 +273,132 @@ async def test_a_scan_carries_the_cut_short_and_shrunk_lists(tmp_path: Path) -> 
         ("Acme", 500, 2000, "stopped at 500 of 2000 postings (max_rows 500)")
     ]
     assert result.shrunk_sources == [("Acme", 500, 4000.0)]
+
+
+# --- narrowing a board starts a fresh baseline ------------------------------
+
+
+def _entry(kind: str = "workday", **options: Any) -> SourceEntry:
+    return SourceEntry.model_validate(
+        {"kind": kind, "slug": "acme", "label": "Acme", **options}
+    )
+
+
+async def _report_for(entry: SourceEntry) -> SourceReport:
+    async with Fetcher(HTTPConfig(max_retries=0)) as fetcher:
+        report, _ = await _fetch_one(entry, fetcher)
+    return report
+
+
+def _short_hash(values: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()[:8]
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"site": "Careers", "host": "wd3", "details": False, "max_rows": 100},
+        # set but empty is not set: the sources read these with `or`
+        {"applied_facets": {}, "search_text": "", "exclude_pattern": ""},
+    ],
+)
+async def test_a_board_with_no_read_shaping_option_keeps_its_old_key(
+    options: dict[str, Any],
+) -> None:
+    """A history key written by 2.5.7 must still be found: byte for byte."""
+    respx.post("https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/Careers/jobs").mock(
+        return_value=httpx.Response(200, json={"total": 0, "jobPostings": []})
+    )
+    base: dict[str, Any] = {"site": "Careers", "host": "wd3", "details": False}
+    report = await _report_for(_entry(**(base | options)))
+    assert report.ok, report.error
+    assert _source_key(report) == KEY
+    assert _source_key(SourceReport("workday", "acme", "Acme")) == KEY
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("kind", "options"),
+    [
+        ("workday", {"applied_facets": {"Country": ["id1"]}}),
+        ("workday", {"search_text": ["data", "analyst"]}),
+        ("adzuna", {"queries": ["energy analyst"]}),
+        ("structured", {"exclude_pattern": "/careers/(sales|legal)/"}),
+    ],
+)
+async def test_a_read_shaping_option_adds_a_short_hash_of_its_value(
+    kind: str, options: dict[str, Any]
+) -> None:
+    report = await _report_for(_entry(kind, **options))
+    assert _source_key(report) == f"{kind}:acme:Acme:{_short_hash(options)}"
+    other = {name: f"not {value}" for name, value in options.items()}
+    assert _source_key(await _report_for(_entry(kind, **other))) != _source_key(report)
+
+
+@respx.mock
+async def test_the_key_hashes_every_option_that_is_set_in_a_fixed_order() -> None:
+    respx.post("https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/Careers/jobs").mock(
+        return_value=httpx.Response(200, json={"total": 0, "jobPostings": []})
+    )
+    base: dict[str, Any] = {"site": "Careers", "host": "wd3", "details": False}
+    facets, text = {"Country": ["id1"]}, "data"
+    forward = await _report_for(_entry(**base, applied_facets=facets, search_text=text))
+    backward = await _report_for(
+        _entry(**base, search_text=text, applied_facets=facets)
+    )
+    both = _short_hash({"applied_facets": facets, "search_text": text})
+    assert _source_key(forward) == _source_key(backward) == f"{KEY}:{both}"
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("options", "shrunk"),
+    [
+        ({}, [("Acme", 40, 500.0)]),  # the control: a collapse is still named
+        ({"applied_facets": {"Country": ["id1"]}}, []),
+        ({"search_text": ["data"]}, []),
+    ],
+)
+async def test_narrowing_a_board_starts_a_fresh_baseline_not_a_week_of_alarms(
+    tmp_path: Path, options: dict[str, Any], shrunk: list[tuple[str, int, float]]
+) -> None:
+    """Fourteen days at 500, then the board is narrowed to what is wanted and
+    returns 40: by design, not a collapse."""
+    respx.post("https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/Careers/jobs").mock(
+        side_effect=lambda request: httpx.Response(
+            200,
+            json={
+                "total": 40 if json.loads(request.content)["offset"] == 0 else 0,
+                "jobPostings": [
+                    {"title": f"Analyst {i}", "externalPath": f"/job/X/J_{i}"}
+                    for i in range(json.loads(request.content)["offset"], 40)
+                ][:20],
+            },
+        )
+    )
+    cfg = Config.model_validate(
+        {
+            "llm": {"enabled": False},
+            "sources": [
+                {
+                    "kind": "workday",
+                    "slug": "acme",
+                    "label": "Acme",
+                    "site": "Careers",
+                    "host": "wd3",
+                    "details": False,
+                    **options,
+                }
+            ],
+            "output": {"dir": str(tmp_path), "db_path": str(tmp_path / "s.db")},
+        }
+    )
+    async with Store(tmp_path / "s.db") as store:
+        for day in range(1, 15):
+            await _history(store, 500, days_ago=day)
+
+    result = await run_scan(cfg, dry_run=True)
+
+    assert result.shrunk_sources == shrunk

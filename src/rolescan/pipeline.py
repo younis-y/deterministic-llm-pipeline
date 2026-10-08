@@ -15,6 +15,8 @@ sources and store.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import statistics
 from collections.abc import Sequence
@@ -57,6 +59,10 @@ class SourceReport:
     """Why the source read less than the board holds, or "" (2.5.8)."""
     note: str = ""
     """A line for the digest's "Notes" that is not a failure (2.5.8)."""
+    read_shape: str = ""
+    """A short hash of the options that decide what the source reads, or ""
+    when none is set (2.5.8). It is part of the history key, so narrowing a
+    board starts a fresh baseline; see `_read_shape`."""
 
     @property
     def ok(self) -> bool:
@@ -268,7 +274,12 @@ class ScanResult:
 async def _fetch_one(
     entry: SourceEntry, fetcher: Fetcher, cache: PostingCache | None = None
 ) -> tuple[SourceReport, list[Job]]:
-    report = SourceReport(kind=entry.kind, slug=entry.slug, label=entry.label)
+    report = SourceReport(
+        kind=entry.kind,
+        slug=entry.slug,
+        label=entry.label,
+        read_shape=_read_shape(entry),
+    )
     try:
         source = get_source(entry, fetcher, cache)
         jobs = await source.fetch()
@@ -422,11 +433,38 @@ async def _drop_already_handled(
     return fresh
 
 
+#: The options that decide what a source reads (2.5.8): Workday's own filters
+#: and search texts, Adzuna's queries, a structured source's url exclusion.
+_READ_SHAPING_OPTIONS = ("applied_facets", "search_text", "queries", "exclude_pattern")
+
+
+def _read_shape(entry: SourceEntry) -> str:
+    """8 hex characters standing for the read-shaping options this entry sets,
+    or "" when it sets none (2.5.8).
+
+    A board narrowed to what the reader wants (Workday facets, a search text)
+    returns far fewer rows by design. Compared with a history of the whole
+    board, that reads as a collapse and raises the shrink alarm for a week, so
+    the options are part of the history key and narrowing starts a fresh
+    baseline. An option that is unset or empty adds nothing, so every key
+    written before 2.5.8, and every board with no such option, is unchanged.
+    """
+    options = entry.options
+    shaping = {k: options[k] for k in _READ_SHAPING_OPTIONS if options.get(k)}
+    if not shaping:
+        return ""
+    blob = json.dumps(shaping, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:8]
+
+
 def _source_key(report: SourceReport) -> str:
     """Identity for count history. Includes the label because two entries can
     share a kind and slug - the Adzuna config has one per location - and would
-    otherwise overwrite each other's history."""
-    return f"{report.kind}:{report.slug}:{report.label}"
+    otherwise overwrite each other's history. Includes the read-shaping
+    options, when there are any, because a narrowed board is a different
+    series (see `_read_shape`)."""
+    key = f"{report.kind}:{report.slug}:{report.label}"
+    return f"{key}:{report.read_shape}" if report.read_shape else key
 
 
 def _ages_meaningfully(source: str) -> bool:

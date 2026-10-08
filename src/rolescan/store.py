@@ -122,10 +122,10 @@ _MIGRATIONS: tuple[str, ...] = (
     DROP INDEX IF EXISTS source_counts_key;
     """,
     # 2.5.8: the board's own total beside what was read, so a read cut at a
-    # cap is on record as one. 0 means no total was stated: every row written
-    # before 2.5.8, and every source that does not report one. SQLite cannot
-    # make `ADD COLUMN` `IF NOT EXISTS`; `_migrate` skips it when the column
-    # is already there.
+    # cap is on record as one. 0 = no total stated (every row written before
+    # 2.5.8, and every source that does not report one), or an empty board;
+    # nothing reads it yet. SQLite cannot make `ADD COLUMN` `IF NOT EXISTS`;
+    # `_migrate` skips it when the column is already there.
     """
     ALTER TABLE source_counts ADD COLUMN total INTEGER NOT NULL DEFAULT 0;
     """,

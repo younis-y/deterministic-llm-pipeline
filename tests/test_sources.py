@@ -594,8 +594,9 @@ def _workday_board(
     return bodies
 
 
-def test_a_source_starts_with_nothing_to_report() -> None:
-    source = get_source(SourceEntry(kind="greenhouse", slug="acme"), Fetcher())
+@pytest.mark.parametrize("kind", sorted(available()))
+def test_a_source_starts_with_nothing_to_report(kind: str) -> None:
+    source = get_source(SourceEntry(kind=kind, slug="acme"), Fetcher())
     assert (source.total, source.truncated, source.note) == (None, "", "")
 
 
@@ -772,6 +773,26 @@ async def test_workday_skips_a_posting_that_is_not_a_job_and_reads_the_rest() ->
         "skipped 1 posting(s) that are not valid jobs (first: /job/X/Blank_0: "
     )
     assert source.truncated == "", "a posting read and refused is not a cut"
+
+
+@respx.mock
+async def test_a_second_read_on_the_same_source_carries_no_stale_note() -> None:
+    """The note is this read's own: a source object that is read twice must
+    not report the first read's skipped posting on the second."""
+    blank = {"title": "", "externalPath": "/job/X/Blank_0"}
+    fine = {"title": "Data Scientist", "externalPath": "/job/X/DS_1"}
+    respx.post(f"{WD}/jobs").mock(
+        side_effect=[
+            httpx.Response(200, json={"total": 2, "jobPostings": [blank, fine]}),
+            httpx.Response(200, json={"total": 1, "jobPostings": [fine]}),
+        ]
+    )
+    async with Fetcher(HTTPConfig(max_retries=0)) as f:
+        source = get_source(_acme(), f)
+        await source.fetch()
+        assert source.note.startswith("skipped 1 posting(s)")
+        await source.fetch()
+    assert (source.total, source.truncated, source.note) == (1, "", "")
 
 
 class _SaysHowItWent(Source):

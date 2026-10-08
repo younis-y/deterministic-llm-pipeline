@@ -165,6 +165,9 @@ class Workday(Source):
         # All three options are read before the first request, so a bad one
         # fails the source with its own message, not half way through a read.
         texts, facets, cap = self.search_texts, self.applied_facets, self.max_rows
+        # What a read says about itself is that read's own: a source object
+        # fetched twice must not report the first read's note on the second.
+        self.total, self.truncated, self.note = None, "", ""
         postings: list[dict[str, Any]] = []
         paths: set[str] = set()
         totals: list[int] = []
