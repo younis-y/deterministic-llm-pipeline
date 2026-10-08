@@ -35,10 +35,12 @@ from rolescan.models import Confidence, FitVerdict, Verdict
 from rolescan.scoring.facts import PostingFacts
 
 __all__ = [
+    "BackendStatus",
     "Judge",
     "OllamaUsage",
     "PromptTruncatedError",
     "available_judges",
+    "backend_status",
     "get_judge",
     "ollama_options",
     "register",
@@ -165,6 +167,11 @@ class Judge(ABC):
 
     def __init__(self, cfg: LLMConfig) -> None:
         self.cfg = cfg
+        #: The first 12 hex characters of the served model's digest, set by
+        #: `preflight` when the backend can tell (2.5.8), else "". A tag such
+        #: as `qwen2.5:14b` can be re-pushed upstream and pulled again; the
+        #: digest is what says the weights changed.
+        self.model_digest = ""
 
     #: True when `triage` is genuinely cheaper than `verdict`. False by
     #: default, and FitScorer will not run the cascade against a backend that
@@ -263,8 +270,39 @@ def _importable(module: str) -> bool:
         return False
 
 
+@dataclass(frozen=True, slots=True)
+class BackendStatus:
+    """What the pre-scan check learned about the configured judge (2.5.8)."""
+
+    reason: str = ""
+    """Why it cannot score anything, or "" (see `unusable_backend_reason`)."""
+    model_digest: str = ""
+    """The served model's digest prefix, when the backend reports one."""
+
+
+async def backend_status(cfg: LLMConfig) -> BackendStatus:
+    """`unusable_backend_reason`, plus the model digest the check read.
+
+    One preflight, so the digest costs no second request: Ollama's
+    `/api/tags`, which the liveness check already fetches, carries it.
+    """
+    reason, judge = await _check_backend(cfg)
+    digest = getattr(judge, "model_digest", "") if judge is not None else ""
+    return BackendStatus(reason=reason, model_digest=digest if not reason else "")
+
+
 async def unusable_backend_reason(cfg: LLMConfig) -> str:
     """Why the configured judge cannot score anything, or "" if it can.
+
+    See `_check_backend`; `backend_status` returns the same reason with the
+    model digest beside it.
+    """
+    return (await backend_status(cfg)).reason
+
+
+async def _check_backend(cfg: LLMConfig) -> tuple[str, Judge | None]:
+    """(why the configured judge cannot score anything, or "" if it can; the
+    judge that was checked, or None when it could not be built).
 
     Checked before the scan runs, because every way this goes wrong used to go
     wrong silently. A misnamed backend, a revoked key, an SDK that was never
@@ -285,27 +323,28 @@ async def unusable_backend_reason(cfg: LLMConfig) -> str:
     reason alone: this is the only check here that ever awaits anything.
     """
     if not cfg.wants_scoring:
-        return ""
+        return "", None
     cls = _REGISTRY.get(cfg.backend)
     if cls is None:
         known = ", ".join(sorted(_REGISTRY)) or "none"
         return (
             f"llm.backend {cfg.backend!r} is not a registered backend "
             f"(registered: {known})"
-        )
+        ), None
     if cls.needs_api_key and not cfg.api_key:
         env = cls.api_key_env or "the appropriate environment variable"
         return (
             f"backend {cfg.backend!r} is configured but no API key is visible "
             f"(export {env}, or set llm.api_key in the config)"
-        )
+        ), None
     if cls.requires_module and not _importable(cls.requires_module):
         return (
             f"backend {cfg.backend!r} needs the {cls.requires_module} package, "
             f"which is not installed (pip install 'rolescan[{cfg.backend}]')"
-        )
+        ), None
     try:
-        return await cls(cfg).preflight()
+        judge = cls(cfg)
+        return await judge.preflight(), judge
     except Exception as e:
         # A judge is a plugin and `cls(cfg)` now runs at startup, so a broken
         # __init__ or a preflight that raises instead of returning would take
@@ -313,7 +352,10 @@ async def unusable_backend_reason(cfg: LLMConfig) -> str:
         # no email, a traceback in a launchd log nobody reads. Treated as
         # "this backend is unusable", which is what it is.
         log.warning("preflight for backend %s raised: %s", cfg.backend, e)
-        return f"backend {cfg.backend!r} could not be checked: {type(e).__name__}: {e}"
+        reason = (
+            f"backend {cfg.backend!r} could not be checked: {type(e).__name__}: {e}"
+        )
+        return reason, None
 
 
 # ---------------------------------------------------------------------------
@@ -699,6 +741,7 @@ class OllamaJudge(Judge):
             )
 
         names: set[str] = set()
+        digests: dict[str, str] = {}
         entries = payload.get("models") if isinstance(payload, dict) else None
         for entry in entries or []:
             # An unexpected shape is a reason to report, never to raise: this
@@ -709,6 +752,9 @@ class OllamaJudge(Judge):
             name = entry.get("name") or entry.get("model") or ""
             if isinstance(name, str) and name:
                 names.add(name)
+                digest = entry.get("digest")
+                if isinstance(digest, str):
+                    digests[name] = digest[:12]
 
         wanted = self.cfg.model
         # An untagged name means `:latest` to ollama, so `llama3.1` is NOT
@@ -723,7 +769,49 @@ class OllamaJudge(Judge):
                 f"{wanted!r} is not pulled (available: {available}). Run "
                 f"`ollama pull {wanted}`, or set llm.model to one that is."
             )
-        return ""
+        if not wanted:
+            return ""
+        self.model_digest = digests.get(wanted) or digests.get(qualified, "")
+        return await self._context_reason()
+
+    async def _context_reason(self) -> str:
+        """Why the model cannot hold `llm.num_ctx` tokens, or "" (2.5.8).
+
+        `/api/show` reports the window the model was built for, as
+        `<architecture>.context_length` in `model_info` (32,768 for
+        qwen2.5:14b). Ollama never runs a model past it, so a larger
+        `num_ctx` is a window the server will not provide, and a prompt longer
+        than the real one is cut. A server that cannot answer (an older
+        Ollama, a proxy) is not checked: this is a guard, not a new way for
+        the scan to fail.
+        """
+        url = f"{self.cfg.base_url.rstrip('/')}/api/show"
+        try:
+            async with httpx.AsyncClient(timeout=PREFLIGHT_TIMEOUT) as client:
+                response = await client.post(url, json={"model": self.cfg.model})
+                response.raise_for_status()
+                body = response.json()
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("could not read the model's context window from %s: %s", url, e)
+            return ""
+        info = body.get("model_info") if isinstance(body, dict) else None
+        windows = (
+            [
+                v
+                for k, v in info.items()
+                if k.endswith(".context_length") and isinstance(v, int)
+            ]
+            if isinstance(info, dict)
+            else []
+        )
+        if not windows or windows[0] >= self.cfg.num_ctx:
+            return ""
+        return (
+            f"model {self.cfg.model!r} has a {windows[0]}-token context window, "
+            f"smaller than llm.num_ctx ({self.cfg.num_ctx}), so Ollama would cut "
+            f"longer prompts to fit. Set llm.num_ctx to {windows[0]} or less, or "
+            "choose a model with a longer window."
+        )
 
 
 load_plugins()

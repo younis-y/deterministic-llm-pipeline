@@ -448,7 +448,10 @@ def _stats(result: ScanResult) -> str:
         # stock rather than wondering why a board of 228 yielded nothing.
         bits.insert(1, f"{result.stale} too old")
     if result.llm_calls or result.llm_cached:
-        bits.append(f"{result.llm_calls} scored, {result.llm_cached} from cache")
+        bits.append(
+            f"{result.llm_calls} scored, {result.llm_cached} from cache"
+            + _model_note(result)
+        )
     if result.hidden_blocked:
         # Only when it happened: a permanent "0 blocked and hidden" on every
         # digest would train the reader to skip the line that matters. These
@@ -487,6 +490,17 @@ def _stats(result: ScanResult) -> str:
         # can never disagree.
         bits.append(f"{listed} hidden by your rules (listed below)")
     return ". ".join(bits) + "." + _run_outcome_note(result)
+
+
+def _model_note(result: ScanResult) -> str:
+    """ " by <model> (<digest>)", or "" when the run named no model (2.5.8).
+
+    A verdict is only as reproducible as the model behind it, and a tag can
+    be re-pulled under the same name: the digest says which weights ran."""
+    if not result.llm_model:
+        return ""
+    digest = f" ({result.llm_model_digest})" if result.llm_model_digest else ""
+    return f" by {result.llm_model}{digest}"
 
 
 def _llm_ran(result: ScanResult) -> bool:

@@ -27,9 +27,9 @@ from rolescan.models import Job, ScoredJob, Verdict
 from rolescan.scoring import (
     FitScorer,
     score_keywords,
-    unusable_backend_reason,
     unusable_enricher_reason,
 )
+from rolescan.scoring.judges import backend_status
 from rolescan.scoring.keyword import SYNTHETIC_PENALTIES
 from rolescan.sources import get_source
 from rolescan.sources.base import _REGISTRY, PostingCache, SourceSkipped
@@ -74,6 +74,13 @@ class ScanResult:
     ANTHROPIC_API_KEY is missing" is exactly wrong advice for someone whose
     local server returned HTTP 500, and the digest is the one place the end
     user reads."""
+    llm_model: str = ""
+    """`llm.model` for this run, whether or not it ran (2.5.8)."""
+    llm_model_digest: str = ""
+    """The first 12 hex characters of the served model's digest, when the
+    backend reports one (Ollama does, in `/api/tags`), else "" (2.5.8). A tag
+    can be re-pulled under the same name; this is what says the weights
+    behind the run's verdicts changed."""
     llm_unusable: str = ""
     """Why the configured judge could not be used at all, or "".
 
@@ -247,9 +254,10 @@ def deduplicate(jobs: list[Job]) -> list[Job]:
     return list(best.values())
 
 
-async def _preflight(cfg: Config) -> tuple[str, str]:
+async def _preflight(cfg: Config) -> tuple[str, str, str]:
     """(why the configured judge cannot be used at all, why the configured
-    enricher cannot be used), each "" if it can.
+    enricher cannot be used, the served model's digest), each "" if it can
+    be used or is not known.
 
     Run before anything is fetched, so either kind of misconfiguration says
     so up front instead of surfacing later as a silently degraded digest.
@@ -260,7 +268,8 @@ async def _preflight(cfg: Config) -> tuple[str, str]:
     note, the CLI's matching warning - for a fault that does not stop
     scoring at all, only the extra step an enricher adds on top of it).
     """
-    backend_reason = await unusable_backend_reason(cfg.llm)
+    status = await backend_status(cfg.llm)
+    backend_reason = status.reason
     if backend_reason:
         log.warning(
             "LLM scoring is unavailable: %s. Postings will be ranked on "
@@ -275,7 +284,7 @@ async def _preflight(cfg: Config) -> tuple[str, str]:
             cfg.llm.enricher,
             enricher_reason,
         )
-    return backend_reason, enricher_reason
+    return backend_reason, enricher_reason, status.model_digest
 
 
 async def _drop_already_handled(
@@ -660,9 +669,15 @@ async def run_scan(
     re-reports every posting on every run, so any new caller of `run_scan`
     must do the same.
     """
-    result = ScanResult(dry_run=dry_run, llm_backend=cfg.llm.backend)
+    result = ScanResult(
+        dry_run=dry_run, llm_backend=cfg.llm.backend, llm_model=cfg.llm.model
+    )
     if check_llm:
-        result.llm_unusable, result.enricher_unusable = await _preflight(cfg)
+        (
+            result.llm_unusable,
+            result.enricher_unusable,
+            result.llm_model_digest,
+        ) = await _preflight(cfg)
 
     # The store opens BEFORE fetching, not after: the structured source needs
     # the posting cache during fetch to skip detail pages whose sitemap lastmod

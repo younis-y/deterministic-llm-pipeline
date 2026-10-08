@@ -73,6 +73,22 @@ def mock_ollama(
     respx.get(f"{base_url}/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": model}]})
     )
+    mock_ollama_show(base_url)
+
+
+def mock_ollama_show(
+    base_url: str = "http://localhost:11434", context_length: int = 32768
+) -> respx.Route:
+    """Route the preflight's `/api/show` at a model with `context_length`.
+
+    2.5.8: the preflight reads the model's own context window once the model
+    is found in `/api/tags`, so every test that mocks a healthy server mocks
+    this too, or respx refuses the unrouted call."""
+    return respx.post(f"{base_url}/api/show").mock(
+        return_value=httpx.Response(
+            200, json={"model_info": {"qwen2.context_length": context_length}}
+        )
+    )
 
 
 #: Credentials the library reads straight from the environment. Cleared for

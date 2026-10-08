@@ -15,7 +15,7 @@ import httpx
 import pytest
 import respx
 
-from conftest import plain
+from conftest import mock_ollama_show, plain
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob
 from rolescan.scoring import FitScorer
@@ -316,6 +316,7 @@ async def test_a_usable_backend_reports_nothing() -> None:
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:8b"}]})
     )
+    mock_ollama_show()
     cfg = LLMConfig(enabled=True, backend="ollama", model="llama3.1:8b")
     assert await unusable_backend_reason(cfg) == ""
 
@@ -369,6 +370,7 @@ async def test_ollama_preflight_passes_when_the_model_is_pulled() -> None:
             json={"models": [{"name": "llama3.1:8b"}, {"name": "qwen2.5:7b"}]},
         )
     )
+    mock_ollama_show()
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
     judge = get_judge("ollama", cfg)
     assert await judge.preflight() == ""
@@ -494,6 +496,7 @@ async def test_preflight_ignores_junk_entries_in_the_model_list() -> None:
             200, json={"models": ["qwen2.5:7b", None, {"name": "qwen2.5:7b"}]}
         )
     )
+    mock_ollama_show()
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
     assert await get_judge("ollama", cfg).preflight() == ""
 
@@ -528,6 +531,7 @@ async def test_an_untagged_model_matches_the_latest_tag() -> None:
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:latest"}]})
     )
+    mock_ollama_show()
     cfg = LLMConfig(enabled=True, backend="ollama", model="llama3.1")
     assert await get_judge("ollama", cfg).preflight() == ""
 

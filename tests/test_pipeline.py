@@ -8,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from conftest import OLLAMA_MODEL, mock_ollama, scan_and_record
+from conftest import OLLAMA_MODEL, mock_ollama, mock_ollama_show, scan_and_record
 from rolescan.config import Config
 from rolescan.digest import render_html, render_markdown
 from rolescan.models import (
@@ -528,7 +528,7 @@ async def test_preflight_reports_an_unknown_enricher_before_fetching(
             "enricher": "not-a-real-enricher",
         },
     )
-    backend_reason, enricher_reason = await _preflight(cfg)
+    backend_reason, enricher_reason, _digest = await _preflight(cfg)
     assert backend_reason == "", "the backend itself is fine"
     assert "not-a-real-enricher" in enricher_reason
 
@@ -559,6 +559,7 @@ async def test_a_posting_the_scorer_errored_on_is_not_buried_either(
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
+    mock_ollama_show()
     cfg = _cfg(tmp_path, {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL})
     result = await scan_and_record(cfg)
     assert result.llm_unusable == "", "the backend was usable; the call is what failed"
@@ -1140,6 +1141,7 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
+    mock_ollama_show()
 
     cfg = Config.model_validate(
         {
@@ -1304,6 +1306,7 @@ async def test_rule_hidden_carries_what_the_rules_kept_out_of_the_digest(
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
+    mock_ollama_show()
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200,
@@ -1589,6 +1592,7 @@ async def test_a_judge_mode_model_block_is_listed_under_hard_bar(
     respx.get("http://localhost:11434/api/tags").mock(
         return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
     )
+    mock_ollama_show()
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200,
