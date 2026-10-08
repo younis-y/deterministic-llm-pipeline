@@ -22,7 +22,7 @@ from rolescan.slugs import SlugIndex
 from rolescan.sources import available, get_source
 from rolescan.sources.base import ProbeResult, ProbeStatus
 from rolescan.store import Store
-from rolescan.storefile import RunLockedError, run_lock
+from rolescan.storefile import BackupError, RunLockedError, backup, run_lock
 
 app = typer.Typer(
     add_completion=False,
@@ -210,6 +210,19 @@ def scan(
 def _scan(cfg: Config, config: Path, *, dry: bool, no_llm: bool, email: bool) -> None:
     """`scan`'s body, run while this process holds the store's run lock."""
     db_path = cfg.resolve(cfg.output.db_path)
+    if cfg.output.backup_keep:
+        try:
+            backup(db_path, keep=cfg.output.backup_keep)
+        except BackupError as e:
+            # The copy failed its integrity check or could not be written:
+            # either way this is the moment to stop writing to the store, not
+            # to carry on and rotate out the last good copy.
+            console.print(
+                f"[bold red]{e}[/]\n[dim]Nothing was scanned. Restore a copy "
+                f"from {db_path.parent / 'backups'}, or free disk space, then "
+                "run again.[/]"
+            )
+            raise typer.Exit(1) from e
 
     async def _go() -> tuple[ScanResult, list[tuple[str, str, str]]]:
         result = await run_scan(cfg, dry_run=dry, check_llm=not no_llm)
@@ -466,6 +479,22 @@ def prune(
             return await store.prune(days)
 
     console.print(f"Removed {asyncio.run(go())} cached verdicts.")
+
+
+@app.command("backup")
+def backup_store(config: ConfigOpt = Path("config.yaml")) -> None:
+    """Copy the store to backups/ beside it, checked with integrity_check."""
+    cfg = _load(config)
+    db_path = cfg.resolve(cfg.output.db_path)
+    try:
+        path = backup(db_path, keep=cfg.output.backup_keep, force=True)
+    except BackupError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1) from e
+    if path is None:
+        console.print(f"[yellow]No store at {db_path} yet: nothing to back up.[/]")
+        return
+    console.print(f"Backed up to {path} (integrity_check ok).")
 
 
 @app.command()
