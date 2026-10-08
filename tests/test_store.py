@@ -344,8 +344,8 @@ async def test_record_all_still_accepts_bare_scored_jobs(
         assert [r[0] for r in rows] == [""]
 
 
-def test_migration_count_is_seven() -> None:
-    assert len(_MIGRATIONS) == 7
+def test_migration_count_is_eight() -> None:
+    assert len(_MIGRATIONS) == 8
 
 
 async def test_unsee_matches_on_uid_as_well_as_url(

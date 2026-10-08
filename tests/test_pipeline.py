@@ -19,6 +19,7 @@ from rolescan.models import (
     Verdict,
 )
 from rolescan.pipeline import (
+    Coverage,
     ScanResult,
     SourceReport,
     _check_coverage,
@@ -975,12 +976,12 @@ async def test_a_source_that_goes_quiet_is_reported(tmp_path: Path) -> None:
         kind="greenhouse", slug="janestreet", label="Jane Street", count=228
     )
     async with Store(tmp_path / "s.db") as store:
-        assert await _check_coverage([worked], store) == []
+        assert await _check_coverage([worked], store) == Coverage()
 
         silent = SourceReport(
             kind="greenhouse", slug="janestreet", label="Jane Street", count=0
         )
-        quiet = await _check_coverage([silent], store)
+        quiet = (await _check_coverage([silent], store)).quiet
     assert quiet == [("Jane Street", 228)]
 
 
@@ -993,10 +994,9 @@ async def test_a_dry_check_leaves_the_quiet_alarm_armed(tmp_path: Path) -> None:
     async with Store(tmp_path / "s.db") as store:
         await _check_coverage([worked], store)
         for _ in range(5):
-            assert await _check_coverage([silent], store, record=False) == [
-                ("Jane", 228)
-            ]
-        assert await _check_coverage([silent], store) == [("Jane", 228)]
+            dry = await _check_coverage([silent], store, record=False)
+            assert dry.quiet == [("Jane", 228)]
+        assert (await _check_coverage([silent], store)).quiet == [("Jane", 228)]
 
 
 async def test_a_source_that_never_worked_is_not_called_quiet(tmp_path: Path) -> None:
@@ -1004,8 +1004,8 @@ async def test_a_source_that_never_worked_is_not_called_quiet(tmp_path: Path) ->
     trains the reader to ignore the line that matters."""
     never = SourceReport(kind="adzuna", slug="gb", label="Adzuna", count=0)
     async with Store(tmp_path / "s.db") as store:
-        assert await _check_coverage([never], store) == []
-        assert await _check_coverage([never], store) == []
+        assert await _check_coverage([never], store) == Coverage()
+        assert await _check_coverage([never], store) == Coverage()
 
 
 async def test_a_failed_source_is_not_also_called_quiet(tmp_path: Path) -> None:
@@ -1017,7 +1017,7 @@ async def test_a_failed_source_is_not_also_called_quiet(tmp_path: Path) -> None:
         broke = SourceReport(
             kind="lever", slug="prima", label="Prima", count=0, error="HTTP 500"
         )
-        assert await _check_coverage([broke], store) == []
+        assert await _check_coverage([broke], store) == Coverage()
 
 
 async def test_two_entries_sharing_a_slug_keep_separate_histories(
@@ -1029,7 +1029,7 @@ async def test_two_entries_sharing_a_slug_keep_separate_histories(
     wide = SourceReport(kind="adzuna", slug="gb", label="Adzuna UK-wide", count=12)
     async with Store(tmp_path / "s.db") as store:
         await _check_coverage([london, wide], store)
-        quiet = await _check_coverage(
+        coverage = await _check_coverage(
             [
                 SourceReport(kind="adzuna", slug="gb", label="Adzuna London", count=0),
                 SourceReport(
@@ -1038,7 +1038,7 @@ async def test_two_entries_sharing_a_slug_keep_separate_histories(
             ],
             store,
         )
-    assert quiet == [("Adzuna London", 203)]
+    assert coverage.quiet == [("Adzuna London", 203)]
 
 
 def test_an_ats_boards_dates_are_not_treated_as_freshness() -> None:

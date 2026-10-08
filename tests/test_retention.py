@@ -61,8 +61,14 @@ async def _seed(store: Store) -> None:
     )
     await db.execute("INSERT INTO verdicts VALUES ('v-old', '{}', ?)", (OLD,))
     await db.execute("INSERT INTO verdicts VALUES ('v-new', '{}', ?)", (NEW,))
-    await db.execute("INSERT INTO source_counts VALUES ('k', ?, 3)", (OLD,))
-    await db.execute("INSERT INTO source_counts VALUES ('k', ?, 4)", (NEW,))
+    await db.execute(
+        "INSERT INTO source_counts (source_key, ran, count) VALUES ('k', ?, 3)",
+        (OLD,),
+    )
+    await db.execute(
+        "INSERT INTO source_counts (source_key, ran, count) VALUES ('k', ?, 4)",
+        (NEW,),
+    )
     await db.commit()
 
 

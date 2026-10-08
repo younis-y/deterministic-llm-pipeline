@@ -25,7 +25,7 @@ import json
 import logging
 import re
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -120,6 +120,14 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS seen_url ON seen(url);
     DROP INDEX IF EXISTS source_counts_key;
+    """,
+    # 2.5.8: the board's own total beside what was read, so a read cut at a
+    # cap is on record as one. 0 means no total was stated: every row written
+    # before 2.5.8, and every source that does not report one. SQLite cannot
+    # make `ADD COLUMN` `IF NOT EXISTS`; `_migrate` skips it when the column
+    # is already there.
+    """
+    ALTER TABLE source_counts ADD COLUMN total INTEGER NOT NULL DEFAULT 0;
     """,
 )
 
@@ -648,7 +656,9 @@ class Store:
             rows = await cur.fetchall()
         return {str(r[0]) for r in rows}
 
-    async def record_source_counts(self, counts: dict[str, int]) -> None:
+    async def record_source_counts(
+        self, counts: Mapping[str, int | tuple[int, int | None]]
+    ) -> None:
         """Remember what each source returned, so a silent zero is detectable.
 
         Every serious defect in this project has been a component that stopped
@@ -657,12 +667,20 @@ class Store:
         deep. None of them raised. All of them were obvious the moment you
         compared a source against what it returned yesterday, which is the one
         thing nothing was keeping.
+
+        2.5.8: a value may be `(count, total)`, the board's own total beside
+        what was read (None when the source stated none, kept as 0). A plain
+        count is still accepted, for any caller written before 2.5.8.
         """
         now = datetime.now(UTC).isoformat(timespec="seconds")
+        rows: list[tuple[str, str, int, int]] = []
+        for key, value in counts.items():
+            count, total = value if isinstance(value, tuple) else (value, None)
+            rows.append((key, now, count, total or 0))
         await self.db.executemany(
-            "INSERT OR REPLACE INTO source_counts (source_key, ran, count) "
-            "VALUES (?, ?, ?)",
-            [(key, now, n) for key, n in counts.items()],
+            "INSERT OR REPLACE INTO source_counts (source_key, ran, count, total) "
+            "VALUES (?, ?, ?, ?)",
+            rows,
         )
         await self.db.commit()
 
@@ -685,6 +703,23 @@ class Store:
             (key, since),
         )
         return max((int(r[0]) for r in rows), default=0)
+
+    async def source_counts_recent(self, key: str, *, days: int = 14) -> list[int]:
+        """The non-zero counts this source returned in the last `days` days,
+        newest first (2.5.8): the baseline for the shrink alarm.
+
+        Zero runs are left out. A source that returned nothing is the quiet
+        alarm's case (`source_high_water`), and a run of zeros in the baseline
+        would drag the median down until a collapse to a handful looked
+        normal.
+        """
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+        rows = await self.db.execute_fetchall(
+            "SELECT count FROM source_counts "
+            "WHERE source_key = ? AND ran >= ? AND count > 0 ORDER BY ran DESC",
+            (key, since),
+        )
+        return [int(r[0]) for r in rows]
 
     async def prune_all(
         self, *, postings_days: int, deferred_days: int, verdicts_days: int

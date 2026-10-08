@@ -96,7 +96,8 @@ async def test_a_clean_exit_still_commits_what_was_not_committed(
     path = tmp_path / "s.db"
     async with Store(path) as store:
         await store.db.execute(
-            "INSERT INTO source_counts VALUES ('k', '2026-10-08T00:00:00+00:00', 3)"
+            "INSERT INTO source_counts (source_key, ran, count) "
+            "VALUES ('k', '2026-10-08T00:00:00+00:00', 3)"
         )
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT count(*) FROM source_counts").fetchone()[0] == 1

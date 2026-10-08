@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -134,6 +135,19 @@ class ScanResult:
     source that stops working without raising, leaving a run that exits 0 and
     delivers less than it should. Nothing else notices - the digest still has
     content from the sources that do work."""
+    shrunk_sources: list[tuple[str, int, float]] = field(default_factory=list)
+    """Sources that returned rows, but under 30% of their recent median
+    (2.5.8), as (label, rows this run, the median of their non-zero runs in
+    the last 14 days). The quiet alarm fires only at zero, and a board that
+    falls from 400 to 10 because its paging broke raises nothing either."""
+    truncated_sources: list[tuple[str, int, int | None, str]] = field(
+        default_factory=list
+    )
+    """Sources that said they read less than the board holds (2.5.8), as
+    (label, rows read, the board's own total or None, the source's reason).
+    Four large Workday boards were read as exactly 500 postings on 2026-10-06
+    against totals of 2,000 to 3,891, and the run said nothing: the roles
+    past the cut are in no digest."""
     hidden_blocked: int = 0
     """Postings that scored high enough for the digest and were removed from
     it solely because they were blocked, with `output.show_blocked` false.
@@ -241,6 +255,14 @@ class ScanResult:
     @property
     def skipped_sources(self) -> list[SourceReport]:
         return [r for r in self.reports if r.skipped]
+
+    @property
+    def notes(self) -> list[tuple[str, str]]:
+        """(label, note) for each source that ran and left a note (2.5.8):
+        something to know that is not a failure, such as postings it skipped
+        as unreadable. A failed or skipped source's note is left out: its
+        error line already says what happened."""
+        return [(r.label or r.slug, r.note) for r in self.reports if r.ok and r.note]
 
 
 async def _fetch_one(
@@ -718,43 +740,111 @@ def _rule_hidden(
     )
 
 
+#: The shrink alarm (2.5.8): a source that returns rows, but under
+#: `_SHRINK_PERCENT`% of the median of its non-zero runs in the last
+#: `_SHRINK_DAYS` days, with at least `_SHRINK_MIN_RUNS` such runs and a
+#: median of at least `_SHRINK_MIN_MEDIAN`. Below that median a swing from 9
+#: to 2 is an ordinary week, not a defect; with fewer runs there is no
+#: baseline yet.
+_SHRINK_PERCENT = 30
+_SHRINK_MIN_RUNS = 3
+_SHRINK_MIN_MEDIAN = 10
+_SHRINK_DAYS = 14
+
+
+@dataclass(frozen=True, slots=True)
+class Coverage:
+    """What `_check_coverage` found, one list per alarm (2.5.8)."""
+
+    quiet: list[tuple[str, int]] = field(default_factory=list)
+    shrunk: list[tuple[str, int, float]] = field(default_factory=list)
+    truncated: list[tuple[str, int, int | None, str]] = field(default_factory=list)
+
+
 async def _check_coverage(
     reports: list[SourceReport], store: Store, *, record: bool = True
-) -> list[tuple[str, int]]:
-    """Record what each source returned, and name the ones that went quiet.
+) -> Coverage:
+    """Record what each source returned, and name the ones that went quiet,
+    shrank, or were cut short.
 
     Quiet means: returned nothing this run, raised nothing, and has returned
     rows within the last 14 days. A source that has never worked is not
     quiet, it is unconfigured, and saying so every morning would train the
     reader to ignore the line that matters.
 
-    Sources that errored or skipped are excluded - those already have their
-    own line in the digest, and reporting them twice buries the silent case
-    among the loud ones.
+    Shrunk (2.5.8) means: returned rows, but under 30% of the median of its
+    non-zero runs in the last 14 days, given at least three such runs and a
+    median of 10 or more. Three of the nine silent defects in the 2026-10-07
+    audit returned rows (paging stuck on page one, a Workday board read to 40,
+    a 400-row cap on a board of 1,412), so an alarm at zero alone missed
+    them. The history is read before this run is recorded: a run is never its
+    own baseline.
 
-    `record=False` on a dry run (2.5.7): the alarm looks back over a window of
-    recent runs, and a `--dry` run used to write its counts into that window,
-    so a few of them taught the store that zero was normal for a source that
-    had gone silent.
+    Cut short (2.5.8) means: the source said it read less than the board
+    holds (`SourceReport.truncated`), listed with its count, the board's
+    total when stated, and its reason. A count under the stated total with
+    no reason is not enough: a posting skipped as unreadable, or a repeat
+    dropped, would read as cut short on every run, so a source names its own
+    stops.
+
+    Sources that errored or skipped are in none of the three - those already
+    have their own line in the digest, and reporting them twice buries the
+    silent case among the loud ones.
+
+    `record=False` on a dry run (2.5.7): the alarms look back over a window
+    of recent runs, and a `--dry` run used to write its counts into that
+    window, so a few of them taught the store that zero was normal for a
+    source that had gone silent. A real run records each count with the
+    board's own total beside it (2.5.8).
     """
-    quiet: list[tuple[str, int]] = []
+    found = Coverage()
     for report in reports:
         if not report.ok:
             continue
+        label = report.label or report.slug
+        if report.truncated:
+            found.truncated.append(
+                (label, report.count, report.total, report.truncated)
+            )
         if report.count == 0:
             previous = await store.source_high_water(_source_key(report))
             if previous > 0:
-                quiet.append((report.label or report.slug, previous))
+                found.quiet.append((label, previous))
                 log.warning(
                     "source %s returned nothing; it returned up to %d recently",
-                    report.label or report.slug,
+                    label,
                     previous,
                 )
+        elif median := await _shrunk_from(store, _source_key(report), report.count):
+            found.shrunk.append((label, report.count, median))
+            log.warning(
+                "source %s returned %d, under %d%% of its recent median of %g",
+                label,
+                report.count,
+                _SHRINK_PERCENT,
+                median,
+            )
     if record:
         await store.record_source_counts(
-            {_source_key(r): r.count for r in reports if r.ok}
+            {_source_key(r): (r.count, r.total) for r in reports if r.ok}
         )
-    return quiet
+    return found
+
+
+async def _shrunk_from(store: Store, key: str, count: int) -> float:
+    """The recent median `count` collapsed from, or 0.0 when it did not.
+
+    Compared as `count * 100` against `median * 30`, which is exact for the
+    median of whole numbers: in floating point 30% of 10 is
+    3.0000000000000004, which would call a count of exactly 30% a collapse.
+    """
+    recent = await store.source_counts_recent(key, days=_SHRINK_DAYS)
+    if len(recent) < _SHRINK_MIN_RUNS:
+        return 0.0
+    median = float(statistics.median(recent))
+    if median < _SHRINK_MIN_MEDIAN or count * 100 >= median * _SHRINK_PERCENT:
+        return 0.0
+    return median
 
 
 async def run_scan(
@@ -796,9 +886,10 @@ async def run_scan(
         unique = merge_near_duplicates(deduplicate(fresh_raw))
         result.unique = len(unique)
 
-        result.quiet_sources = await _check_coverage(
-            result.reports, store, record=not dry_run
-        )
+        coverage = await _check_coverage(result.reports, store, record=not dry_run)
+        result.quiet_sources = coverage.quiet
+        result.shrunk_sources = coverage.shrunk
+        result.truncated_sources = coverage.truncated
 
         scored = [score_keywords(j, cfg.profile) for j in unique]
 

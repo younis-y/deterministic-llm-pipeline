@@ -112,7 +112,7 @@ async def test_a_url_lookup_uses_an_index_and_the_duplicate_index_is_gone(
         }
     assert any("seen_url" in str(row[-1]) for row in plan), plan
     assert "source_counts_key" not in indexes
-    assert len(_MIGRATIONS) == 7
+    assert len(_MIGRATIONS) == 8
 
 
 @respx.mock
