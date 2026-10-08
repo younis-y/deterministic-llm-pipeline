@@ -436,10 +436,17 @@ async def _count_thin(
 
 
 async def _judge(
-    candidates: list[ScoredJob], cfg: Config, store: Store
+    candidates: list[ScoredJob], cfg: Config, store: Store, *, model_digest: str
 ) -> tuple[list[ScoredJob], FitScorer]:
-    """LLM fit score, cached on the posting's content hash."""
-    scorer = FitScorer(cfg.llm, cfg.profile, store, extra_prompt=cfg.llm.extra_prompt)
+    """LLM fit score, cached on the posting's content hash and the prompt's
+    fingerprint, which includes the served model's digest."""
+    scorer = FitScorer(
+        cfg.llm,
+        cfg.profile,
+        store,
+        extra_prompt=cfg.llm.extra_prompt,
+        model_digest=model_digest,
+    )
     judged = await scorer.score_all(candidates)
     return judged, scorer
 
@@ -735,7 +742,9 @@ async def run_scan(
         if not dry_run:
             result.unread, thin = await _count_thin(thin, store, result.unread_after)
 
-        judged, scorer = await _judge(candidates, cfg, store)
+        judged, scorer = await _judge(
+            candidates, cfg, store, model_digest=result.llm_model_digest
+        )
         result.llm_calls = scorer.calls_made
         result.llm_cached = sum(1 for s in judged if s.llm_cached)
         result.llm_errors = scorer.errors

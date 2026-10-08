@@ -149,7 +149,11 @@ async def test_cache_key_is_mode_aware() -> None:
     assert cache_key(job, "judge", cfg) == job.content_hash
     assert (
         cache_key(job, "facts", cfg)
-        == f"{job.content_hash}:facts-v13:ollama:qwen2.5:14b"
+        == f"{job.content_hash}:facts-v14:ollama:qwen2.5:14b"
+    )
+    assert (
+        cache_key(job, "facts", cfg, fingerprint="0123456789ab")
+        == f"{job.content_hash}:facts-v14:ollama:qwen2.5:14b:0123456789ab"
     )
 
 
@@ -173,8 +177,9 @@ async def test_a_facts_row_cached_under_another_model_is_not_read_back(
 ) -> None:
     job = _job("Analyst role.")
     async with Store(tmp_path / "store.db") as store:
-        old = LLMConfig(enabled=True, backend="ollama", model="older-model")
-        await store.put_verdict(cache_key(job.job, "facts", old), _facts(fit_score=99))
+        old = LLMConfig(enabled=True, backend="ollama", mode="facts", model="older")
+        older = FitScorer(old, ProfileConfig(), store)
+        await store.put_verdict(older._facts_cache_key(job.job), _facts(fit_score=99))
 
         scorer, judge = _facts_scorer(_facts(fit_score=60), store=store)
         [out] = await scorer.score_all([job])
@@ -408,17 +413,26 @@ async def test_a_data_engineer_title_passes_the_field_rule_on_fit() -> None:
     assert scorer.last_facts["https://x/1"].field.value == "data_engineering"
 
 
-async def test_cached_facts_hold_the_resolved_field(tmp_path: Path) -> None:
+async def test_the_cache_holds_the_raw_facts_and_a_read_resolves_them(
+    tmp_path: Path,
+) -> None:
+    """2.5.8: the row is what the model said (no field); the resolved field
+    comes from `finish_facts` on the way out, on a call and on a hit alike."""
     job = _job("Build pipelines.")
     async with Store(tmp_path / "store.db") as store:
         scorer, _judge = _facts_scorer(_facts(fit_score=75), store=store)
         await scorer.score_all([job])
-        key = cache_key(job.job, "facts", scorer.cfg)
-        cached = await store.get_verdict(key, 30, PostingFacts)
+        cached = await store.get_verdict(
+            scorer._facts_cache_key(job.job), 30, PostingFacts
+        )
+        again, judge = _facts_scorer(_facts(fit_score=75), store=store)
+        [hit] = await again.score_all([job])
 
     assert cached is not None
-    assert cached.field.value == "data_engineering"
-    assert cached.field.quote == "Data Engineer"
+    assert cached.field.value is None, "the raw facts, as the model gave them"
+    assert scorer.last_facts[job.job.url].field.value == "data_engineering"
+    assert judge.facts_calls == [] and hit.llm_cached
+    assert again.last_facts[job.job.url].field.quote == "Data Engineer"
 
 
 # --- the field-exempt company reaches `decide` on both scorer paths (2.5.7) --
