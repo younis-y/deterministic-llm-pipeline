@@ -279,7 +279,7 @@ async def _preflight(cfg: Config) -> tuple[str, str]:
 
 
 async def _drop_already_handled(
-    scored: list[ScoredJob], store: Store
+    scored: list[ScoredJob], store: Store, *, touch: bool
 ) -> list[ScoredJob]:
     """Everything the reader has already dealt with, in one stage.
 
@@ -291,9 +291,11 @@ async def _drop_already_handled(
 
     The caller counts both as already seen, before taking that total, so the
     stats line still reconciles: unique = already seen + filtered before
-    scoring + whatever reached the scorer.
+    scoring + whatever reached the scorer. `touch` refreshes `seen.last_seen`
+    for the ones still listed (2.5.8); a dry run passes False and writes
+    nothing.
     """
-    fresh = await store.filter_new(scored)
+    fresh = await store.filter_new(scored, touch=touch)
     dismissed = await store.dismissed_urls()
     if dismissed:
         fresh = [s for s in fresh if s.job.url not in dismissed]
@@ -681,7 +683,7 @@ async def run_scan(
 
         scored = [score_keywords(j, cfg.profile) for j in unique]
 
-        fresh = await _drop_already_handled(scored, store)
+        fresh = await _drop_already_handled(scored, store, touch=not dry_run)
         result.already_seen = len(scored) - len(fresh)
 
         candidates, rejects, thin = _prefilter(fresh, cfg.profile.min_keyword_score)

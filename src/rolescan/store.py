@@ -113,6 +113,13 @@ _MIGRATIONS: tuple[str, ...] = (
         last_seen  TEXT NOT NULL
     );
     """,
+    # 2.5.8: `unsee` and `mark` look a posting up by url, which scanned the
+    # whole of `seen`; and `source_counts_key` duplicated the primary key's
+    # own index exactly, so it was pure write cost.
+    """
+    CREATE INDEX IF NOT EXISTS seen_url ON seen(url);
+    DROP INDEX IF EXISTS source_counts_key;
+    """,
 )
 
 
@@ -299,22 +306,46 @@ class Store:
         cur = await self.db.execute("SELECT 1 FROM seen WHERE uid=?", (job.uid,))
         return await cur.fetchone() is None
 
-    async def filter_new(self, scored: list[ScoredJob]) -> list[ScoredJob]:
-        """Partition in one query rather than N."""
+    async def filter_new(
+        self, scored: list[ScoredJob], *, touch: bool = False
+    ) -> list[ScoredJob]:
+        """The postings not yet in `seen`, looked up 500 uids per query.
+
+        One placeholder per posting used to go into a single `IN (...)`, and
+        SQLite refuses more than its bound-variable limit: 999 before 3.32,
+        32,766 after, so a scan of a real store's ~2,850 postings failed outright
+        on an older SQLite and a 10x board list would fail on any (2.5.8).
+
+        `touch` refreshes `last_seen` on the postings found already seen, so
+        "when was this role last on a board" can be answered: before 2.5.8
+        the only write to `last_seen` was an upsert branch `filter_new` made
+        unreachable, and 4,616 of 5,048 live rows had `first_seen ==
+        last_seen`. Off by default, so the call stays a pure read for any
+        caller that does not ask; a scan passes `touch=not dry_run`.
+
+        The only thing interpolated into the SQL is a run of `?` placeholders,
+        whose length comes from the chunk and nothing else. Every value is
+        bound. Written down because bandit's S608 flags the shape on sight.
+        """
         if not scored:
             return []
-        uids = [s.job.uid for s in scored]
-        # The only thing interpolated is a run of `?` placeholders, whose
-        # length comes from len(uids) and nothing else. Every value is bound.
-        # Checked because bandit's S608 flags this shape on sight and the
-        # answer should be written down rather than rediscovered: there is no
-        # SQL builder here and no posting text anywhere near the statement.
-        placeholders = ",".join("?" * len(uids))
-        cur = await self.db.execute(
-            f"SELECT uid FROM seen WHERE uid IN ({placeholders})",
-            uids,
-        )
-        known = {row[0] for row in await cur.fetchall()}
+        uids = list(dict.fromkeys(s.job.uid for s in scored))
+        known: set[str] = set()
+        for chunk in _chunks(uids):
+            placeholders = ",".join("?" * len(chunk))
+            rows = await self.db.execute_fetchall(
+                f"SELECT uid FROM seen WHERE uid IN ({placeholders})", chunk
+            )
+            known.update(str(row[0]) for row in rows)
+        if touch and known:
+            now = datetime.now(UTC).isoformat(timespec="seconds")
+            for chunk in _chunks(sorted(known)):
+                placeholders = ",".join("?" * len(chunk))
+                await self.db.execute(
+                    f"UPDATE seen SET last_seen = ? WHERE uid IN ({placeholders})",
+                    [now, *chunk],
+                )
+            await self.db.commit()
         return [s for s in scored if s.job.uid not in known]
 
     async def record(self, scored: ScoredJob, *, reason: str = "") -> None:
@@ -374,18 +405,17 @@ class Store:
         if not wanted:
             return {}
         now = datetime.now(UTC).isoformat(timespec="seconds")
-        for uid in wanted:
-            await self.db.execute(
-                """
-                INSERT INTO deferred (uid, reason, times, first_seen, last_seen)
-                VALUES (?, ?, 1, ?, ?)
-                ON CONFLICT(uid) DO UPDATE SET
-                    times=times + 1,
-                    reason=excluded.reason,
-                    last_seen=excluded.last_seen
-                """,
-                (uid, reason, now, now),
-            )
+        await self.db.executemany(
+            """
+            INSERT INTO deferred (uid, reason, times, first_seen, last_seen)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(uid) DO UPDATE SET
+                times=times + 1,
+                reason=excluded.reason,
+                last_seen=excluded.last_seen
+            """,
+            [(uid, reason, now, now) for uid in wanted],
+        )
         await self.db.commit()
         counts: dict[str, int] = {}
         for chunk in _chunks(wanted):

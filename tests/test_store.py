@@ -180,7 +180,9 @@ async def test_posting_cache_survives_reopening_the_file(tmp_path: Path) -> None
 
 async def test_mark_and_read_application_state(tmp_path: Path) -> None:
     async with Store(tmp_path / "s.sqlite3") as store:
-        await store.mark("https://x/1", "applied", company="Glencore", title="Analytics")
+        await store.mark(
+            "https://x/1", "applied", company="Glencore", title="Analytics"
+        )
         assert await store.application_state("https://x/1") == "applied"
         assert await store.application_state("https://x/2") is None
 
@@ -310,9 +312,9 @@ async def test_applications_table_migrates_onto_a_pre_existing_store(
         assert tables, "applications table must exist after the upgrade"
 
         assert await store.count() == 1
-        assert not await store.is_new(
-            energy_job
-        ), "seen data written under the old schema must survive the upgrade"
+        assert not await store.is_new(energy_job), (
+            "seen data written under the old schema must survive the upgrade"
+        )
 
         await store.mark("https://x/2", "shortlist", company="A", title="One")
         assert await store.shortlist() == [("https://x/2", "A", "One")]
@@ -342,8 +344,8 @@ async def test_record_all_still_accepts_bare_scored_jobs(
         assert [r[0] for r in rows] == [""]
 
 
-def test_migration_count_is_six() -> None:
-    assert len(_MIGRATIONS) == 6
+def test_migration_count_is_seven() -> None:
+    assert len(_MIGRATIONS) == 7
 
 
 async def test_unsee_matches_on_uid_as_well_as_url(
