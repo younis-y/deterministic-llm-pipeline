@@ -374,19 +374,36 @@ async def test_a_second_scan_does_not_refetch_an_unchanged_posting(
 
 
 @respx.mock
-async def test_llm_failure_is_surfaced_not_silently_downgraded(tmp_path: Path) -> None:
+async def test_llm_failure_is_surfaced_not_silently_downgraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A revoked ANTHROPIC_API_KEY makes every scoring call 401. Each failure
     was caught per-job and logged at WARNING, so the digest rendered a normal
     scan with every role marked "keyword only" — indistinguishable from a
     deliberate --no-llm run. Twelve hours of postings scored by keywords alone,
-    with nothing in the output saying so."""
+    with nothing in the output saying so.
+
+    The 401 comes from a transport injected into the SDK's client (2.5.8). The
+    SDK sends through its own HTTP library (`httpx2`, not `httpx`), which
+    respx does not patch, so the respx route this test used was never called:
+    it passed on the real API's 401 for a fake key, then, once the suite
+    blocked the network, on a DNS error. The right outcome, for the wrong
+    reason both times."""
+    import httpx2
+    from anthropic import AsyncAnthropic
+
+    from rolescan.scoring.judges import AnthropicJudge
+
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200, json=_payload("Power Market Analyst", "Forecasting day-ahead prices.")
         )
     )
-    respx.post("https://api.anthropic.com/v1/messages").mock(
-        return_value=httpx.Response(
+    sent: list[str] = []
+
+    def reject(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request.url.path)
+        return httpx2.Response(
             401,
             json={
                 "type": "error",
@@ -396,7 +413,13 @@ async def test_llm_failure_is_surfaced_not_silently_downgraded(tmp_path: Path) -
                 },
             },
         )
+
+    client = AsyncAnthropic(
+        api_key="test-key-rejected-by-the-api",
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(reject)),
+        max_retries=0,
     )
+    monkeypatch.setattr(AnthropicJudge, "_get_client", lambda self: client)
     cfg = Config.model_validate(
         {
             "profile": {"min_keyword_score": 0, "min_report_score": 0},
@@ -407,7 +430,9 @@ async def test_llm_failure_is_surfaced_not_silently_downgraded(tmp_path: Path) -
     )
     result = await run_scan(cfg)
 
+    assert sent == ["/v1/messages"], "the injected transport answered, once"
     assert result.llm_errors == 1, "the scan must count scoring failures"
+    assert "AuthenticationError" in result.llm_error_detail
     text = render_markdown(result)
     assert "scoring failed" in text.casefold(), text
 

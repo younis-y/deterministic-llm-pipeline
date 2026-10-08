@@ -146,12 +146,13 @@ def test_seen_is_written_even_if_terminal_rendering_fails(
     an exception there left a digest whose postings were reported again on the
     next run. The exit code is still non-zero: the command did fail."""
     import rolescan.cli as cli_module
+    import rolescan.digest as digest_module
 
     cfg = _project(tmp_path)
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(200, json=BOARD)
     )
-    real_write = cli_module.write_digest
+    real_write = digest_module.write_digest
     real_print = cli_module.console.print
     written: list[Path] = []
 
