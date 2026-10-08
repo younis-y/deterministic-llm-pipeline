@@ -22,6 +22,7 @@ from rolescan.slugs import SlugIndex
 from rolescan.sources import available, get_source
 from rolescan.sources.base import ProbeResult, ProbeStatus
 from rolescan.store import Store
+from rolescan.storefile import RunLockedError, run_lock
 
 app = typer.Typer(
     add_completion=False,
@@ -195,10 +196,24 @@ def scan(
     cfg = _load(config)
     if no_llm:
         cfg.llm.enabled = False
+    db_path = cfg.resolve(cfg.output.db_path)
+    try:
+        with run_lock(db_path):
+            _scan(cfg, config, dry=dry, no_llm=no_llm, email=email)
+    except RunLockedError as e:
+        # Exit 4, not 0: the run did not happen, and a wrapper (launchd, a
+        # scheduler) must be able to tell that from a quiet day.
+        console.print(f"[yellow]{e}[/]")
+        raise typer.Exit(4) from e
+
+
+def _scan(cfg: Config, config: Path, *, dry: bool, no_llm: bool, email: bool) -> None:
+    """`scan`'s body, run while this process holds the store's run lock."""
+    db_path = cfg.resolve(cfg.output.db_path)
 
     async def _go() -> tuple[ScanResult, list[tuple[str, str, str]]]:
         result = await run_scan(cfg, dry_run=dry, check_llm=not no_llm)
-        async with Store(cfg.resolve(cfg.output.db_path)) as store:
+        async with Store(db_path) as store:
             shortlist_rows = await store.shortlist()
         return result, shortlist_rows
 
