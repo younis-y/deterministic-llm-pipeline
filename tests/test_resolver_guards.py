@@ -13,8 +13,9 @@ The ids name the guard and the alternative a row protects; one row, for
 `_TITLE_SEPARATOR`, is a title from a real advert, the only input found that
 needs that guard. Controls are probe sentences whose guards an older test
 already pins; they stay as a net.
-Expected values are 2.5.7's output, read by hand; the two rows 2.5.7 got
-wrong are strict xfails until the resolver fixes land (same release).
+Expected values are 2.5.7's output, read by hand, except two rows 2.5.7 got
+wrong and 2.5.8 fixed: "Our people bring 9 years" (a third party's years,
+read as a requirement) and "Security clearance: never required." (a bar).
 """
 
 from __future__ import annotations
@@ -26,14 +27,6 @@ from rolescan.scoring.facts import hard_bars_stated, years_required_stated
 
 Years = tuple[int, str] | None
 Bars = list[tuple[str, str]]
-
-#: A row whose correct answer 2.5.7 does not give. Strict, so the fix that
-#: makes it pass also has to remove this mark.
-WRONG_ON_2_5_7 = pytest.mark.xfail(
-    strict=True,
-    reason="wrong on 2.5.7: a third party's years read as a requirement, "
-    "and 'never required' read as a clearance bar",
-)
 
 
 def _years(text: str) -> Years:
@@ -104,7 +97,7 @@ YEARS_GUARDS = [
     pytest.param("Join a team of experts with 9 years of experience.", None, id="_YEARS_OTHERS:team-of"),
     pytest.param("Our founders have 12 years of experience at a large bank.", None, id="_YEARS_OTHERS:our-founders"),
     pytest.param("Our consultants have 12 years of experience.", None, id="_YEARS_OTHERS:our-consultants"),
-    pytest.param("Our people bring 9 years of experience.", None, id="_YEARS_REQ_VERB:brings", marks=WRONG_ON_2_5_7),
+    pytest.param("Our people bring 9 years of experience.", None, id="_YEARS_REQ_VERB:brings"),
     pytest.param("Our staff have 9 years of experience.", None, id="_YEARS_OTHERS:our-staff"),
     pytest.param("Our leadership has 12 years of experience.", None, id="_YEARS_OTHERS:our-leadership"),
     pytest.param("3+ years of experience, or a PhD in a related field.", None, id="_YEARS_WAIVED:phd"),
@@ -226,7 +219,7 @@ BAR_CONTROLS = [
     pytest.param("Data Analyst", "We sponsor your SC clearance.", [("clearance", "We sponsor your SC clearance.")], id="bar-control-06"),
     pytest.param("Data Analyst", "Report to the security vetting manager.", [], id="bar-control-07"),
     pytest.param("Data Analyst", "Baseline Personnel Security Standard checks apply; security clearance is part of onboarding.", [("clearance", "security clearance is part of onboarding.")], id="bar-control-08"),
-    pytest.param("Data Analyst", "Security clearance: never required.", [], id="bar-control-09", marks=WRONG_ON_2_5_7),
+    pytest.param("Data Analyst", "Security clearance: never required.", [], id="bar-control-09"),
     pytest.param("Data Analyst", "Security clearance - not required.", [], id="bar-control-10"),
     pytest.param("Data Analyst", "Security clearance will be not needed.", [], id="bar-control-11"),
     pytest.param("Data Analyst", "Security clearance is not mandatory for this role.", [], id="bar-control-12"),
