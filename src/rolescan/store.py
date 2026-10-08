@@ -169,6 +169,10 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.path)
         try:
+            # Before any PRAGMA that writes: `journal_mode=WAL` rewrites the
+            # header of a rollback-journal file, so a newer file refused after
+            # it would be refused and changed (2.5.8).
+            await self._refuse_a_newer_file()
             # WAL lets a long scan run while you read the digest from another
             # shell.
             await self._db.execute("PRAGMA journal_mode=WAL")
@@ -217,6 +221,24 @@ class Store:
         row = await cur.fetchone()
         return int(row[0]) if row else 0
 
+    async def _refuse_a_newer_file(self) -> None:
+        """Raise `StoreTooNewError` for a file from a newer rolescan.
+
+        Older code used to open such a file silently and fail at the first
+        write the newer schema disagreed with, half way through a scan
+        (2.5.8). Called first thing after the connection opens, with nothing
+        written: the refused file is left byte for byte as it was.
+        """
+        version = await self._user_version()
+        if version > len(_MIGRATIONS):
+            msg = (
+                f"{self.path} is at schema version {version}, and this rolescan "
+                f"knows versions up to {len(_MIGRATIONS)}: it was written by a "
+                "newer rolescan. Upgrade rolescan, or restore a copy of the "
+                "store taken before the upgrade."
+            )
+            raise StoreTooNewError(msg)
+
     async def _migrate(self) -> None:
         """Bring the file up to `len(_MIGRATIONS)`, one step at a time.
 
@@ -239,20 +261,10 @@ class Store:
         because `executescript` commits first and so cannot join a
         transaction.
 
-        A file at a higher version than this code knows is refused with
-        `StoreTooNewError` and left untouched (2.5.8): older code used to open
-        it silently and fail at the first write the newer schema disagreed
-        with, half way through a scan.
+        A file at a higher version than this code knows is refused before
+        this runs (`_refuse_a_newer_file`).
         """
         version = await self._user_version()
-        if version > len(_MIGRATIONS):
-            msg = (
-                f"{self.path} is at schema version {version}, and this rolescan "
-                f"knows versions up to {len(_MIGRATIONS)}: it was written by a "
-                "newer rolescan. Upgrade rolescan, or restore a copy of the "
-                "store taken before the upgrade."
-            )
-            raise StoreTooNewError(msg)
         for i in range(version, len(_MIGRATIONS)):
             script = _MIGRATIONS[i]
             await self.db.execute("BEGIN IMMEDIATE")

@@ -41,6 +41,10 @@ def _version(path: Path) -> int:
         return int(conn.execute("PRAGMA user_version").fetchone()[0])
 
 
+def _names(folder: Path) -> list[str]:
+    return sorted(p.name for p in folder.iterdir())
+
+
 async def test_a_file_that_is_not_a_database_fails_without_a_live_worker(
     tmp_path: Path,
 ) -> None:
@@ -101,6 +105,11 @@ async def test_a_clean_exit_still_commits_what_was_not_committed(
 async def test_a_newer_file_is_refused_and_left_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Byte for byte: a refused open must not even switch the journal mode.
+
+    The file is put back in rollback-journal mode first, because that is where
+    `PRAGMA journal_mode=WAL` rewrites the header: a check that ran after it
+    would refuse the file but leave it changed."""
     path = tmp_path / "s.db"
     base = store_module._MIGRATIONS
     with monkeypatch.context() as m:
@@ -111,10 +120,15 @@ async def test_a_newer_file_is_refused_and_left_untouched(
         )
         async with Store(path):
             pass
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("PRAGMA journal_mode=DELETE").fetchone()[0] == "delete"
+    before = path.read_bytes()
 
     with pytest.raises(StoreTooNewError, match="newer rolescan"):
         async with Store(path):
             pass
 
+    assert path.read_bytes() == before
+    assert _names(tmp_path) == ["s.db"], "no -wal or -shm left behind"
     assert _version(path) == len(base) + 1
     assert await _wait_for_no_workers() == []
