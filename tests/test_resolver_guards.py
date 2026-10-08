@@ -13,6 +13,13 @@ The ids name the guard and the alternative a row protects; one row, for
 `_TITLE_SEPARATOR`, is a title from a real advert, the only input found that
 needs that guard. Controls are probe sentences whose guards an older test
 already pins; they stay as a net.
+
+Whole guards: 48 of 48 killed (2026-10-08). The last survivor,
+`_BAR_CLAUSE_START`, changes no probe sentence but is load-bearing: it keeps a
+soft word in a neighbouring clause, across a comma or bracket, from waiving a
+bar ("Saudi nationals only, Python is a plus." is still a nationality bar), and
+the two `_BAR_CLAUSE_START` rows pin it.
+
 Expected values are 2.5.7's output, read by hand, except two rows 2.5.7 got
 wrong and 2.5.8 fixed: "Our people bring 9 years" (a third party's years,
 read as a requirement) and "Security clearance: never required." (a bar).
@@ -187,6 +194,8 @@ BAR_GUARDS = [
     pytest.param("Emiratisation Coordinator", "", [], id="_TITLE_ROLE_NOUN:coordinator"),
     pytest.param("Human Resources Analyst - Emiratisation", "", [], id="_HR:human-resources"),
     pytest.param("Data Analyst", "Saudi nationals only • Python • SQL", [("nationality", "Saudi nationals only")], id="_BAR_SENTENCE_END:bullet"),
+    pytest.param("Data Analyst", "Saudi nationals only, Python is a plus.", [("nationality", "Saudi nationals only, Python is a plus.")], id="_BAR_CLAUSE_START:soft-word-after-comma"),
+    pytest.param("Data Analyst", "Preferably based in Dubai, security clearance is required.", [("clearance", "Preferably based in Dubai, security clearance is required.")], id="_BAR_CLAUSE_START:soft-word-before-comma"),
     pytest.param("Officer, Customer Support - Emiratized Role", "", [("nationality", "Officer, Customer Support - Emiratized Role")], id="_TITLE_SEPARATOR:dash-segment"),
 ]
 
