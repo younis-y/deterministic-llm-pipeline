@@ -457,10 +457,14 @@ def _stats(result: ScanResult) -> str:
         # stock rather than wondering why a board of 228 yielded nothing.
         bits.insert(1, f"{result.stale} too old")
     if result.llm_scored:
+        # Disjoint figures: scored by a call this run, and served from the
+        # cache. A run of cache hits alone still ran (2.5.8).
         bits.append(
-            f"{result.llm_scored} scored, {result.llm_cached} from cache"
-            + _model_note(result)
+            f"{result.llm_scored - result.llm_cached} scored, "
+            f"{result.llm_cached} from cache" + _model_note(result)
         )
+    if result.facts_cache_skipped:
+        bits.append("facts cache skipped: model identity unknown")
     if result.hidden_blocked:
         # Only when it happened: a permanent "0 blocked and hidden" on every
         # digest would train the reader to skip the line that matters. These

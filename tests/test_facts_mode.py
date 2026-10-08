@@ -242,7 +242,7 @@ async def test_judge_mode_still_routes_through_verdict_not_facts() -> None:
     assert out.fit.fit_score == 70
 
 
-# --- the cache holds verified facts, not the post-rules verdict ------------
+# --- the cache holds facts, not the post-rules verdict ---------------------
 #
 # Two configs can read the same cache row and reach different verdicts, since
 # `rules` and `min_report_score` are applied AFTER the cache lookup, not
@@ -668,7 +668,8 @@ async def test_an_unsupported_clearance_bar_does_not_block_on_the_live_path() ->
 
 
 async def test_a_bar_the_model_left_out_still_blocks_through_the_scorer() -> None:
-    """2.5.6: `_call_facts` chains `resolve_hard_bars` after `verify_facts`."""
+    """2.5.6: `finish_facts` runs `resolve_hard_bars` after `verify_facts` (it
+    ran inside `_call_facts` until 2.5.8)."""
     job = _job("Motivated and hardworking. This role is open to UAE Nationals only.")
     scorer, _judge = _facts_scorer(_facts(fit_score=85))
 

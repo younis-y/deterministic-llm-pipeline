@@ -29,7 +29,7 @@ from rolescan.scoring import (
     score_keywords,
     unusable_enricher_reason,
 )
-from rolescan.scoring.judges import backend_status
+from rolescan.scoring.judges import backend_status, served_model_digest
 from rolescan.scoring.keyword import SYNTHETIC_PENALTIES
 from rolescan.sources import get_source
 from rolescan.sources.base import _REGISTRY, PostingCache, SourceSkipped
@@ -88,6 +88,12 @@ class ScanResult:
     backend reports one (Ollama does, in `/api/tags`), else "" (2.5.8). A tag
     can be re-pulled under the same name; this is what says the weights
     behind the run's verdicts changed."""
+    facts_cache_skipped: bool = False
+    """The facts cache was neither read nor written this run, because the
+    backend normally reports the served model's digest and this run could not
+    read it (2.5.8). A row keyed on no weights could later be replayed as the
+    answer of weights it never came from, so the run asks the model for every
+    posting instead."""
     llm_unusable: str = ""
     """Why the configured judge could not be used at all, or "".
 
@@ -315,6 +321,41 @@ async def _preflight(cfg: Config) -> tuple[str, str, str]:
     return backend_reason, enricher_reason, status.model_digest
 
 
+async def _settle_identity(cfg: Config, result: ScanResult) -> None:
+    """Never let the facts cache be keyed on weights this run cannot name.
+
+    Ollama reports a model digest in `/api/tags`; the pre-scan check blanks it
+    when its short probe fails (a server busy loading a model can miss 3 s).
+    Keying on the blank digest would miss every cached row and write new ones
+    that belong to no weights, and a later run after a re-pull would be handed
+    them (2.5.8). So when the probe reported a problem and gave no digest, the
+    list is read once more with a longer timeout. A digest from that read is
+    the run's identity; a server that lists the model with no digest has none
+    to report, and "" stands; if the list cannot be read at all, the identity
+    is unknown and `facts_cache_skipped` turns the facts cache off for the run.
+    A backend with no digest to give (a hosted one) is never affected.
+    """
+    llm = cfg.llm
+    if (
+        result.llm_model_digest
+        or not result.llm_unusable
+        or not llm.enabled
+        or llm.mode != "facts"
+        or llm.backend != "ollama"
+    ):
+        return
+    digest = await served_model_digest(llm)
+    if digest is None:
+        result.facts_cache_skipped = True
+        log.warning(
+            "could not read the model's digest from %s: the facts cache is "
+            "skipped for this run (not read, not written)",
+            llm.base_url,
+        )
+    else:
+        result.llm_model_digest = digest
+
+
 async def _drop_already_handled(
     scored: list[ScoredJob], store: Store, *, touch: bool
 ) -> list[ScoredJob]:
@@ -436,16 +477,23 @@ async def _count_thin(
 
 
 async def _judge(
-    candidates: list[ScoredJob], cfg: Config, store: Store, *, model_digest: str
+    candidates: list[ScoredJob],
+    cfg: Config,
+    store: Store,
+    *,
+    model_digest: str,
+    facts_cache: bool = True,
 ) -> tuple[list[ScoredJob], FitScorer]:
     """LLM fit score, cached on the posting's content hash and the prompt's
-    fingerprint, which includes the served model's digest."""
+    fingerprint, which includes the served model's digest. `facts_cache` is
+    False when the run could not name the weights (see `_settle_identity`)."""
     scorer = FitScorer(
         cfg.llm,
         cfg.profile,
         store,
         extra_prompt=cfg.llm.extra_prompt,
         model_digest=model_digest,
+        facts_cache=facts_cache,
     )
     judged = await scorer.score_all(candidates)
     return judged, scorer
@@ -713,6 +761,7 @@ async def run_scan(
             result.enricher_unusable,
             result.llm_model_digest,
         ) = await _preflight(cfg)
+        await _settle_identity(cfg, result)
 
     # The store opens BEFORE fetching, not after: the structured source needs
     # the posting cache during fetch to skip detail pages whose sitemap lastmod
@@ -743,7 +792,11 @@ async def run_scan(
             result.unread, thin = await _count_thin(thin, store, result.unread_after)
 
         judged, scorer = await _judge(
-            candidates, cfg, store, model_digest=result.llm_model_digest
+            candidates,
+            cfg,
+            store,
+            model_digest=result.llm_model_digest,
+            facts_cache=not result.facts_cache_skipped,
         )
         result.llm_calls = scorer.calls_made
         result.llm_cached = sum(1 for s in judged if s.llm_cached)

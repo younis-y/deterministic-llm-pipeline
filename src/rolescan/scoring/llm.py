@@ -389,7 +389,8 @@ def final_key(job: Job) -> str:
     """The cache key for the FINISHED verdict: after `decide`, and after any
     enricher.
 
-    `cache_key` in facts mode deliberately holds the verified `PostingFacts`,
+    `cache_key` in facts mode deliberately holds the model's raw
+    `PostingFacts` (verified and resolved on every read, `finish_facts`),
     not a verdict, so that a `rules` or `min_report_score` change is applied
     to every cached posting for free on the next run rather than replaying a
     verdict frozen under whatever was configured when the row was written
@@ -419,14 +420,22 @@ class FitScorer:
         *,
         extra_prompt: str = "",
         model_digest: str = "",
+        facts_cache: bool = True,
     ) -> None:
         self.cfg = cfg
         self.profile = profile
         self.store = store
         #: The served model's digest prefix (`backend_status`), part of the
         #: facts cache key: re-pulled weights under the same tag must not be
-        #: served facts the old weights made (2.5.8). "" when not known.
+        #: served facts the old weights made (2.5.8). "" when the backend
+        #: reports none.
         self.model_digest = model_digest
+        #: False when the run could not say which weights it is talking to
+        #: although the backend normally reports them: the facts cache is then
+        #: neither read nor written, because a row keyed on no weights could
+        #: later be replayed as the answer of weights it never came from. The
+        #: final verdict row is still written (2.5.8).
+        self.facts_cache = facts_cache
         self._fingerprint: str | None = None
         #: Appended to SYSTEM verbatim. The seam for anything this library has
         #: no business knowing about - a caller with private context to add
@@ -730,7 +739,7 @@ class FitScorer:
         job = scored.job
         key = self._facts_cache_key(job)
 
-        if self.store is not None:
+        if self.store is not None and self.facts_cache:
             raw = await self.store.get_verdict(key, self.cfg.cache_days, PostingFacts)
             if raw is not None:
                 cached_facts = finish_facts(raw, job)
@@ -755,7 +764,7 @@ class FitScorer:
 
         # The RAW facts are cached; verification and the resolvers run on
         # every read, so a resolver fix reaches this row without a re-call.
-        if self.store is not None:
+        if self.store is not None and self.facts_cache:
             await self.store.put_verdict(key, raw)
         facts = finish_facts(raw, job)
         self.last_facts[job.url] = facts

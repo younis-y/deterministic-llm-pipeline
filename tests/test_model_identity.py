@@ -165,9 +165,9 @@ async def test_the_run_carries_the_model_and_its_digest(tmp_path: Path) -> None:
 
 def test_the_stats_line_names_the_model_that_scored() -> None:
     result = ScanResult(
-        llm_calls=2,
+        llm_calls=3,
         llm_cached=1,
-        llm_scored=3,
+        llm_scored=4,
         llm_model="m:1",
         llm_model_digest="0123456789ab",
     )

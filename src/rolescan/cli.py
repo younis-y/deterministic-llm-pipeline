@@ -107,6 +107,13 @@ def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
             "[dim]Postings are scored normally, just without that extra "
             "step.[/]\n"
         )
+    if result.facts_cache_skipped:
+        console.print(
+            "\n[yellow]Facts cache skipped: model identity unknown.[/] "
+            "[dim]The model's digest could not be read, so cached facts were "
+            "neither used nor written this run and every posting was sent to "
+            "the model.[/]\n"
+        )
     if not result.llm_unusable:
         return
     if not result.llm_scored:
@@ -127,7 +134,8 @@ def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
     console.print(
         f"\n[yellow]The pre-scan backend check failed "
         f"({result.llm_unusable}), but scoring ran anyway: "
-        f"{result.llm_scored} scored, {result.llm_cached} from cache.[/]\n"
+        f"{result.llm_scored - result.llm_cached} scored, "
+        f"{result.llm_cached} from cache.[/]\n"
         "[dim]The liveness probe is deliberately short so an unattended "
         "run cannot hang on it; a loaded server can exceed it.[/]\n"
     )

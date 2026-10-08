@@ -280,9 +280,24 @@ def test_attempted_calls_that_all_failed_are_not_scoring_that_ran() -> None:
     assert "5 scored" not in text
 
 
-def test_the_scored_figure_counts_verdicts_not_calls() -> None:
+def test_the_stats_figures_are_disjoint_and_count_verdicts_not_calls() -> None:
+    """ "N scored" is verdicts a call produced, "M from cache" is verdicts the
+    cache served: five calls, two failed, one cache hit is 2 + 1, not 5."""
     result = ScanResult(llm_calls=5, llm_cached=1, llm_scored=3, llm_errors=2)
-    assert "3 scored, 1 from cache" in render_markdown(result)
+    assert "2 scored, 1 from cache" in render_markdown(result)
+
+
+def test_a_run_of_cache_hits_alone_still_counts_as_scoring_that_ran() -> None:
+    result = ScanResult(
+        llm_backend="ollama",
+        llm_unusable="could not reach ollama at http://localhost:11434",
+        llm_cached=2,
+        llm_scored=2,
+    )
+    text = render_markdown(result)
+    assert "0 scored, 2 from cache" in text
+    assert "scoring ran anyway" in text
+    assert "did not run at all" not in text
 
 
 def test_a_deferral_reason_with_no_label_is_still_named() -> None:
@@ -352,7 +367,10 @@ def test_scan_exits_3_when_ollama_is_down_and_still_writes_the_digest(
     # the run did not score, not also that it "ran anyway: 5 scored".
     assert "LLM scoring did not run" in out
     assert "scoring ran anyway" not in out
+    # Nothing could name the weights either, so the facts cache sat out.
+    assert "Facts cache skipped: model identity unknown" in out
     digest = (tmp_path / "digests" / "latest.md").read_text()
+    assert "facts cache skipped: model identity unknown" in digest
     assert "LLM scoring did not run at all" in digest
     assert "scoring ran anyway" not in digest
     assert "scored," not in digest, "no 'N scored' figure when nothing scored"

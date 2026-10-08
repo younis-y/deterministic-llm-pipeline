@@ -44,6 +44,7 @@ __all__ = [
     "get_judge",
     "ollama_options",
     "register",
+    "served_model_digest",
     "unusable_backend_reason",
 ]
 
@@ -56,6 +57,12 @@ _REGISTRY: dict[str, type[Judge]] = {}
 #: it must never become a new way for the tool to hang. `LLMConfig.timeout`
 #: is for a chat completion and is far too long for this.
 PREFLIGHT_TIMEOUT = 3.0
+
+#: The longer timeout for the one re-read of Ollama's model list when the
+#: preflight could not say which weights are being served (2.5.8). The cache
+#: key needs the answer, and a server busy loading a large model can miss the
+#: 3 s probe and still answer in 10.
+IDENTITY_TIMEOUT = 10.0
 
 #: Seconds before the one retry of an Ollama call that timed out or got a 5xx.
 #: A runner restarting mid-call, or a model being reloaded under memory
@@ -538,6 +545,59 @@ class _TriageOutput(BaseModel):
     confidence: Confidence
 
 
+def _read_tags(payload: Any) -> tuple[set[str], dict[str, str]]:
+    """(the model names, each name's digest prefix) from `/api/tags`.
+
+    An unexpected shape is a reason to report, never to raise: the checks
+    that read this exist to prevent silent failure, so they must not become
+    a new way for the scan to fail totally.
+    """
+    names: set[str] = set()
+    digests: dict[str, str] = {}
+    entries = payload.get("models") if isinstance(payload, dict) else None
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name") or entry.get("model") or ""
+        if isinstance(name, str) and name:
+            names.add(name)
+            digest = entry.get("digest")
+            if isinstance(digest, str):
+                # Some servers print `sha256:<hex>`: the prefix names the
+                # algorithm, not the weights, so it is not part of the 12.
+                digests[name] = digest.removeprefix("sha256:")[:12]
+    return names, digests
+
+
+async def served_model_digest(cfg: LLMConfig) -> str | None:
+    """The served model's digest prefix, read again from Ollama (2.5.8).
+
+    For a run whose preflight could not name the weights (its 3 s probe timed
+    out). Three answers, which the caller must not blur: a digest; "" when
+    the server answered and lists the model with no digest, so it does not
+    report one and "" is its honest identity; None when it could not be read
+    (no answer, not JSON, the model not listed), so the identity is UNKNOWN
+    and nothing may be keyed on it. Only Ollama reports a digest here: any
+    other backend gets "".
+    """
+    if cfg.backend != "ollama" or not cfg.model:
+        return ""
+    url = f"{cfg.base_url.rstrip('/')}/api/tags"
+    try:
+        async with httpx.AsyncClient(timeout=IDENTITY_TIMEOUT) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError) as e:
+        log.warning("could not read the served model's digest from %s: %s", url, e)
+        return None
+    names, digests = _read_tags(payload)
+    qualified = cfg.model if ":" in cfg.model else f"{cfg.model}:latest"
+    if not names & {cfg.model, qualified}:
+        return None
+    return digests.get(cfg.model) or digests.get(qualified, "")
+
+
 @register
 class OllamaJudge(Judge):
     """A model running locally under Ollama. No key, no network egress, no bill.
@@ -766,23 +826,7 @@ class OllamaJudge(Judge):
                 "llm.base_url."
             )
 
-        names: set[str] = set()
-        digests: dict[str, str] = {}
-        entries = payload.get("models") if isinstance(payload, dict) else None
-        for entry in entries or []:
-            # An unexpected shape is a reason to report, never to raise: this
-            # check exists to prevent silent failure, so it must not become a
-            # new way for the scan to fail totally.
-            if not isinstance(entry, dict):
-                continue
-            name = entry.get("name") or entry.get("model") or ""
-            if isinstance(name, str) and name:
-                names.add(name)
-                digest = entry.get("digest")
-                if isinstance(digest, str):
-                    # Some servers print `sha256:<hex>`: the prefix names the
-                    # algorithm, not the weights, so it is not part of the 12.
-                    digests[name] = digest.removeprefix("sha256:")[:12]
+        names, digests = _read_tags(payload)
 
         wanted = self.cfg.model
         # An untagged name means `:latest` to ollama, so `llama3.1` is NOT
