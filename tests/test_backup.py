@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 
 from conftest import plain
 from rolescan.cli import app
+from rolescan.store import _MIGRATIONS
 from rolescan.storefile import BackupError, backup
 
 CONFIG = """
@@ -365,3 +366,51 @@ def test_backup_command_with_keep_zero_leaves_earlier_copies_alone(
     assert result.exit_code == 0, result.output
     assert older.is_file()
     assert len(list((tmp_path / "backups").iterdir())) == 2
+
+
+@pytest.mark.parametrize(
+    "command", [["scan", "--no-email"], ["prune"], ["backup"]], ids=lambda c: c[0]
+)
+def test_a_store_from_a_newer_rolescan_is_refused_before_any_copy(
+    tmp_path: Path, command: list[str]
+) -> None:
+    """The refusal points at a copy taken before the upgrade. Taking the day's
+    copy first would rotate out the oldest one, and after `backup_keep` such
+    days the copy it points at would be gone, so the version is read (read
+    only) before anything is copied, and the message is the whole output."""
+    config = tmp_path / "config.yaml"
+    config.write_text(CONFIG + "  backup_keep: 2\n")
+    db = tmp_path / "seen.db"
+    _make_db(db)
+    for day in (date(2020, 1, 1), date(2020, 1, 2)):
+        backup(db, keep=2, today=day)
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute(f"PRAGMA user_version={len(_MIGRATIONS) + 1}")
+    copies = sorted((tmp_path / "backups").iterdir())
+    before = db.read_bytes()
+
+    result = CliRunner().invoke(app, [command[0], "-c", str(config), *command[1:]])
+
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit), "a message, not a traceback"
+    out = " ".join(plain(result.output).split())
+    assert f"at schema version {len(_MIGRATIONS) + 1}" in out
+    assert "written by a newer rolescan" in out
+    assert sorted((tmp_path / "backups").iterdir()) == copies
+    assert db.read_bytes() == before
+    assert not (tmp_path / "digests").exists(), "nothing ran"
+
+
+def test_a_store_that_is_not_a_database_is_left_to_the_backup_check(
+    tmp_path: Path,
+) -> None:
+    """The version check reads what it can; a file it cannot read is the
+    backup's to refuse, with the message that names a damaged store."""
+    config = tmp_path / "config.yaml"
+    config.write_text(CONFIG)
+    (tmp_path / "seen.db").write_bytes(b"not a database at all" * 200)
+
+    result = CliRunner().invoke(app, ["scan", "-c", str(config), "--no-email"])
+
+    assert result.exit_code == 1
+    assert "Nothing was scanned" in " ".join(plain(result.output).split())

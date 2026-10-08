@@ -26,6 +26,7 @@ import logging
 import re
 import sqlite3
 from collections.abc import Iterable, Mapping
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -37,7 +38,7 @@ from pydantic import BaseModel, ValidationError
 
 from rolescan.models import FitVerdict, Job, ScoredJob
 
-__all__ = ["PruneReport", "Store", "StoreTooNewError"]
+__all__ = ["PruneReport", "Store", "StoreTooNewError", "refuse_a_newer_store"]
 
 log = logging.getLogger(__name__)
 
@@ -194,6 +195,42 @@ class StoreTooNewError(RuntimeError):
     """
 
 
+def _too_new(path: Path, version: int) -> StoreTooNewError | None:
+    """The error for a file at schema `version`, or None when this rolescan
+    knows that version."""
+    if version <= len(_MIGRATIONS):
+        return None
+    msg = (
+        f"{path} is at schema version {version}, and this rolescan "
+        f"knows versions up to {len(_MIGRATIONS)}: it was written by a "
+        "newer rolescan. Upgrade rolescan, or restore a copy of the "
+        "store taken before the upgrade."
+    )
+    return StoreTooNewError(msg)
+
+
+def refuse_a_newer_store(path: Path) -> None:
+    """Raise `StoreTooNewError` when the file at `path` was written by a newer
+    rolescan, read through a read-only connection (2.5.8).
+
+    For a caller that must know before it touches the file in any other way:
+    `rolescan scan` asks before the day's backup, which would otherwise rotate
+    out the very copy the error tells the reader to restore. No file, or one
+    whose version cannot be read (not a database, damaged, locked), passes:
+    whatever opens or copies it next says what is wrong with it.
+    """
+    if not path.is_file():
+        return
+    try:
+        uri = f"{path.resolve().as_uri()}?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as conn:
+            row = conn.execute("PRAGMA user_version").fetchone()
+    except sqlite3.Error:
+        return
+    if (error := _too_new(path, int(row[0]) if row else 0)) is not None:
+        raise error
+
+
 class Store:
     """Async SQLite store. Use as an async context manager."""
 
@@ -268,15 +305,8 @@ class Store:
         (2.5.8). Called first thing after the connection opens, with nothing
         written: the refused file is left byte for byte as it was.
         """
-        version = await self._user_version()
-        if version > len(_MIGRATIONS):
-            msg = (
-                f"{self.path} is at schema version {version}, and this rolescan "
-                f"knows versions up to {len(_MIGRATIONS)}: it was written by a "
-                "newer rolescan. Upgrade rolescan, or restore a copy of the "
-                "store taken before the upgrade."
-            )
-            raise StoreTooNewError(msg)
+        if (error := _too_new(self.path, await self._user_version())) is not None:
+            raise error
 
     async def _migrate(self) -> None:
         """Bring the file up to `len(_MIGRATIONS)`, one step at a time.

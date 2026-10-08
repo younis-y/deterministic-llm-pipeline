@@ -21,7 +21,7 @@ from rolescan.pipeline import ScanResult, record_scan, run_scan
 from rolescan.slugs import SlugIndex
 from rolescan.sources import available, get_source
 from rolescan.sources.base import ProbeResult, ProbeStatus
-from rolescan.store import PruneReport, Store
+from rolescan.store import PruneReport, Store, StoreTooNewError, refuse_a_newer_store
 from rolescan.storefile import BackupError, RunLockedError, backup, run_lock
 
 app = typer.Typer(
@@ -89,6 +89,22 @@ def _load(path: Path) -> Config:
     except Exception as e:
         console.print(f"[red]Config error:[/] {e}")
         raise typer.Exit(2) from e
+
+
+def _refuse_a_newer_store(db_path: Path) -> None:
+    """Exit 1 with the message, before anything is copied or opened, when the
+    store was written by a newer rolescan (2.5.8).
+
+    Before the backup on purpose: the day's copy would rotate out the oldest,
+    and after `backup_keep` such days the copy taken before the upgrade, the
+    one the message points at, would be gone."""
+    try:
+        refuse_a_newer_store(db_path)
+    except StoreTooNewError as e:
+        console.print(
+            f"[bold red]{e}[/]\n[dim]Nothing was changed, and no copy was taken.[/]"
+        )
+        raise typer.Exit(1) from e
 
 
 def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
@@ -218,6 +234,7 @@ def scan(
 def _scan(cfg: Config, config: Path, *, dry: bool, no_llm: bool, email: bool) -> None:
     """`scan`'s body, run while this process holds the store's run lock."""
     db_path = cfg.resolve(cfg.output.db_path)
+    _refuse_a_newer_store(db_path)
     if cfg.output.backup_keep:
         try:
             backup(db_path, keep=cfg.output.backup_keep)
@@ -529,6 +546,7 @@ def prune(
     cfg = _load(config)
     try:
         with run_lock(cfg.resolve(cfg.output.db_path)):
+            _refuse_a_newer_store(cfg.resolve(cfg.output.db_path))
             report = asyncio.run(_prune(cfg, verdicts_days=days))
     except RunLockedError as e:
         console.print(f"[yellow]{e}[/]")
@@ -549,6 +567,7 @@ def backup_store(config: ConfigOpt = Path("config.yaml")) -> None:
     deletes one."""
     cfg = _load(config)
     db_path = cfg.resolve(cfg.output.db_path)
+    _refuse_a_newer_store(db_path)
     try:
         path = backup(db_path, keep=cfg.output.backup_keep, force=True)
     except BackupError as e:
