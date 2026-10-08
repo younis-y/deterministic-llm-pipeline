@@ -192,17 +192,21 @@ class ScanResult:
     with `show_blocked: true`) is already in the digest and is not repeated.
 
     A prefilter reject is included when its terms are what put it under
-    the gate: its keyword score plus the `blockers` weights of its
-    `blocker_hits` clears `min_keyword_score`. (2.5.7: so is one whose
+    the gate: it has a `blocker_hits` entry, and its keyword score plus the
+    `blockers` weights of every term it was charged (`keyword_penalties`)
+    clears `min_keyword_score`. (2.5.7: so is one whose
     weighted `blockers` terms alone did it, and one within
     `profile.hidden_gate_margin` of the gate, whatever put it there; both
     carry no rule, and the digest groups them as `blockers` and `gate`. A
     thin posting a `hard_blockers` term caught is listed too.) A reject that
     fails the gate by more than that either way is low relevance, not a rule
-    hide. An `excluded_locations`
-    entry carries no weight, so an irrelevant posting in an excluded location
-    is not listed (about seven US postings a day on the owner's store), while
-    a relevant one clears the gate, is judged, and is listed from there.
+    hide. An `excluded_locations` entry carries no weight, so an irrelevant
+    posting in an excluded location is not listed (about seven a day on one
+    real store), while a relevant one clears the gate, is judged, and is
+    listed from there. One whose only hit is its location but whose weighted
+    terms pushed it under is listed under the terms group, showing the
+    location: whatever put a posting under the gate, its hit is shown (kept
+    in 2.5.8 when the 2.5.7 review asked whether that was noise).
     Rejects are still recorded as seen, so a wrongly hidden posting is listed
     once, on the run it is first seen, and not again (a `--dry` run records
     nothing, so it lists it every time)."""

@@ -183,7 +183,18 @@ llm:
   max_concurrent: 5
   max_calls_per_run: 60      # hard spend ceiling
   description_chars: 6000
-  cache_days: 30             # verdicts are cached on description text
+  cache_days: 30             # verdicts are cached on description text; 0 = never expire
+
+  # Ollama only. The context window, in tokens, asked of the model on every
+  # call. Unset, Ollama picks its own from the machine's memory, and a small
+  # one silently cuts the middle out of the prompt. rolescan checks before the
+  # scan that the model can hold this many; a model whose window is smaller
+  # (8k) is refused, and the run falls back to keyword scoring.
+  # num_ctx: 12288
+  # An answer whose token counts show the prompt was cut is an error, not
+  # facts. Set false only if your Ollama counts just the uncached part of a
+  # prompt, so every call would look cut.
+  # check_truncation: true
 
 http:
   timeout: 20.0
@@ -199,6 +210,17 @@ output:
   max_roles: 15
   show_blocked: true         # blocked roles are worth seeing once
   thin_unread_after: 3       # runs a posting may lack text before it is listed as unread
+  # Daily copies of the store kept in backups/ beside it, taken before a scan
+  # opens it. 0 turns the automatic copy off; `rolescan backup` still copies
+  # on demand and never deletes.
+  # backup_keep: 7
+  # How many days each cache keeps a row; 0 keeps a table whole. Never touches
+  # `seen` or `applications`. A scan trims after it records; so does
+  # `rolescan prune`. `verdicts` is never less than llm.cache_days.
+  # retention_days:
+  #   postings: 90
+  #   deferred: 45
+  #   verdicts: 180
   email:
     enabled: false
     smtp_host: smtp.example.com

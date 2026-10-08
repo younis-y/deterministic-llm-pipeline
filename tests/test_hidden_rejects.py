@@ -308,3 +308,37 @@ async def test_run_scan_carries_gate_and_the_thin_posting_a_term_caught(
     assert [s.job.title for s in result.rule_hidden] == [
         "Python Analyst, security clearance"
     ]
+
+
+def test_a_location_only_hit_pushed_under_by_weights_is_listed_with_its_location() -> (
+    None
+):
+    """Decided for 2.5.8: the posting's only hit is `location: dubai`, and the
+    weighted `director` (40) took it from 28 to -12, under the gate of 18. It
+    is listed under the terms group, showing the location, by the same rule
+    as any other hit: whatever put it under, its hit is shown."""
+    profile = _profile(
+        keywords={"python": 4, "data analyst": 8},
+        blockers={"director": 40},
+        excluded_locations=["dubai"],
+        min_keyword_score=18,
+        hidden_gate_margin=0,
+    )
+    reject = score_keywords(
+        Job(
+            source="t",
+            company="Acme",
+            title="Director, Data Analyst",
+            location="Dubai",
+            url="https://acme.example/1",
+            description="python",
+        ),
+        profile,
+    )
+    assert (reject.keyword_score, reject.blocker_hits) == (-12, ["location: dubai"])
+
+    hidden = _rule_hidden([], [], [reject], profile)
+
+    assert [h.job.title for h in hidden] == ["Director, Data Analyst"]
+    text = render_markdown(ScanResult(rule_hidden=hidden, gate=18))
+    assert 'blocked by "location: dubai"' in text
