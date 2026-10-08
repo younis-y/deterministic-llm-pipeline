@@ -26,6 +26,7 @@ import logging
 import re
 import sqlite3
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
@@ -36,7 +37,7 @@ from pydantic import BaseModel, ValidationError
 
 from rolescan.models import FitVerdict, Job, ScoredJob
 
-__all__ = ["Store", "StoreTooNewError"]
+__all__ = ["PruneReport", "Store", "StoreTooNewError"]
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +153,29 @@ def _statements(script: str) -> list[str]:
     if tail:
         out.append(tail)
     return out
+
+
+#: `source_counts` rows older than this are trimmed by `prune_all`. The
+#: quiet-source alarm reads 14 days (`source_high_water`), so this only ever
+#: removes rows nothing reads.
+_SOURCE_COUNTS_DAYS = 90
+
+#: `prune_all` rebuilds the file (VACUUM) once more than this share of its
+#: pages are free: a DELETE alone frees pages inside the file but never
+#: shrinks it (measured 2026-10-07: 21.35 MB before and after a trim, 9.64 MB
+#: after VACUUM, which took 0.03 s).
+_VACUUM_FREE_SHARE = 0.2
+
+
+@dataclass(frozen=True, slots=True)
+class PruneReport:
+    """Rows `Store.prune_all` removed per table, and whether it vacuumed."""
+
+    verdicts: int = 0
+    postings: int = 0
+    deferred: int = 0
+    source_counts: int = 0
+    vacuumed: bool = False
 
 
 class StoreTooNewError(RuntimeError):
@@ -658,6 +682,70 @@ class Store:
             (key, since),
         )
         return max((int(r[0]) for r in rows), default=0)
+
+    async def prune_all(
+        self, *, postings_days: int, deferred_days: int, verdicts_days: int
+    ) -> PruneReport:
+        """Trim every cache to its retention, then VACUUM if it is worth it.
+
+        A `*_days` of 0 keeps that table whole. `seen` and `applications` are
+        never touched here: `seen` is the "listed once" record, and deleting a
+        row re-lists the role. A cached posting is kept past its age while it
+        has an `applications` row, or while it is an apply/consider role whose
+        `seen.last_seen` is within `postings_days` (`prepare` reads its text).
+        """
+        verdicts = await self.prune(verdicts_days) if verdicts_days else 0
+        counts: dict[str, int] = {}
+        for table, days, sql in (
+            (
+                "postings",
+                postings_days,
+                """
+                DELETE FROM postings
+                WHERE fetched < :cutoff
+                  AND url NOT IN (SELECT url FROM applications)
+                  AND url NOT IN (SELECT url FROM seen
+                                  WHERE verdict IN ('apply', 'consider')
+                                    AND last_seen >= :cutoff)
+                """,
+            ),
+            (
+                "deferred",
+                deferred_days,
+                "DELETE FROM deferred WHERE last_seen < :cutoff",
+            ),
+            (
+                "source_counts",
+                _SOURCE_COUNTS_DAYS,
+                "DELETE FROM source_counts WHERE ran < :cutoff",
+            ),
+        ):
+            if not days:
+                counts[table] = 0
+                continue
+            cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat(
+                timespec="seconds"
+            )
+            cur = await self.db.execute(sql, {"cutoff": cutoff})
+            counts[table] = cur.rowcount or 0
+        await self.db.commit()
+        return PruneReport(
+            verdicts=verdicts,
+            postings=counts["postings"],
+            deferred=counts["deferred"],
+            source_counts=counts["source_counts"],
+            vacuumed=await self._vacuum_if_worth_it(),
+        )
+
+    async def _vacuum_if_worth_it(self) -> bool:
+        """VACUUM when more than `_VACUUM_FREE_SHARE` of the pages are free."""
+        [(free,)] = await self.db.execute_fetchall("PRAGMA freelist_count")
+        [(pages,)] = await self.db.execute_fetchall("PRAGMA page_count")
+        if not pages or free <= pages * _VACUUM_FREE_SHARE:
+            return False
+        await self.db.execute("VACUUM")
+        await self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return True
 
     async def prune(self, days: int = 180) -> int:
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat(

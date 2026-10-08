@@ -21,7 +21,7 @@ from rolescan.pipeline import ScanResult, record_scan, run_scan
 from rolescan.slugs import SlugIndex
 from rolescan.sources import available, get_source
 from rolescan.sources.base import ProbeResult, ProbeStatus
-from rolescan.store import Store
+from rolescan.store import PruneReport, Store
 from rolescan.storefile import BackupError, RunLockedError, backup, run_lock
 
 app = typer.Typer(
@@ -253,6 +253,13 @@ def _scan(cfg: Config, config: Path, *, dry: bool, no_llm: bool, email: bool) ->
     # exception while drawing it to the terminal must not leave its postings
     # unrecorded and reported again tomorrow.
     asyncio.run(record_scan(cfg, result))
+    if not dry:
+        try:
+            asyncio.run(_prune(cfg))
+        except Exception as e:
+            # The digest is written and its postings recorded; a cache trim
+            # that fails must not turn a delivered run into a failed one.
+            console.print(f"[yellow]could not trim old caches: {e}[/]")
 
     console.print(Markdown(text))
     console.print(f"\n[dim]written to {path}[/]")
@@ -464,21 +471,42 @@ def stats(config: ConfigOpt = Path("config.yaml")) -> None:
     console.print(f"{asyncio.run(go())} postings recorded.")
 
 
+async def _prune(cfg: Config, *, verdicts_days: int | None = None) -> PruneReport:
+    """Trim the store's caches to `output.retention_days`."""
+    keep = cfg.output.retention_days
+    async with Store(cfg.resolve(cfg.output.db_path)) as store:
+        return await store.prune_all(
+            postings_days=keep.postings,
+            deferred_days=keep.deferred,
+            verdicts_days=keep.verdicts if verdicts_days is None else verdicts_days,
+        )
+
+
 @app.command()
 def prune(
     config: ConfigOpt = Path("config.yaml"),
     days: Annotated[
-        int, typer.Option(help="Drop cached verdicts older than this.")
-    ] = 180,
+        int | None,
+        typer.Option(
+            min=1,
+            help="Drop cached verdicts older than this "
+            "(default: output.retention_days.verdicts).",
+        ),
+    ] = None,
 ) -> None:
-    """Drop stale cached LLM verdicts."""
+    """Trim old caches: verdicts, postings, deferral counts, source counts."""
     cfg = _load(config)
-
-    async def go() -> int:
-        async with Store(cfg.resolve(cfg.output.db_path)) as store:
-            return await store.prune(days)
-
-    console.print(f"Removed {asyncio.run(go())} cached verdicts.")
+    try:
+        with run_lock(cfg.resolve(cfg.output.db_path)):
+            report = asyncio.run(_prune(cfg, verdicts_days=days))
+    except RunLockedError as e:
+        console.print(f"[yellow]{e}[/]")
+        raise typer.Exit(4) from e
+    console.print(
+        f"Removed {report.verdicts} cached verdicts, {report.postings} cached "
+        f"postings, {report.deferred} deferral counts and {report.source_counts} "
+        "old source counts" + ("; the file was compacted." if report.vacuumed else ".")
+    )
 
 
 @app.command("backup")

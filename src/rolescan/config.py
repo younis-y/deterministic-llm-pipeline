@@ -505,6 +505,26 @@ class EmailConfig(BaseModel):
         return self
 
 
+class RetentionConfig(BaseModel):
+    """How many days each cache keeps a row (2.5.8); 0 keeps rows for ever.
+
+    Only caches: `seen` (the record of what has been listed) and
+    `applications` (what the user did) are never trimmed. Before 2.5.8 only
+    `verdicts` could be trimmed, by hand, and `postings` was 83% of the
+    21 MB store after two weeks of daily scans."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    postings: Annotated[int, Field(ge=0)] = 90
+    """Cached posting pages. A trimmed page costs one re-fetch if its source
+    still lists it. Never trimmed: a url with an `applications` row, or an
+    apply/consider role still listed within this many days."""
+    deferred: Annotated[int, Field(ge=0)] = 45
+    """Deferral counts of postings not sighted for this long."""
+    verdicts: Annotated[int, Field(ge=0)] = 180
+    """Cached LLM facts and verdicts; `rolescan prune --days` overrides it."""
+
+
 class OutputConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -520,6 +540,7 @@ class OutputConfig(BaseModel):
     never sends text (a Workday board with `details: false`, a structured page
     with no body) would otherwise hold it back for ever, and a pile of such
     postings would crowd out the ones that can be judged."""
+    retention_days: RetentionConfig = Field(default_factory=RetentionConfig)
     backup_keep: Annotated[int, Field(ge=0)] = 7
     """Daily copies of the store kept in `backups/` beside it (2.5.8).
     `rolescan scan` takes the day's copy before it opens the store, so the
