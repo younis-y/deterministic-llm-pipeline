@@ -133,7 +133,9 @@ def ollama_usage(
         msg = (
             f"ollama read {prompt} prompt tokens of a prompt that holds at least "
             f"{floor}: it cut the prompt to fit its context window. Raise "
-            f"llm.num_ctx (now {num_ctx}), or check the server's own limit."
+            f"llm.num_ctx (now {num_ctx}), or check the server's own limit. "
+            "If this server counts only the tokens it did not already have "
+            "cached, set llm.check_truncation: false."
         )
         raise PromptTruncatedError(msg)
     if prompt + output >= _CONTEXT_HEADROOM * num_ctx:
@@ -144,6 +146,26 @@ def ollama_usage(
         )
         raise PromptTruncatedError(msg)
     return OllamaUsage(prompt_tokens=prompt, output_tokens=output)
+
+
+def _model_window(info: dict[str, Any]) -> int | None:
+    """The language model's context window from `/api/show`'s `model_info`.
+
+    Keys are `<architecture>.context_length`, and `general.architecture` names
+    which architecture the model is: read that one first, since `model_info`
+    of a multimodal model can carry a second, unrelated `*.context_length`
+    ahead of it. Without an architecture, or without that key, the first
+    `*.context_length` is the best guess; None when there is none.
+    """
+    architecture = info.get("general.architecture")
+    if isinstance(architecture, str):
+        named = info.get(f"{architecture}.context_length")
+        if isinstance(named, int) and not isinstance(named, bool):
+            return named
+    for key, value in info.items():
+        if key.endswith(".context_length") and isinstance(value, int):
+            return value
+    return None
 
 
 class Judge(ABC):
@@ -551,7 +573,11 @@ class OllamaJudge(Judge):
     cheap_triage = True
 
     #: The token counts of the last answer, or None before the first call or
-    #: when the server reported none (2.5.8).
+    #: when the server reported none (2.5.8). One attribute per judge, shared
+    #: by every call in flight (`llm.max_concurrent`), so with more than one it
+    #: holds whichever answer landed last; and a call that fails does not
+    #: reset it, so after an error it still holds the previous answer's counts.
+    #: A diagnostic for a single call at a time, not a per-posting record.
     last_usage: OllamaUsage | None = None
 
     async def _post(self, url: str, payload: dict[str, Any]) -> httpx.Response:
@@ -754,7 +780,9 @@ class OllamaJudge(Judge):
                 names.add(name)
                 digest = entry.get("digest")
                 if isinstance(digest, str):
-                    digests[name] = digest[:12]
+                    # Some servers print `sha256:<hex>`: the prefix names the
+                    # algorithm, not the weights, so it is not part of the 12.
+                    digests[name] = digest.removeprefix("sha256:")[:12]
 
         wanted = self.cfg.model
         # An untagged name means `:latest` to ollama, so `llama3.1` is NOT
@@ -795,21 +823,13 @@ class OllamaJudge(Judge):
             log.warning("could not read the model's context window from %s: %s", url, e)
             return ""
         info = body.get("model_info") if isinstance(body, dict) else None
-        windows = (
-            [
-                v
-                for k, v in info.items()
-                if k.endswith(".context_length") and isinstance(v, int)
-            ]
-            if isinstance(info, dict)
-            else []
-        )
-        if not windows or windows[0] >= self.cfg.num_ctx:
+        window = _model_window(info) if isinstance(info, dict) else None
+        if window is None or window >= self.cfg.num_ctx:
             return ""
         return (
-            f"model {self.cfg.model!r} has a {windows[0]}-token context window, "
+            f"model {self.cfg.model!r} has a {window}-token context window, "
             f"smaller than llm.num_ctx ({self.cfg.num_ctx}), so Ollama would cut "
-            f"longer prompts to fit. Set llm.num_ctx to {windows[0]} or less, or "
+            f"longer prompts to fit. Set llm.num_ctx to {window} or less, or "
             "choose a model with a longer window."
         )
 

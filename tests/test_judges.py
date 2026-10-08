@@ -126,7 +126,7 @@ async def test_ollama_judge_returns_a_validated_verdict() -> None:
 @respx.mock
 async def test_ollama_connection_refused_is_a_useful_message() -> None:
     """The most likely failure is that ollama simply is not running."""
-    respx.post("http://localhost:11434/api/chat").mock(
+    route = respx.post("http://localhost:11434/api/chat").mock(
         side_effect=httpx.ConnectError("connection refused")
     )
     judge = get_judge("ollama", LLMConfig(enabled=True, backend="ollama"))
@@ -134,6 +134,7 @@ async def test_ollama_connection_refused_is_a_useful_message() -> None:
         await judge.verdict("s", "u")
     assert "ollama" in str(e.value).casefold()
     assert "11434" in str(e.value)
+    assert route.call_count == 1, "a server that is not running is not retried"
 
 
 @respx.mock

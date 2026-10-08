@@ -41,6 +41,50 @@ async def test_a_model_window_smaller_than_num_ctx_is_reported() -> None:
 
 
 @respx.mock
+async def test_the_window_is_the_models_own_architecture_not_the_first_key() -> None:
+    """`model_info` can carry a second `*.context_length` (a vision tower's,
+    say) ahead of the language model's: the architecture names which one is."""
+    respx.get(TAGS).mock(return_value=_tags())
+    respx.post(SHOW).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "model_info": {
+                    "clip.context_length": 77,
+                    "general.architecture": "llama",
+                    "llama.context_length": 4096,
+                }
+            },
+        )
+    )
+    judge = OllamaJudge(LLMConfig(enabled=True, backend="ollama", model="m:1"))
+
+    reason = await judge.preflight()
+
+    assert "4096-token context window" in reason
+    assert "77" not in reason
+
+
+@respx.mock
+async def test_without_an_architecture_the_first_window_is_read() -> None:
+    respx.get(TAGS).mock(return_value=_tags())
+    respx.post(SHOW).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "model_info": {
+                    "general.parameter_count": 14770033664,
+                    "qwen2.context_length": 8192,
+                }
+            },
+        )
+    )
+    judge = OllamaJudge(LLMConfig(enabled=True, backend="ollama", model="m:1"))
+
+    assert "8192-token context window" in await judge.preflight()
+
+
+@respx.mock
 async def test_a_model_window_that_holds_num_ctx_passes() -> None:
     respx.get(TAGS).mock(return_value=_tags())
     show = mock_ollama_show(context_length=32768)
@@ -71,13 +115,35 @@ async def test_the_model_digest_comes_back_with_the_status() -> None:
 
 
 @respx.mock
+async def test_a_digest_with_its_algorithm_prefix_is_not_cut_short() -> None:
+    """Some servers print `sha256:<hex>`: twelve characters of that would be
+    `sha256:012345`, six hex digits that say nothing about the weights."""
+    respx.get(TAGS).mock(
+        return_value=httpx.Response(
+            200, json={"models": [{"name": "m:1", "digest": f"sha256:{DIGEST}"}]}
+        )
+    )
+    mock_ollama_show()
+
+    status = await backend_status(
+        LLMConfig(enabled=True, backend="ollama", model="m:1")
+    )
+
+    assert status.model_digest == "0123456789ab"
+
+
+@respx.mock
 async def test_an_unusable_backend_reports_no_digest() -> None:
-    respx.get(TAGS).mock(return_value=_tags("other:1"))
+    """The model is pulled and its digest is read, but its window is too small
+    for `num_ctx`: the status names the reason and carries no digest, because
+    a run that cannot score has no weights to record."""
+    respx.get(TAGS).mock(return_value=_tags())
+    mock_ollama_show(context_length=8192)
     cfg = LLMConfig(enabled=True, backend="ollama", model="m:1")
 
     status = await backend_status(cfg)
 
-    assert "not pulled" in status.reason
+    assert "8192-token context window" in status.reason
     assert status.model_digest == ""
 
 

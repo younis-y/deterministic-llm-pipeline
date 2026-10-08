@@ -88,10 +88,24 @@ async def test_usage_is_kept_when_the_prompt_arrived_whole() -> None:
 async def test_a_prompt_cut_to_fit_is_an_error_not_facts() -> None:
     """The 2026-10-07 reproduction: 2,050 tokens evaluated of a prompt that
     cannot be shorter than 5,000."""
-    respx.post(CHAT).mock(return_value=_answer(prompt=2050, output=73))
+    route = respx.post(CHAT).mock(return_value=_answer(prompt=2050, output=73))
     judge = OllamaJudge(LLMConfig(enabled=True, backend="ollama"))
 
     with pytest.raises(PromptTruncatedError, match="cut the prompt"):
+        await judge.facts("s" * 28000, "u" * 2000)
+    assert route.call_count == 1, "a cut prompt is not retried: it would be cut again"
+
+
+@respx.mock
+async def test_the_cut_prompt_message_names_the_way_out_for_a_miscounting_server() -> (
+    None
+):
+    """A server that counts only the uncached tokens would trip the floor on
+    every call; the message must say how to switch the check off."""
+    respx.post(CHAT).mock(return_value=_answer(prompt=2050, output=73))
+    judge = OllamaJudge(LLMConfig(enabled=True, backend="ollama"))
+
+    with pytest.raises(PromptTruncatedError, match=r"llm\.check_truncation: false"):
         await judge.facts("s" * 28000, "u" * 2000)
 
 
@@ -185,7 +199,7 @@ async def test_a_cut_prompt_is_counted_and_its_posting_is_not_recorded(
             },
         )
     )
-    respx.post(CHAT).mock(return_value=_answer(prompt=10, output=50))
+    chat = respx.post(CHAT).mock(return_value=_answer(prompt=10, output=50))
     cfg = Config.model_validate(
         {
             "profile": {"keywords": {"energy": 6}, "min_keyword_score": 1},
@@ -198,5 +212,6 @@ async def test_a_cut_prompt_is_counted_and_its_posting_is_not_recorded(
     result = await run_scan(cfg, check_llm=False)
 
     assert result.llm_errors == 1
+    assert chat.call_count == 1, "a cut prompt is not retried"
     assert "PromptTruncatedError" in result.llm_error_detail
     assert result.to_record == [], "a posting judged on a cut prompt stays unseen"
