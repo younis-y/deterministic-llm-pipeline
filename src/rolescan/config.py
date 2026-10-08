@@ -400,7 +400,12 @@ class LLMConfig(BaseModel):
     with a fixed rubric, and every benchmark this project has run measured
     accuracy at zero. Leaving it unset meant the local backend inherited
     Ollama's default of 0.8, so the same posting could score differently on
-    a re-run and the measured accuracy never described what shipped."""
+    a re-run and the measured accuracy never described what shipped.
+
+    Both backends honour it (the hosted one sends it through the SDK's
+    `extra_body`, 2.5.9). A model that rejects it, as `claude-sonnet-5` and
+    `claude-sonnet-5-5` do for any value but the API's default of 1.0, is
+    logged once and then called without it: its sampling is the API's."""
     description_chars: Annotated[int, Field(ge=500)] = 6000
     num_ctx: Annotated[int, Field(ge=2048)] = 12288
     """Context window, in tokens, asked of a local (Ollama) model on every

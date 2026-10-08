@@ -8,6 +8,7 @@ have a key, `ollama` for a local model, and neither when `llm.enabled` is off.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 
@@ -789,18 +790,48 @@ def _fake_facts() -> PostingFacts:
 
 
 class _FakeMessages:
-    """Stands in for `AsyncAnthropic().messages`; records every call."""
+    """Stands in for `AsyncAnthropic().messages`; records every call.
+
+    `parse` takes the keywords the SDK's `AsyncMessages.parse` takes and no
+    others, so a wrong keyword raises `TypeError` here exactly as it does
+    there. It used to take `**kw`, which is how a `temperature=` keyword that
+    the SDK rejects could pass a whole suite. The SDK's `create` and `parse`
+    have no `temperature` parameter in current versions: sampling is set
+    through `extra_body`.
+    """
 
     def __init__(self, score: int = 30, *, empty: bool = False) -> None:
         self.calls: list[dict[str, Any]] = []
         self.score = score
         self.empty = empty
 
-    async def parse(self, **kw: Any) -> SimpleNamespace:
-        self.calls.append(kw)
+    async def parse(
+        self,
+        *,
+        model: str,
+        max_tokens: int,
+        messages: Any,
+        system: Any = None,
+        output_format: Any = None,
+        tools: Any = None,
+        extra_body: Any = None,
+    ) -> SimpleNamespace:
+        self.calls.append(
+            {
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": messages,
+                "system": system,
+                "output_format": output_format,
+                "tools": tools,
+                "extra_body": extra_body,
+            }
+        )
+        return self._answer(output_format)
+
+    def _answer(self, fmt: Any) -> SimpleNamespace:
         if self.empty:
             return SimpleNamespace(parsed_output=None, stop_reason="max_tokens")
-        fmt = kw["output_format"]
         if fmt is FitVerdict:
             return SimpleNamespace(parsed_output=FitVerdict(**VERDICT_JSON))
         if fmt is PostingFacts:
@@ -813,13 +844,12 @@ class _FakeMessages:
 class _EchoingMessages(_FakeMessages):
     """A model that fills in `rule` anyway, as if the schema had offered it."""
 
-    async def parse(self, **kw: Any) -> SimpleNamespace:
-        self.calls.append(kw)
+    def _answer(self, fmt: Any) -> SimpleNamespace:
         return SimpleNamespace(parsed_output=FitVerdict(**VERDICT_JSON, rule="years"))
 
 
-def _anthropic(fake: _FakeMessages) -> AnthropicJudge:
-    judge = AnthropicJudge(LLMConfig(backend="anthropic", api_key="k"))
+def _anthropic(fake: _FakeMessages, **llm: Any) -> AnthropicJudge:
+    judge = AnthropicJudge(LLMConfig(backend="anthropic", api_key="k", **llm))
     judge._client = SimpleNamespace(messages=fake)
     return judge
 
@@ -898,6 +928,197 @@ async def test_anthropic_facts_sends_a_cached_system_block() -> None:
 async def test_anthropic_facts_with_no_output_raises_runtime_error() -> None:
     with pytest.raises(RuntimeError, match="no posting facts"):
         await _anthropic(_FakeMessages(empty=True)).facts("s", "u")
+
+
+# --- temperature: the SDK takes no keyword for it, so it goes in extra_body ---
+
+
+def test_the_fake_client_takes_only_what_the_real_sdk_takes() -> None:
+    """The strict fake is only worth having while it is strict AND faithful:
+    every keyword it accepts must exist on the installed SDK's `parse`, and
+    `temperature` must be refused by it (the SDK refuses it with TypeError)."""
+    import inspect
+
+    from anthropic.resources.messages import AsyncMessages
+
+    real = set(inspect.signature(AsyncMessages.parse).parameters)
+    fake = set(inspect.signature(_FakeMessages.parse).parameters) - {"self"}
+    assert fake <= real, f"not on the real parse(): {sorted(fake - real)}"
+    assert "extra_body" in real
+    assert "temperature" not in real, "the SDK has a keyword now: drop extra_body"
+    assert not {"kw", "kwargs"} & fake, "a catch-all would accept any keyword"
+
+
+async def test_the_fake_client_refuses_a_temperature_keyword_like_the_sdk() -> None:
+    kw: Any = {"temperature": 0.0, "model": "m", "max_tokens": 1, "messages": []}
+    with pytest.raises(TypeError, match="temperature"):
+        await _FakeMessages().parse(**kw)
+
+
+async def test_anthropic_facts_sends_the_configured_temperature() -> None:
+    fake = _FakeMessages()
+    await _anthropic(fake).facts("sys", "user")
+    assert fake.calls[0]["extra_body"] == {"temperature": 0.0}
+
+
+async def test_anthropic_verdict_sends_the_configured_temperature() -> None:
+    fake = _FakeMessages()
+    await _anthropic(fake).verdict("sys", "user")
+    assert fake.calls[0]["extra_body"] == {"temperature": 0.0}
+
+
+async def test_anthropic_triage_sends_the_configured_temperature() -> None:
+    fake = _FakeMessages()
+    await _anthropic(fake).triage("sys", "user")
+    assert fake.calls[0]["extra_body"] == {"temperature": 0.0}
+
+
+@pytest.mark.parametrize("method", ["facts", "verdict", "triage"])
+async def test_anthropic_passes_a_changed_temperature_through(method: str) -> None:
+    fake = _FakeMessages()
+    judge = _anthropic(fake, temperature=0.3)
+    await getattr(judge, method)("sys", "user")
+    assert fake.calls[0]["extra_body"]["temperature"] == 0.3
+
+
+async def test_anthropic_still_sends_the_rest_of_the_request_with_it() -> None:
+    """Moving to a helper must not drop what each call already sent."""
+    fake = _FakeMessages()
+    judge = _anthropic(fake, model="claude-haiku-4-5-20251001", max_tokens=777)
+    await judge.verdict("sys", "user")
+    await judge.triage("sys", "user")
+    verdict, triage = fake.calls
+    assert verdict["model"] == triage["model"] == "claude-haiku-4-5-20251001"
+    assert verdict["max_tokens"] == 777 and triage["max_tokens"] == TRIAGE_MAX_TOKENS
+    assert verdict["messages"] == [{"role": "user", "content": "user"}]
+    assert verdict["system"] == _cached("sys")
+
+
+def _rejecting_400(message: str) -> Exception:
+    import httpx2
+    from anthropic import BadRequestError
+
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    return BadRequestError(
+        message,
+        response=httpx2.Response(400, request=request),
+        body={"type": "error", "error": {"message": message}},
+    )
+
+
+class _RejectsTemperature(_FakeMessages):
+    """A model that refuses the parameter, as claude-sonnet-5 does (a 400)."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        super().__init__()
+        self.attempts = 0
+        self.error = error or _rejecting_400(
+            "`temperature` is deprecated for this model."
+        )
+
+    async def parse(self, **kw: Any) -> SimpleNamespace:
+        self.attempts += 1
+        await asyncio.sleep(0)  # a real call yields: let the others start
+        if kw.get("extra_body") and "temperature" in kw["extra_body"]:
+            raise self.error
+        return await super().parse(**kw)
+
+
+async def test_a_model_that_rejects_temperature_is_called_without_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """claude-sonnet-5 (the default `llm.model`) answers 400 to any
+    `temperature`. Sending it unconditionally would fail every call of a
+    default install, so the call is made again without it, once, and the judge
+    stops sending it: the scan is no worse off than before the setting was
+    sent."""
+    import logging
+
+    fake = _RejectsTemperature()
+    judge = _anthropic(fake)
+    with caplog.at_level(logging.WARNING, logger="rolescan.scoring.judges"):
+        first = await judge.triage("sys", "user")
+        await judge.facts("sys", "user")
+        await judge.verdict("sys", "user")
+    assert first.reason == TRIAGE_REASON
+    assert [c["extra_body"] for c in fake.calls] == [None, None, None]
+    assert fake.attempts == 4, "one rejected attempt, then no more probing"
+    warned = [r for r in caplog.records if "temperature" in r.getMessage()]
+    assert len(warned) == 1, "said once, not on every posting"
+
+
+async def test_concurrent_first_calls_warn_once_and_later_ones_omit_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`llm.max_concurrent` calls are in flight before the first 400 comes
+    back, and each sees it. They all retry, but only the one that finds the
+    flag still set clears it and says so."""
+    import logging
+
+    fake = _RejectsTemperature()
+    judge = _anthropic(fake)
+    with caplog.at_level(logging.WARNING, logger="rolescan.scoring.judges"):
+        results = await asyncio.gather(*(judge.triage("sys", "user") for _ in range(5)))
+        warned = [r for r in caplog.records if "temperature" in r.getMessage()]
+        assert len(warned) == 1, [r.getMessage()[:60] for r in warned]
+        before = fake.attempts
+        await judge.triage("sys", "user")
+    assert all(r.reason == TRIAGE_REASON for r in results)
+    assert fake.attempts == before + 1, "a later call is sent once, without it"
+    assert [c["extra_body"] for c in fake.calls] == [None] * 6
+    assert len([r for r in caplog.records if "temperature" in r.getMessage()]) == 1
+
+
+async def test_a_400_about_something_else_is_not_swallowed() -> None:
+    fake = _RejectsTemperature(_rejecting_400("max_tokens: too large"))
+    with pytest.raises(Exception, match="max_tokens"):
+        await _anthropic(fake).triage("sys", "user")
+    assert fake.attempts == 1
+
+
+async def test_an_error_that_is_not_a_400_is_not_retried() -> None:
+    fake = _RejectsTemperature(RuntimeError("temperature, but a server fault"))
+    with pytest.raises(RuntimeError, match="server fault"):
+        await _anthropic(fake).triage("sys", "user")
+    assert fake.attempts == 1
+
+
+async def test_temperature_reaches_the_request_body_through_the_real_sdk() -> None:
+    """The fake pins what we hand the SDK; this pins what the SDK puts on the
+    wire: `extra_body` is merged into the JSON body, at the top level."""
+    import json
+
+    import httpx2
+    from anthropic import AsyncAnthropic
+
+    bodies: list[dict[str, Any]] = []
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        text = json.dumps({"fit_score": 30, "verdict": "skip", "confidence": "high"})
+        return httpx2.Response(
+            200,
+            json={
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "m",
+                "content": [{"type": "text", "text": text}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
+
+    judge = AnthropicJudge(LLMConfig(backend="anthropic", api_key="k", temperature=0.3))
+    judge._client = AsyncAnthropic(
+        api_key="k",
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(answer)),
+        max_retries=0,
+    )
+    verdict = await judge.triage("sys", "user")
+    assert verdict.fit_score == 30
+    assert [b["temperature"] for b in bodies] == [0.3]
 
 
 def test_base_judge_facts_is_not_implemented() -> None:
