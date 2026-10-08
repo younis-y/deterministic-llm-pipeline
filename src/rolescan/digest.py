@@ -62,6 +62,24 @@ _DISCOVER_FRAGS: _Frags = [
     (" to check the slugs.", False),
 ]
 
+# 2.5.8: the two source alarms beside the quiet one, and what each asks of
+# the reader.
+_SHRUNK_BODY = (
+    "A board rarely loses most of its postings between two runs. These "
+    "returned rows and raised nothing, which is how a broken page or a moved "
+    "cap looks. Check the source before trusting this digest."
+)
+
+_CUT_FRAGS: _Frags = [
+    ("The roles past the cut are in no digest. For a Workday board, raise ", False),
+    ("max_rows", True),
+    (", or narrow it with ", False),
+    ("applied_facets", True),
+    (" or ", False),
+    ("search_text", True),
+    (".", False),
+]
+
 
 def _md_frags(frags: _Frags) -> str:
     return "".join(f"`{text}`" if code else text for text, code in frags)
@@ -573,6 +591,7 @@ def _failures(result: ScanResult) -> list[str]:
         not failed
         and not skipped
         and not result.quiet_sources
+        and not _source_alarms(result)
         and not result.llm_errors
         and not result.llm_unusable
         and not result.enricher_unusable
@@ -648,6 +667,7 @@ def _failures(result: ScanResult) -> list[str]:
             "nothing now. Check the source before trusting this digest.",
             "",
         ]
+    lines += _shrunk_and_cut_md(result)
     if failed:
         lines += ["**Sources that failed this run**", ""]
         lines += [f"- `{r.kind}/{r.slug}` {r.error}" for r in failed]
@@ -658,7 +678,58 @@ def _failures(result: ScanResult) -> list[str]:
         lines += ["**Sources skipped (not searched)**", ""]
         lines += [f"- `{r.kind}/{r.slug}` {r.error}" for r in skipped]
         lines += [""]
+    lines += _notes_md(result)
     return lines
+
+
+def _source_alarms(result: ScanResult) -> bool:
+    """Whether a 2.5.8 source section is due. Each is shown even when it is
+    the only thing to report: the rule the quiet alarm set in 2.5.7, when the
+    Markdown digest dropped it whenever it was the only problem."""
+    return bool(result.shrunk_sources or result.truncated_sources or result.notes)
+
+
+def _shrunk_line(n: int, median: float) -> str:
+    return f"returned {n}, under 30% of its recent median of {median:g}"
+
+
+def _cut_line(read: int, total: int | None, why: str) -> str:
+    """What follows a cut-short source's label: "(500 of 2000 read): <why>",
+    or "(60 read): <why>" when the board stated no total."""
+    of = f" of {total}" if total is not None else ""
+    return f"({read}{of} read): {why}"
+
+
+def _shrunk_and_cut_md(result: ScanResult) -> list[str]:
+    """The "Sources that shrank" and "Sources that were cut short" sections
+    (2.5.8), straight after the quiet alarm: the same silent defect, caught
+    while the source still returns rows."""
+    lines: list[str] = []
+    if result.shrunk_sources:
+        lines += ["**Sources that shrank**", ""]
+        lines += [
+            f"- **{label}** {_shrunk_line(n, median)}"
+            for label, n, median in result.shrunk_sources
+        ]
+        lines += ["", _SHRUNK_BODY, ""]
+    if result.truncated_sources:
+        lines += ["**Sources that were cut short**", ""]
+        lines += [
+            f"- **{label}** {_cut_line(n, total, why)}"
+            for label, n, total, why in result.truncated_sources
+        ]
+        lines += ["", _md_frags(_CUT_FRAGS), ""]
+    return lines
+
+
+def _notes_md(result: ScanResult) -> list[str]:
+    """The "Notes" section (2.5.8): last, and apart from the failures,
+    because a posting skipped as unreadable or a backlog waiting is not a
+    broken source."""
+    if not result.notes:
+        return []
+    lines = [f"- **{label}**: {note}" for label, note in result.notes]
+    return ["**Notes**", "", *lines, ""]
 
 
 # --- HTML -----------------------------------------------------------------
@@ -968,6 +1039,7 @@ def _failures_html(result: ScanResult) -> list[str]:
         not failed
         and not skipped
         and not result.quiet_sources
+        and not _source_alarms(result)
         and not result.llm_errors
         and not result.llm_unusable
         and not result.enricher_unusable
@@ -992,6 +1064,7 @@ def _failures_html(result: ScanResult) -> list[str]:
                 ],
             )
         )
+    out += _shrunk_and_cut_html(result)
     if failed:
         out.append(
             _note_html(
@@ -1003,7 +1076,48 @@ def _failures_html(result: ScanResult) -> list[str]:
         out.append(
             _note_html("Sources skipped (not searched)", [_sources_html(skipped)])
         )
+    out += _notes_html(result)
     return out
+
+
+def _labelled_list_html(rows: list[tuple[str, str]], sep: str = " ") -> str:
+    """`<ul>` of "<strong>label</strong><sep>text", every part escaped."""
+    items = "".join(
+        f"<li><strong>{_esc(label)}</strong>{_esc(sep)}{_esc(text)}</li>"
+        for label, text in rows
+    )
+    return f"<ul>{items}</ul>"
+
+
+def _shrunk_and_cut_html(result: ScanResult) -> list[str]:
+    """The HTML counterpart of `_shrunk_and_cut_md`."""
+    out: list[str] = []
+    if result.shrunk_sources:
+        rows = [(lb, _shrunk_line(n, m)) for lb, n, m in result.shrunk_sources]
+        out.append(
+            _note_html(
+                "Sources that shrank",
+                [_labelled_list_html(rows), f"<p>{_esc(_SHRUNK_BODY)}</p>"],
+            )
+        )
+    if result.truncated_sources:
+        rows = [
+            (lb, _cut_line(n, t, why)) for lb, n, t, why in result.truncated_sources
+        ]
+        out.append(
+            _note_html(
+                "Sources that were cut short",
+                [_labelled_list_html(rows), f"<p>{_html_frags(_CUT_FRAGS)}</p>"],
+            )
+        )
+    return out
+
+
+def _notes_html(result: ScanResult) -> list[str]:
+    """The HTML counterpart of `_notes_md`."""
+    if not result.notes:
+        return []
+    return [_note_html("Notes", [_labelled_list_html(result.notes, sep=": ")])]
 
 
 def _shortlist_html(

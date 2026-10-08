@@ -484,13 +484,44 @@ class LLMConfig(BaseModel):
         return self
 
 
+#: Where a site owner can read what is calling (2.5.8): this project's page.
+DEFAULT_CONTACT_URL = "https://github.com/younis-y/deterministic-llm-pipeline"
+
+
+def default_user_agent(contact_url: str = DEFAULT_CONTACT_URL) -> str:
+    """`rolescan/<version> (+<contact_url>)`, the User-Agent every request
+    sends unless `http.user_agent` is set (2.5.8).
+
+    2.5.7 still sent "rolescan/2.2 (personal job search tool)": three
+    releases stale, and no way for a site owner to find out what was
+    calling. The version is imported here, when a config is built, and not
+    at the top of the module: `rolescan/__init__.py` imports this module
+    before it sets `__version__`.
+    """
+    from rolescan import __version__
+
+    return f"rolescan/{__version__} (+{contact_url})"
+
+
 class HTTPConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     timeout: float = 20.0
     max_concurrent: Annotated[int, Field(ge=1, le=64)] = 8
     max_retries: Annotated[int, Field(ge=0, le=10)] = 3
-    user_agent: str = "rolescan/2.2 (personal job search tool)"
+    contact_url: str = DEFAULT_CONTACT_URL
+    """Sent in the User-Agent, so a site owner can see what is calling and
+    where to read about it (2.5.8). Point it at your fork, or a page of your
+    own."""
+    user_agent: str = ""
+    """The User-Agent header. Empty, the default, means
+    `rolescan/<version> (+<contact_url>)`; anything else is sent as it is."""
+
+    @model_validator(mode="after")
+    def _default_user_agent(self) -> Self:
+        if not self.user_agent:
+            object.__setattr__(self, "user_agent", default_user_agent(self.contact_url))
+        return self
 
 
 class EmailConfig(BaseModel):

@@ -189,6 +189,9 @@ http:
   timeout: 20.0
   max_concurrent: 8
   max_retries: 3
+  # Every request says "rolescan/<version> (+<contact_url>)", so a site owner
+  # can see what is calling. Point it at your fork or a page of your own.
+  # contact_url: https://example.org/about-my-job-scanner
 
 output:
   dir: digests
