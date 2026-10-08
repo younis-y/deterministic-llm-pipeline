@@ -14,7 +14,14 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StringConstraints,
+    model_validator,
+)
 
 from rolescan.models import JobField, Level, normalise_term
 
@@ -509,10 +516,12 @@ class HTTPConfig(BaseModel):
     timeout: float = 20.0
     max_concurrent: Annotated[int, Field(ge=1, le=64)] = 8
     max_retries: Annotated[int, Field(ge=0, le=10)] = 3
-    contact_url: str = DEFAULT_CONTACT_URL
+    contact_url: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1)
+    ] = DEFAULT_CONTACT_URL
     """Sent in the User-Agent, so a site owner can see what is calling and
     where to read about it (2.5.8). Point it at your fork, or a page of your
-    own."""
+    own. A blank one is a config error, not `rolescan/<version> (+)`."""
     user_agent: str = ""
     """The User-Agent header. Empty, the default, means
     `rolescan/<version> (+<contact_url>)`; anything else is sent as it is."""

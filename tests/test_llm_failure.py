@@ -250,6 +250,8 @@ async def test_an_enrichment_waiting_its_turn_stops_when_the_breaker_trips(
         (ScanResult(llm_scored=4, llm_errors=1), False),
         (ScanResult(llm_scored=3, llm_errors=2), True),
         (ScanResult(llm_scored=40, llm_errors=5, llm_breaker=True), True),
+        (ScanResult(llm_scored=45, llm_cached=40, llm_errors=5), True),
+        (ScanResult(llm_scored=48, llm_cached=40, llm_errors=2), False),
     ],
     ids=[
         "keyword-only",
@@ -258,6 +260,8 @@ async def test_an_enrichment_waiting_its_turn_stops_when_the_breaker_trips(
         "one-in-five-failed",
         "two-in-five-failed",
         "breaker",
+        "half-the-calls-failed-behind-cache-hits",
+        "one-in-five-calls-failed-behind-cache-hits",
     ],
 )
 def test_what_counts_as_a_failed_llm_run(result: ScanResult, fails: bool) -> None:
@@ -374,6 +378,28 @@ def test_scan_exits_3_when_ollama_is_down_and_still_writes_the_digest(
     assert "LLM scoring did not run at all" in digest
     assert "scoring ran anyway" not in digest
     assert "scored," not in digest, "no 'N scored' figure when nothing scored"
+
+
+def test_cache_hits_do_not_dilute_the_failure_rate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a `--dry` run warms the cache, 40 postings are cache hits and 10
+    reach the model, 5 of them failing (never five in a row). Half the calls
+    failed: counting the cache hits as attempts read it as 10%."""
+
+    async def scanned(cfg: object, **kwargs: object) -> ScanResult:
+        return ScanResult(llm_scored=45, llm_cached=40, llm_errors=5)
+
+    monkeypatch.setattr(cli, "run_scan", scanned)
+    config = tmp_path / "config.yaml"
+    config.write_text(_CONFIG)
+
+    result = CliRunner().invoke(app, ["scan", "-c", str(config), "--no-email"])
+
+    assert result.exit_code == 3, result.output
+    assert "LLM scoring failed for 5 of 10 postings" in " ".join(
+        plain(result.output).split()
+    )
 
 
 @respx.mock

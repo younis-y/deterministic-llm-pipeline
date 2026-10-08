@@ -86,8 +86,8 @@ class ScanResult:
     llm_error_detail: str = ""
     llm_scored: int = 0
     """Postings that got a verdict from the model this run, by a call or
-    from the cache (2.5.8). With `llm_errors`, the denominator of the error
-    rate `llm_failure` reads."""
+    from the cache (2.5.8). Less `llm_cached`, plus `llm_errors`, it is the
+    denominator of the error rate `llm_failure` reads."""
     llm_breaker: bool = False
     """The scorer stopped calling the model after `BREAKER_AFTER` failures in
     a row and deferred the rest (2.5.8)."""
@@ -257,14 +257,16 @@ class ScanResult:
         to print a loud banner and exit 0. Three ways: the judge was
         configured and nothing was scored, with the pre-scan check saying
         why; the breaker stopped the scorer; or more than 20% of the postings
-        that reached the model failed. A deliberate keyword-only run (no
-        judge asked for) is never a failure.
+        that reached the model failed. Only those count: a cache hit asked
+        the model nothing, so 40 hits beside 10 calls of which 5 failed is
+        half the calls failing, not a tenth. A deliberate keyword-only run
+        (no judge asked for) is never a failure.
         """
         if self.llm_unusable and not self.llm_scored:
             return f"LLM scoring did not run: {self.llm_unusable}"
         if self.llm_breaker:
             return "LLM scoring stopped after repeated failures in a row"
-        attempted = self.llm_scored + self.llm_errors
+        attempted = (self.llm_scored - self.llm_cached) + self.llm_errors
         if attempted and self.llm_errors > 0.2 * attempted:
             return f"LLM scoring failed for {self.llm_errors} of {attempted} postings"
         return ""

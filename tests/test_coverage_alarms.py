@@ -296,6 +296,27 @@ def _short_hash(values: dict[str, Any]) -> str:
 
 @respx.mock
 @pytest.mark.parametrize(
+    ("kind", "options", "key"),
+    [
+        (
+            "workday",
+            {"applied_facets": {"Country": ["id1"]}},
+            "workday:acme:Acme:e6dca0bf",
+        ),
+        ("adzuna", {"queries": ["energy analyst"]}, "adzuna:acme:Acme:f75fbc7d"),
+    ],
+)
+async def test_a_narrowed_boards_history_key_is_pinned_to_its_bytes(
+    kind: str, options: dict[str, Any], key: str
+) -> None:
+    """Literal keys, beside `_short_hash` mirroring the serialisation: a change
+    to how the options are written out would move every narrowed board to a
+    fresh history, and its quiet and shrink alarms with it."""
+    assert _source_key(await _report_for(_entry(kind, **options))) == key
+
+
+@respx.mock
+@pytest.mark.parametrize(
     "options",
     [
         {},
