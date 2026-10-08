@@ -11,6 +11,7 @@ something useful rather than to nothing.
 
 from __future__ import annotations
 
+import functools
 import re
 
 from rolescan.config import ProfileConfig
@@ -146,8 +147,20 @@ def _term_hit(term: str, blob: str) -> bool:
     in punctuation, such as `c++`, a trailing `\b` would then demand a word
     character immediately after it and the bar would silently stop matching.
     Multi-word terms are unaffected either way.
+
+    A plain substring test runs first (2.5.8): the pattern matches the term
+    literally and case-sensitively, so `term in blob` is necessary for a hit,
+    and most of 100-odd terms are absent from most postings. Measured
+    2026-10-07 on 2,730 postings with a real profile: 4.0 ms to 0.27 ms
+    per posting, `keyword_score` and `blocker_hits` identical on every one.
     """
-    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", blob) is not None
+    return term in blob and _term_pattern(term).search(blob) is not None
+
+
+@functools.lru_cache(maxsize=1024)
+def _term_pattern(term: str) -> re.Pattern[str]:
+    """The whole-word pattern for `term`, compiled once per term."""
+    return re.compile(rf"(?<!\w){re.escape(term)}(?!\w)")
 
 
 def _location_ok(job: Job, profile: ProfileConfig) -> bool:
