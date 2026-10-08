@@ -269,6 +269,12 @@ def _scan(cfg: Config, config: Path, *, dry: bool, no_llm: bool, email: bool) ->
 
     _deliver(text, html_body, cfg, path, email=email)
 
+    if failure := result.llm_failure:
+        # After the digest is written, recorded and sent: the digest says
+        # what happened, and the exit status says it to whatever ran us.
+        console.print(f"[bold red]{failure}.[/] [dim]Exit status 3.[/]")
+        raise typer.Exit(3)
+
 
 def _probe_table(rows: list[tuple[SourceEntry, ProbeResult]]) -> Table:
     table = Table(title="Configured sources", show_edge=False, header_style="bold")

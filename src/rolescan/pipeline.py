@@ -67,6 +67,13 @@ class ScanResult:
     llm_cached: int = 0
     llm_errors: int = 0
     llm_error_detail: str = ""
+    llm_scored: int = 0
+    """Postings that got a verdict from the model this run, by a call or
+    from the cache (2.5.8). With `llm_errors`, the denominator of the error
+    rate `llm_failure` reads."""
+    llm_breaker: bool = False
+    """The scorer stopped calling the model after `BREAKER_AFTER` failures in
+    a row and deferred the rest (2.5.8)."""
     llm_backend: str = ""
     """The backend scoring was configured to use, whether or not it ran.
 
@@ -193,6 +200,27 @@ class ScanResult:
     """`profile.min_keyword_score` for this run (2.5.7), so the digest can say
     "scored 12 of 20" for a reject listed as just under it."""
     dry_run: bool = False
+
+    @property
+    def llm_failure(self) -> str:
+        """Why this run's LLM scoring failed as a whole, or "" (2.5.8).
+
+        Non-empty is what makes `rolescan scan` exit 3, so a wrapper (launchd,
+        a scheduler) sees what the digest says. An Ollama outage used
+        to print a loud banner and exit 0. Three ways: the judge was
+        configured and nothing was scored, with the pre-scan check saying
+        why; the breaker stopped the scorer; or more than 20% of the postings
+        that reached the model failed. A deliberate keyword-only run (no
+        judge asked for) is never a failure.
+        """
+        if self.llm_unusable and not self.llm_scored:
+            return f"LLM scoring did not run: {self.llm_unusable}"
+        if self.llm_breaker:
+            return "LLM scoring stopped after repeated failures in a row"
+        attempted = self.llm_scored + self.llm_errors
+        if attempted and self.llm_errors > 0.2 * attempted:
+            return f"LLM scoring failed for {self.llm_errors} of {attempted} postings"
+        return ""
 
     @property
     def failed_sources(self) -> list[SourceReport]:
@@ -712,6 +740,8 @@ async def run_scan(
         result.llm_cached = sum(1 for s in judged if s.llm_cached)
         result.llm_errors = scorer.errors
         result.llm_error_detail = scorer.first_error
+        result.llm_scored = sum(1 for s in judged if s.fit is not None)
+        result.llm_breaker = scorer.tripped
 
         result.reportable, result.hidden_blocked, overflow = _rank(judged, cfg)
         cut = {s.job.uid: s for s in overflow}

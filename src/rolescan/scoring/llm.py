@@ -17,7 +17,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable
+from typing import TYPE_CHECKING, TypeVar
 
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
@@ -49,6 +50,14 @@ __all__ = ["SYSTEM_FACTS", "FitScorer", "cache_key", "final_key"]
 _ENRICHABLE_VERDICTS = frozenset({Verdict.APPLY, Verdict.CONSIDER})
 
 log = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+#: Model calls in a row that may fail before the scorer stops calling (2.5.8).
+#: A wedged Ollama runner accepts the connection and never answers, so each
+#: call waits out `llm.timeout`: 250 candidates at 120 s took 8.3 hours to
+#: finish with every posting errored. Five in a row is not a bad posting.
+BREAKER_AFTER = 5
 
 # Three things about this prompt that are easy to "tidy" into a defect.
 #
@@ -354,6 +363,8 @@ class FitScorer:
         self._calls = 0
         self._errors = 0
         self._first_error = ""
+        self._failures_in_a_row = 0
+        self._tripped = False
         self._judge: Judge | None = None
         self._enricher: Enricher | None = None
         #: Whether `_get_enricher` has already resolved `cfg.enricher`. Built
@@ -403,6 +414,42 @@ class FitScorer:
     @property
     def first_error(self) -> str:
         return self._first_error
+
+    @property
+    def tripped(self) -> bool:
+        """Whether `BREAKER_AFTER` calls in a row failed, so the scorer
+        stopped calling the model and deferred the rest of the run (2.5.8)."""
+        return self._tripped
+
+    async def _counted(self, call: Awaitable[_T]) -> _T:
+        """Await one model call, tracking failures in a row for the breaker.
+
+        The exception still propagates: `score_all` counts it as an error and
+        the posting stays unrecorded, exactly as before the breaker existed.
+        A success resets the run of failures."""
+        try:
+            out = await call
+        except Exception:
+            self._failures_in_a_row += 1
+            if self._failures_in_a_row >= BREAKER_AFTER and not self._tripped:
+                self._tripped = True
+                log.warning(
+                    "%d LLM calls failed in a row; no more calls this run, "
+                    "the remaining postings are deferred to the next one",
+                    self._failures_in_a_row,
+                )
+            raise
+        self._failures_in_a_row = 0
+        return out
+
+    def _stop_reason(self) -> str:
+        """Why no model call may start now ("llm_breaker", "llm_ceiling"),
+        or "" when one may."""
+        if self._tripped:
+            return "llm_breaker"
+        if self._calls >= self.cfg.max_calls_per_run:
+            return "llm_ceiling"
+        return ""
 
     def _get_judge(self) -> Judge:
         """Built lazily so importing rolescan never costs an SDK import, and so
@@ -458,7 +505,12 @@ class FitScorer:
         against `self.errors`, and never a reason to drop the posting.
         Enrichment is additive, not load-bearing for whether a posting is
         reported at all.
+
+        A scorer whose breaker has tripped makes no model call of any kind,
+        enrichment included: the plain verdict stands (2.5.8).
         """
+        if self._tripped:
+            return verdict
         enricher = self._get_enricher()
         if enricher is None:
             return verdict
@@ -467,6 +519,11 @@ class FitScorer:
         if verdict.fit_score < self.profile.min_report_score:
             return verdict
         async with self._sem:
+            # Re-checked here: the breaker may trip while this waits its turn.
+            # Through the property, so the type checker does not read the
+            # guard above as proof that the flag is still false.
+            if self.tripped:
+                return verdict
             if self._calls >= self.cfg.max_calls_per_run:
                 log.info(
                     "LLM call ceiling reached, skipping enrichment for %r",
@@ -568,13 +625,11 @@ class FitScorer:
                 return scored.model_copy(update={"fit": cached, "llm_cached": True})
 
         async with self._sem:
-            if self._calls >= self.cfg.max_calls_per_run:
-                log.info(
-                    "LLM call ceiling reached, deferring %r to the next run", job.title
-                )
-                return scored.model_copy(update={"deferred": "llm_ceiling"})
+            if stop := self._stop_reason():
+                log.info("%s: deferring %r to the next run", stop, job.title)
+                return scored.model_copy(update={"deferred": stop})
             self._calls += 1
-            verdict = await self._call_judge(scored)
+            verdict = await self._counted(self._call_judge(scored))
 
         if self.store is not None:
             await self.store.put_verdict(key, verdict)
@@ -615,13 +670,11 @@ class FitScorer:
                 return scored.model_copy(update={"fit": verdict, "llm_cached": True})
 
         async with self._sem:
-            if self._calls >= self.cfg.max_calls_per_run:
-                log.info(
-                    "LLM call ceiling reached, deferring %r to the next run", job.title
-                )
-                return scored.model_copy(update={"deferred": "llm_ceiling"})
+            if stop := self._stop_reason():
+                log.info("%s: deferring %r to the next run", stop, job.title)
+                return scored.model_copy(update={"deferred": stop})
             self._calls += 1
-            facts = await self._call_facts(scored)
+            facts = await self._counted(self._call_facts(scored))
 
         self.last_facts[job.url] = facts
         if self.store is not None:

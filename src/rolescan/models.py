@@ -354,6 +354,8 @@ class ScoredJob(BaseModel):
     """Why the intended judge never saw this posting, or "" (2.5.7).
 
     `"llm_ceiling"`: `max_calls_per_run` was spent before its turn.
+    `"llm_breaker"`: the scorer stopped calling the model after five failures
+    in a row (2.5.8).
     `"digest_cap"`: it cleared `min_report_score` but fell past
     `output.max_roles`. `"thin"`: it has no description to judge (held back for
     `output.thin_unread_after` runs, then listed once as unread and recorded).

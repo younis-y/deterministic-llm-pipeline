@@ -434,6 +434,15 @@ def _run_outcome_note(result: ScanResult) -> str:
     )
 
 
+#: How the stats line names each reason a posting was deferred, in order.
+_DEFERRED_LABELS = {
+    "llm_ceiling": "over the LLM budget",
+    "llm_breaker": "after the LLM stopped answering",
+    "digest_cap": "over the digest cap",
+    "thin": "without text yet",
+}
+
+
 def _stats(result: ScanResult) -> str:
     live = sum(1 for r in result.reports if r.ok)
     bits = [
@@ -467,13 +476,14 @@ def _stats(result: ScanResult) -> str:
     if result.deferred:
         reasons = Counter(s.deferred for s in result.deferred)
         parts = [
-            f"{n} {label}"
-            for key, label in (
-                ("llm_ceiling", "over the LLM budget"),
-                ("digest_cap", "over the digest cap"),
-                ("thin", "without text yet"),
-            )
-            if (n := reasons.get(key))
+            f"{reasons[key]} {label}"
+            for key, label in _DEFERRED_LABELS.items()
+            if reasons.get(key)
+        ]
+        # A marker with no label yet is named as it is, never dropped: an
+        # empty "()" read as nothing held back (2.5.8).
+        parts += [
+            f"{n} {key}" for key, n in reasons.items() if key not in _DEFERRED_LABELS
         ]
         bits.append(
             f"{len(result.deferred)} deferred to the next run ({', '.join(parts)})"
