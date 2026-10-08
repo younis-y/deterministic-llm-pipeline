@@ -109,7 +109,7 @@ def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
         )
     if not result.llm_unusable:
         return
-    if not (result.llm_calls or result.llm_cached):
+    if not result.llm_scored:
         console.print(
             f"\n[bold red]LLM scoring did not run: {result.llm_unusable}.[/]\n"
             "[bold red]Every posting was ranked on keyword score alone, "
@@ -127,7 +127,7 @@ def _warn_if_llm_did_not_run(result: ScanResult, cfg: Config) -> None:
     console.print(
         f"\n[yellow]The pre-scan backend check failed "
         f"({result.llm_unusable}), but scoring ran anyway: "
-        f"{result.llm_calls} scored, {result.llm_cached} from cache.[/]\n"
+        f"{result.llm_scored} scored, {result.llm_cached} from cache.[/]\n"
         "[dim]The liveness probe is deliberately short so an unattended "
         "run cannot hang on it; a loaded server can exceed it.[/]\n"
     )

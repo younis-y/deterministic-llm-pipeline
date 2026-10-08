@@ -456,9 +456,9 @@ def _stats(result: ScanResult) -> str:
         # this number is how the reader learns their new sources carry old
         # stock rather than wondering why a board of 228 yielded nothing.
         bits.insert(1, f"{result.stale} too old")
-    if result.llm_calls or result.llm_cached:
+    if result.llm_scored:
         bits.append(
-            f"{result.llm_calls} scored, {result.llm_cached} from cache"
+            f"{result.llm_scored} scored, {result.llm_cached} from cache"
             + _model_note(result)
         )
     if result.hidden_blocked:
@@ -514,8 +514,12 @@ def _model_note(result: ScanResult) -> str:
 
 
 def _llm_ran(result: ScanResult) -> bool:
-    """Whether any posting in this digest actually carries an LLM score."""
-    return bool(result.llm_calls or result.llm_cached)
+    """Whether any posting in this digest actually carries an LLM score.
+
+    `llm_scored` counts postings that got a verdict, by a call or from the
+    cache. `llm_calls` counts calls attempted, so five failed calls read as
+    scoring that ran (2.5.8)."""
+    return bool(result.llm_scored)
 
 
 def _llm_error_hint(result: ScanResult) -> _Frags:

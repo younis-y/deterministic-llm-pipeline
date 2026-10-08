@@ -264,6 +264,27 @@ def test_what_counts_as_a_failed_llm_run(result: ScanResult, fails: bool) -> Non
     assert bool(result.llm_failure) is fails
 
 
+def test_attempted_calls_that_all_failed_are_not_scoring_that_ran() -> None:
+    """`llm_calls` counts calls attempted. Five that all failed scored nothing,
+    so the digest must not call them "scoring ran anyway: 5 scored" beside
+    "LLM scoring did not run" (2.5.8)."""
+    result = ScanResult(
+        llm_backend="ollama",
+        llm_unusable="could not reach ollama at http://localhost:11434",
+        llm_calls=5,
+        llm_errors=5,
+    )
+    text = render_markdown(result)
+    assert "LLM scoring did not run at all" in text
+    assert "scoring ran anyway" not in text
+    assert "5 scored" not in text
+
+
+def test_the_scored_figure_counts_verdicts_not_calls() -> None:
+    result = ScanResult(llm_calls=5, llm_cached=1, llm_scored=3, llm_errors=2)
+    assert "3 scored, 1 from cache" in render_markdown(result)
+
+
 def test_a_deferral_reason_with_no_label_is_still_named() -> None:
     posting = _postings(1)[0].model_copy(update={"deferred": "something_new"})
     breaker = _postings(1)[0].model_copy(update={"deferred": "llm_breaker"})
@@ -325,8 +346,16 @@ def test_scan_exits_3_when_ollama_is_down_and_still_writes_the_digest(
     result = CliRunner().invoke(app, ["scan", "-c", str(config), "--no-email"])
 
     assert result.exit_code == 3, result.output
-    assert "Exit status 3" in " ".join(plain(result.output).split())
-    assert (tmp_path / "digests" / "latest.md").is_file()
+    out = " ".join(plain(result.output).split())
+    assert "Exit status 3" in out
+    # Five calls were attempted and none scored anything: the console must say
+    # the run did not score, not also that it "ran anyway: 5 scored".
+    assert "LLM scoring did not run" in out
+    assert "scoring ran anyway" not in out
+    digest = (tmp_path / "digests" / "latest.md").read_text()
+    assert "LLM scoring did not run at all" in digest
+    assert "scoring ran anyway" not in digest
+    assert "scored," not in digest, "no 'N scored' figure when nothing scored"
 
 
 @respx.mock
