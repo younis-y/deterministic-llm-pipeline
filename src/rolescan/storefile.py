@@ -23,7 +23,7 @@ import re
 import sqlite3
 import sys
 from collections.abc import Iterator
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -129,8 +129,14 @@ def backup(
     self-contained file, and checked with `PRAGMA integrity_check` before it
     replaces anything. A copy that fails the check raises `BackupError` and
     is deleted: it would mean the live file is damaged, which is the moment
-    to stop writing to it, not to rotate out the last good copy. Then all but
-    the newest `keep` dailies are deleted (`keep` below 1 keeps one).
+    to stop writing to it, not to rotate out the last good copy.
+
+    Then all but the newest `keep` dailies are deleted. The copy just made is
+    never one of them, even when the clock has gone back and its date sorts
+    oldest. `keep` of 0 rotates nothing at all: every copy stays.
+
+    Any failure to make or place the copy, or to remove an old one, is a
+    `BackupError`, not a bare `OSError`.
 
     Returns the copy's path, or None when there is no database yet.
     """
@@ -138,30 +144,41 @@ def backup(
         return None
     day = today or datetime.now(UTC).astimezone().date()
     directory = db_path.parent / "backups"
-    directory.mkdir(parents=True, exist_ok=True)
     target = directory / _backup_name(db_path, day)
-    if target.exists() and not force:
-        return target
-    tmp = target.with_name(f".{target.name}.tmp")
-    tmp.unlink(missing_ok=True)
+    # One name per process, so a `rolescan backup` run during a scan's copy
+    # writes its own file instead of clobbering the scan's half-made one.
+    tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
     try:
-        source_uri = f"{db_path.resolve().as_uri()}?mode=ro"
-        with (
-            closing(sqlite3.connect(source_uri, uri=True)) as source,
-            closing(sqlite3.connect(tmp)) as copy,
-        ):
-            source.backup(copy)
-            copy.execute("PRAGMA journal_mode=DELETE")
-            verdict = copy.execute("PRAGMA integrity_check").fetchone()[0]
-        if verdict != "ok":
-            msg = f"the copy of {db_path} failed its integrity check: {verdict}"
-            raise BackupError(msg)
-        tmp.replace(target)
+        directory.mkdir(parents=True, exist_ok=True)
+        if target.exists() and not force:
+            return target
+        tmp.unlink(missing_ok=True)
+        try:
+            _copy_checked(db_path, tmp)
+            tmp.replace(target)
+        finally:
+            with suppress(OSError):
+                tmp.unlink(missing_ok=True)
+        if keep > 0:
+            others = [p for p in _dailies(directory, db_path) if p != target]
+            for old in others[: max(len(others) - (keep - 1), 0)]:
+                old.unlink(missing_ok=True)
     except (sqlite3.Error, OSError) as e:
         msg = f"could not back up {db_path}: {e}"
         raise BackupError(msg) from e
-    finally:
-        tmp.unlink(missing_ok=True)
-    for old in _dailies(directory, db_path)[: -max(keep, 1)]:
-        old.unlink()
     return target
+
+
+def _copy_checked(db_path: Path, tmp: Path) -> None:
+    """Snapshot `db_path` into the new file `tmp`, or raise `BackupError`."""
+    source_uri = f"{db_path.resolve().as_uri()}?mode=ro"
+    with (
+        closing(sqlite3.connect(source_uri, uri=True)) as source,
+        closing(sqlite3.connect(tmp)) as copy,
+    ):
+        source.backup(copy)
+        copy.execute("PRAGMA journal_mode=DELETE")
+        verdict = copy.execute("PRAGMA integrity_check").fetchone()[0]
+    if verdict != "ok":
+        msg = f"the copy of {db_path} failed its integrity check: {verdict}"
+        raise BackupError(msg)

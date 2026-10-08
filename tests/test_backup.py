@@ -9,7 +9,9 @@ before it opens the store, checks it with `integrity_check`, and keeps
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import sys
 from contextlib import closing
 from datetime import date
 from pathlib import Path
@@ -112,18 +114,23 @@ def test_rotation_never_deletes_a_file_it_did_not_make(tmp_path: Path) -> None:
     _make_db(db)
     folder = tmp_path / "backups"
     folder.mkdir()
-    for name in ("seen-before-upgrade.db", "notes.txt", "other-2026-01-01.db"):
+    mine = (
+        "seen-before-upgrade.db",
+        "notes.txt",
+        "other-2026-01-01.db",
+        # Dated like a daily, but not one: a longer name, a different suffix.
+        "seen-2026-10-01.db.keep",
+        "seen-2026-10-01.sqlite3",
+    )
+    for name in mine:
         (folder / name).write_text("mine")
 
     for day in range(1, 4):
         backup(db, keep=1, today=date(2026, 10, day))
 
-    assert sorted(p.name for p in folder.iterdir()) == [
-        "notes.txt",
-        "other-2026-01-01.db",
-        "seen-2026-10-03.db",
-        "seen-before-upgrade.db",
-    ]
+    assert sorted(p.name for p in folder.iterdir()) == sorted(
+        (*mine, "seen-2026-10-03.db")
+    )
 
 
 def test_a_store_in_a_folder_with_a_space_and_an_accent_backs_up(
@@ -137,6 +144,106 @@ def test_a_store_in_a_folder_with_a_space_and_an_accent_backs_up(
 
     assert copy == folder / "backups" / "seen-2026-10-08.db"
     assert _rows(copy) == 3
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="? is not valid in a Windows name")
+def test_a_store_in_a_folder_with_a_hash_and_a_question_mark_backs_up(
+    tmp_path: Path,
+) -> None:
+    """Both would end a naive `file:<path>?mode=ro` URI early."""
+    folder = tmp_path / "jobs #2? (old)"
+    folder.mkdir()
+    _make_db(folder / "seen.db")
+
+    copy = backup(folder / "seen.db", today=date(2026, 10, 8))
+
+    assert copy == folder / "backups" / "seen-2026-10-08.db"
+    assert _rows(copy) == 3
+
+
+def test_keep_zero_never_deletes_an_on_demand_copy(tmp_path: Path) -> None:
+    db = tmp_path / "seen.db"
+    _make_db(db)
+
+    for day in (1, 2, 3):
+        backup(db, keep=0, force=True, today=date(2026, 10, day))
+
+    assert sorted(p.name for p in (tmp_path / "backups").iterdir()) == [
+        "seen-2026-10-01.db",
+        "seen-2026-10-02.db",
+        "seen-2026-10-03.db",
+    ]
+
+
+def test_the_copy_just_made_survives_rotation_when_the_clock_went_back(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "seen.db"
+    _make_db(db)
+    for day in range(5, 12):
+        backup(db, keep=7, today=date(2026, 10, day))
+
+    copy = backup(db, keep=7, today=date(2026, 10, 1))
+
+    assert copy is not None and copy.is_file() and _rows(copy) == 3
+    assert sorted(p.name for p in (tmp_path / "backups").iterdir()) == [
+        f"seen-2026-10-{day:02d}.db" for day in (1, 6, 7, 8, 9, 10, 11)
+    ]
+
+
+def test_the_copy_is_written_under_a_name_no_other_process_shares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A manual `rolescan backup` during a scan's copy must not clobber it."""
+    db = tmp_path / "seen.db"
+    _make_db(db)
+    folder = tmp_path / "backups"
+    folder.mkdir()
+    other = folder / "seen-2026-10-08.db.99999.tmp"
+    other.write_text("another process, half way through")
+    moved: list[str] = []
+    real_replace = Path.replace
+
+    def spy(self: Path, target: Path) -> Path:
+        moved.append(self.name)
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", spy)
+
+    backup(db, today=date(2026, 10, 8))
+
+    assert moved == [f"seen-2026-10-08.db.{os.getpid()}.tmp"]
+    assert other.read_text() == "another process, half way through"
+
+
+def test_a_folder_that_cannot_be_made_is_a_backup_error_not_a_traceback(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "seen.db"
+    _make_db(db)
+    (tmp_path / "backups").write_text("a file where the folder should be")
+
+    with pytest.raises(BackupError, match=str(db)):
+        backup(db, today=date(2026, 10, 8))
+
+
+def test_a_copy_that_cannot_be_rotated_out_is_a_backup_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "seen.db"
+    _make_db(db)
+    backup(db, keep=1, today=date(2026, 10, 1))
+    real_unlink = Path.unlink
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:
+        if self.suffix == ".db":
+            raise PermissionError(13, "Permission denied", str(self))
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+
+    with pytest.raises(BackupError, match="Permission denied"):
+        backup(db, keep=1, today=date(2026, 10, 2))
 
 
 def test_a_damaged_store_fails_the_backup_and_keeps_the_last_good_copy(
@@ -224,3 +331,37 @@ def test_a_scan_over_a_damaged_store_stops_before_it_scans(tmp_path: Path) -> No
     assert result.exit_code == 1
     assert "Nothing was scanned" in " ".join(plain(result.output).split())
     assert not (tmp_path / "digests").exists(), "nothing ran"
+
+
+@respx.mock
+def test_backup_keep_zero_skips_the_scans_automatic_copy(tmp_path: Path) -> None:
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text(CONFIG + "  backup_keep: 0\n")
+    runner = CliRunner()
+
+    for _ in range(2):  # the second run has a store to copy
+        result = runner.invoke(app, ["scan", "-c", str(config), "--no-email"])
+        assert result.exit_code == 0, result.output
+
+    assert (tmp_path / "seen.db").is_file()
+    assert not (tmp_path / "backups").exists()
+
+
+def test_backup_command_with_keep_zero_leaves_earlier_copies_alone(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(CONFIG + "  backup_keep: 0\n")
+    db = tmp_path / "seen.db"
+    _make_db(db)
+    older = backup(db, keep=0, today=date(2020, 1, 1))
+    assert older is not None
+
+    result = CliRunner().invoke(app, ["backup", "-c", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert older.is_file()
+    assert len(list((tmp_path / "backups").iterdir())) == 2

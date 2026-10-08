@@ -483,7 +483,11 @@ def prune(
 
 @app.command("backup")
 def backup_store(config: ConfigOpt = Path("config.yaml")) -> None:
-    """Copy the store to backups/ beside it, checked with integrity_check."""
+    """Copy the store to backups/ beside it, checked with integrity_check.
+
+    Keeps the newest output.backup_keep daily copies. With backup_keep: 0 the
+    scan takes no copy of its own, and this command copies on demand and never
+    deletes one."""
     cfg = _load(config)
     db_path = cfg.resolve(cfg.output.db_path)
     try:

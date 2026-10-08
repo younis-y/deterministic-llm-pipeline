@@ -523,8 +523,9 @@ class OutputConfig(BaseModel):
     backup_keep: Annotated[int, Field(ge=0)] = 7
     """Daily copies of the store kept in `backups/` beside it (2.5.8).
     `rolescan scan` takes the day's copy before it opens the store, so the
-    first scan of a new version is covered before any migration runs. 0 turns
-    the automatic copy off; `rolescan backup` still makes one on demand."""
+    first scan of a new version is covered before any migration runs. 0: no
+    automatic copy; `rolescan backup` still copies on demand and never
+    deletes."""
     email: EmailConfig = Field(default_factory=EmailConfig)
 
 
