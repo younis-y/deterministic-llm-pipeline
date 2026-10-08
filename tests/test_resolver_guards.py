@@ -120,6 +120,7 @@ YEARS_GUARDS = [
     pytest.param("Our team is seeking someone with 5+ years of experience.", (5, "5+ years of experience"), id="_YEARS_REQ_VERB:seeking"),
     pytest.param("Our team wants someone with 5+ years of experience.", (5, "5+ years of experience"), id="_YEARS_REQ_VERB:wants"),
     pytest.param("Our team must have 5+ years of experience.", (5, "5+ years of experience"), id="_YEARS_REQ_VERB:must-have"),
+    pytest.param("Reporting to the CTO, you will bring 5+ years of experience.", (5, "5+ years of experience"), id="_YEARS_REQ_VERB:you-will-bring"),
     pytest.param("2 years rotation experience", None, id="_YEARS_STATED:gap-word-rotation"),
 ]
 

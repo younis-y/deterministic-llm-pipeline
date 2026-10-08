@@ -889,14 +889,18 @@ _RANGE = (
     r"(?<![\d.])(?P<lo>\d{1,2}(?:\.\d+)?)\s*(?:-|\u2013|\u2014|to)\s*"
     r"(?P<hi>\d{1,2}(?:\.\d+)?)(?!\d)"
 )
-#: A range of years: the years word after it ("3-5 years", "0.5-2 yrs") ...
-_YEARS_RANGE = re.compile(rf"{_RANGE}\s*\+?\s*(?:years?|yrs?)\b", re.IGNORECASE)
+#: A range of years: the years word after it ("3-5 years", "0.5-2 yrs",
+#: "3-5 YOE") ...
+_YEARS_RANGE = re.compile(rf"{_RANGE}\s*\+?\s*(?:years?|yrs?|yoe)\b", re.IGNORECASE)
 #: ... or a years-of-experience label right before it, which carries the unit
-#: ("Years of experience: 0-2", "Experience: 3-5"). 2.5.7 took any "N-M" in
-#: the quote, so "a team of 2-5; 5 years of experience" answered 5 was
-#: "corrected" to 2 (2.5.8).
+#: ("Years of experience: 0-2", "Experience: 3-5", "Experience required: 2-5",
+#: "Experience level: 2-4", "Experience: Minimum 2-3", "YOE: 3-5"). 2.5.7 took
+#: any "N-M" in the quote, so "a team of 2-5; 5 years of experience" answered
+#: 5 was "corrected" to 2 (2.5.8).
 _YEARS_RANGE_LABELLED = re.compile(
-    rf"\b(?:(?:years?|yrs?)\s+of\s+(?:[\w-]+\s+)?)?experience\s*[:\-\u2013]?\s*{_RANGE}",
+    r"\b(?:(?:(?:years?|yrs?)\s+of\s+(?:[\w-]+\s+)?)?experience"
+    r"(?:\s+(?:required|level|needed))?|yoe)\s*[:\-\u2013]?\s*"
+    rf"(?:min(?:imum)?\.?\s*)?{_RANGE}",
     re.IGNORECASE,
 )
 
