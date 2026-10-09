@@ -380,6 +380,13 @@ class LLMConfig(BaseModel):
     max_concurrent: Annotated[int, Field(ge=1, le=32)] = 5
     max_calls_per_run: Annotated[int, Field(ge=0)] = 60
     """Hard ceiling. Stops a badly tuned prefilter turning into a big bill."""
+    max_minutes: Annotated[float, Field(ge=0)] = 0.0
+    """Wall-clock budget for the model in one scan, in minutes (2.7.0). A call
+    count says little about time on a local model, where one call takes 10 to
+    40 seconds. The clock starts at the run's first model call; once the
+    budget is spent no new call starts, calls already in flight finish, and
+    every posting not yet scored is deferred to the next run exactly as the
+    call ceiling defers it. 0 is no time limit."""
     cascade: bool = True
     """Score in two passes: a cheap one that only settles the score, then the
     full verdict only for postings that clear `min_report_score`. The digest
@@ -615,6 +622,20 @@ class OutputConfig(BaseModel):
     never sends text (a Workday board with `details: false`, a structured page
     with no body) would otherwise hold it back for ever, and a pile of such
     postings would crowd out the ones that can be judged."""
+    reopen_programme_days: Annotated[int, Field(ge=0)] = 120
+    """Days after which a programme posting that a scan has not found listed
+    counts as new again (2.7.0); 0 turns it off.
+
+    A posting's identity is company, title and location, and `seen` is never
+    trimmed, so a yearly scheme whose title names no year ("Summer
+    Internship", "Graduate Programme") was listed once and never again. A scan
+    refreshes `seen.last_seen` on every posting it finds already seen, so a
+    gap longer than this means the board stopped listing it. A posting whose
+    TITLE names a programme (`rolescan.models.is_programme_title`) and whose
+    `last_seen` is older than this is scored and listed again, with a line
+    saying how long it was off the board, and its row then takes a fresh
+    `first_seen`. A posting listed on every scan never comes back; a title
+    that is not a programme is unchanged."""
     retention_days: RetentionConfig = Field(default_factory=RetentionConfig)
     backup_keep: Annotated[int, Field(ge=0)] = 7
     """Daily copies of the store kept in `backups/` beside it (2.5.8).

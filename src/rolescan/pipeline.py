@@ -97,6 +97,9 @@ class ScanResult:
     llm_breaker: bool = False
     """The scorer stopped calling the model after `BREAKER_AFTER` failures in
     a row and deferred the rest (2.5.8)."""
+    llm_max_minutes: float = 0.0
+    """`llm.max_minutes` for this run (2.7.0), so the digest can say which
+    budget was spent: "model time budget of 10 minutes spent". 0 is no limit."""
     llm_backend: str = ""
     """The backend scoring was configured to use, whether or not it ran.
 
@@ -473,7 +476,11 @@ async def _settle_identity(cfg: Config, result: ScanResult) -> None:
 
 
 async def _drop_already_handled(
-    scored: list[ScoredJob], store: Store, *, touch: bool
+    scored: list[ScoredJob],
+    store: Store,
+    *,
+    touch: bool,
+    reopen_programme_days: int = 0,
 ) -> list[ScoredJob]:
     """Everything the reader has already dealt with, in one stage.
 
@@ -488,11 +495,20 @@ async def _drop_already_handled(
     scoring + whatever reached the scorer. `touch` refreshes `seen.last_seen`
     for the ones still listed (2.5.8); a dry run passes False and writes
     nothing.
+
+    `reopen_programme_days` (2.7.0) lets an annual programme that no scan has
+    listed for that long count as new (see `Store.filter_new`). Such a posting
+    is also let past `dismissed`: the url was dismissed for an earlier year,
+    and the reader is told, on the posting, that it is back.
     """
-    fresh = await store.filter_new(scored, touch=touch)
+    fresh = await store.filter_new(
+        scored, touch=touch, reopen_programme_days=reopen_programme_days
+    )
     dismissed = await store.dismissed_urls()
     if dismissed:
-        fresh = [s for s in fresh if s.job.url not in dismissed]
+        fresh = [
+            s for s in fresh if s.reopened_after_days or s.job.url not in dismissed
+        ]
     return fresh
 
 
@@ -1052,7 +1068,10 @@ async def run_scan(
     must do the same.
     """
     result = ScanResult(
-        dry_run=dry_run, llm_backend=cfg.llm.backend, llm_model=cfg.llm.model
+        dry_run=dry_run,
+        llm_backend=cfg.llm.backend,
+        llm_model=cfg.llm.model,
+        llm_max_minutes=cfg.llm.max_minutes,
     )
     window: int | None = None
     if check_llm:
@@ -1083,7 +1102,12 @@ async def run_scan(
 
         scored = [score_keywords(j, cfg.profile) for j in unique]
 
-        fresh = await _drop_already_handled(scored, store, touch=not dry_run)
+        fresh = await _drop_already_handled(
+            scored,
+            store,
+            touch=not dry_run,
+            reopen_programme_days=cfg.output.reopen_programme_days,
+        )
         result.already_seen = len(scored) - len(fresh)
 
         candidates, rejects, thin = _prefilter(fresh, cfg.profile.min_keyword_score)

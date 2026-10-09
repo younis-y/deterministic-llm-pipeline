@@ -195,6 +195,13 @@ DESCRIPTIONS: dict[str, str] = {
         "Hard ceiling on model calls in one scan. Postings past it are deferred "
         "to the next run, not dropped. `0` allows no calls."
     ),
+    "llm.max_minutes": (
+        "Wall-clock budget for the model in one scan, in minutes, counted from "
+        "the first model call. Once it is spent no new call starts, calls "
+        "already running finish, and the postings not yet scored are deferred "
+        "to the next run, as the call ceiling defers them. `0` is no time "
+        "limit."
+    ),
     "llm.cascade": (
         "Score in two passes: a short call that settles the score, then the "
         "full verdict only for postings that clear `min_report_score`. Used "
@@ -273,6 +280,15 @@ DESCRIPTIONS: dict[str, str] = {
     "output.thin_unread_after": (
         "Runs a posting may arrive without text before it is listed once under "
         '"Unread" and recorded.'
+    ),
+    "output.reopen_programme_days": (
+        "Days a programme posting must go unlisted before it counts as new "
+        'again. A posting whose title names a programme ("Summer Internship", '
+        '"Graduate Programme", an off-cycle role, an insight week) and that '
+        "no scan has found on a board for this long is scored and listed "
+        "again, with a line saying how long it was off the board. A posting a "
+        "board lists on every scan never comes back, and a title that is not a "
+        "programme is unchanged. `0` turns it off."
     ),
     "output.retention_days": (
         "How many days each cache keeps a row. See `output.retention_days` below."

@@ -20,7 +20,7 @@ outside this repository.
 | [0009](0009-rule-skips-and-term-blocks-are-listed-in-hidden-by-your-rules.md) | Nothing a rule or a blocking term hides is hidden without a trace | accepted, capped at `output.hidden_max` since 2.6.0 | 2026-10-07 |
 | [0010](0010-hardness-is-an-explicit-list-and-each-term-list-has-its-own-match-scope.md) | Hardness is an explicit list; each configured list has its own match scope | accepted | 2026-09-24 |
 | [0011](0011-employer-board-dates-are-not-freshness.md) | An employer board's posted date is not a freshness signal | accepted, covers every employer-board source since 2.6.0 | 2026-09-28 |
-| [0013](0013-a-posting-is-recorded-as-seen-once-assessed-and-never-expires.md) | A posting is recorded as seen once assessed, and `seen` never expires | accepted | 2026-09-01 |
+| [0013](0013-a-posting-is-recorded-as-seen-once-assessed-and-never-expires.md) | A posting is recorded as seen once assessed, and `seen` never expires | accepted, annual programmes return after a gap since 2.7.0 | 2026-09-01 |
 | [0014](0014-a-run-must-never-succeed-silently.md) | Silence must never be ambiguous | accepted | 2026-09-23 |
 | [0015](0015-a-deterministic-prefilter-runs-before-the-model-and-calls-are-capped.md) | A deterministic prefilter runs before the model; calls are capped | accepted | 2026-09-01 |
 | [0020](0020-sources-judges-and-enrichers-are-entry-point-plugins.md) | Sources, judges and enrichers are entry-point plugins | accepted | 2026-09-01 |

@@ -141,7 +141,8 @@ so a blocker matching the wrong thing shows up rather than as silence. That
 includes a posting the term's `blockers` weight took under the prefilter; one
 that would have failed the prefilter without the term is not listed, and an
 `excluded_locations` entry, which has no weight, never lists a prefiltered
-posting. It is listed once, on the run that first sees it.
+posting. It is listed once, on the run that first sees it (an annual
+programme can be listed again after a gap: `output.reopen_programme_days`).
 
 Hardness is deliberately not a weight threshold. A weight is retuned whenever
 you calibrate the prefilter; whether a clearance is a wall is a fact about you
@@ -233,7 +234,9 @@ defaults:
 
 Since 2.5.7 the digest's stats line also reports a posting a run could not
 get to: "N deferred to the next run", with the reason (over the LLM budget,
-over the digest cap, or no description text yet). A deferred posting is not
+over the digest cap, or no description text yet), or, when `llm.max_minutes`
+ran out, "model time budget of N minutes spent; M postings deferred to the next
+run". A deferred posting is not
 recorded as seen, so it comes round again. A posting with no text is held back
 only `output.thin_unread_after` times (default 3): after that many runs without
 text it is listed once under "Unread (no text after N runs)", with its link,
@@ -381,7 +384,17 @@ point it back.
 
 **A hidden posting is listed once.** Everything a scan assesses is recorded as
 seen, hidden postings included, and is not reported again; a `--dry` run records
-nothing, so it lists them every time. Read the section on the day you scan: the
+nothing, so it lists them every time. The one exception is a yearly programme:
+a posting whose title names one ("Summer Internship", "Graduate Programme",
+"Off-Cycle Internship", "Insight Week") has the same identity every year, so a
+board that opens it again would never be heard from twice. Each scan refreshes
+`last_seen` on the postings it finds already seen, so a posting no scan has found
+for `output.reopen_programme_days` days (120; `0` turns this off) counts as new:
+it is scored and listed again, under "Returning: listed again after N days off
+the board", and its row takes a fresh `first_seen`. A posting a board lists on
+every scan never comes back, nor does one whose title is not a programme, and
+your shortlist, applied and dismissed marks are left as they were: a role you
+dismissed last year still returns under that line. Read the section on the day you scan: the
 digest is also saved under `digests/`, and `rolescan show` reprints the latest
 one. If a rule or term was wrong, fix it in `config.yaml`, then
 `rolescan unsee URL` (the URL as the digest prints it) so the next scan reports
@@ -428,6 +441,15 @@ What keeps a model's cost down:
   paid for twice.
 - `llm.max_calls_per_run` (60) is a hard ceiling per scan. Postings past it are
   deferred to the next run, not dropped.
+- `llm.max_minutes` (0, no limit) is a wall-clock budget for the model, counted
+  from the scan's first model call. On a local model one call takes 10 to 40
+  seconds, so a call count says little about how long a scan runs. When the
+  budget is spent no new call starts, calls already running finish, and the
+  postings not yet scored are deferred to the next run exactly as the call
+  ceiling defers them: kept out of `seen`, so they come round again. The stats
+  line says which limit stopped the run: "model time budget of 10 minutes
+  spent; 12 postings deferred to the next run", or "(N over the LLM budget)"
+  for the call count. Whichever was reached first is the one named.
 - A call sends the fixed instructions, your `profile.summary`, any worked
   examples, and one posting's title, company, location, date and the first
   `llm.description_chars` characters of its description (6,000 by default): a

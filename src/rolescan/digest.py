@@ -423,6 +423,18 @@ def render_hidden_list(result: ScanResult) -> str:
     return "\n".join(lines + _hidden_groups_md(view))
 
 
+def _returning(item: ScoredJob) -> str:
+    """What a programme that came back says about itself (2.7.0), or "".
+
+    The same posting was listed in an earlier year; the reader is told it is
+    back rather than left to wonder why a role they dealt with returned."""
+    if not item.reopened_after_days:
+        return ""
+    return (
+        f"listed again after {_plural(item.reopened_after_days, 'day')} off the board"
+    )
+
+
 def _role(item: ScoredJob) -> list[str]:
     job, fit = item.job, item.fit
     badge = _BADGE[item.verdict]
@@ -438,6 +450,9 @@ def _role(item: ScoredJob) -> list[str]:
         + (f" · {fit.confidence.value} confidence" if fit else " · keyword only")
     )
     lines.append("")
+    if returning := _returning(item):
+        lines.append(f"**Returning:** {returning}")
+        lines.append("")
 
     if fit is not None:
         lines.append(fit.reason)
@@ -631,7 +646,16 @@ def _run_outcome_note(result: ScanResult) -> str:
     )
 
 
+def _minutes(n: float) -> str:
+    """A budget in minutes as a reader says it: "10 minutes", "7.5 minutes",
+    "1 minute"."""
+    shown = str(int(n)) if n == int(n) else str(n)
+    return f"{shown} minute" if n == 1 else f"{shown} minutes"
+
+
 #: How the stats line names each reason a posting was deferred, in order.
+#: `llm_time` is not here: it has a clause of its own (see `_stats`), because
+#: it names the budget that was spent.
 _DEFERRED_LABELS = {
     "llm_ceiling": "over the LLM budget",
     "llm_breaker": "after the LLM stopped answering",
@@ -679,8 +703,17 @@ def _stats(result: ScanResult, view: _HiddenView) -> str:
         bits.append(
             f"{result.hidden_blocked} blocked and hidden (output.show_blocked is false)"
         )
-    if result.deferred:
-        reasons = Counter(s.deferred for s in result.deferred)
+    if timed_out := sum(1 for s in result.deferred if s.deferred == "llm_time"):
+        # The model's time budget was spent (2.7.0). Its own clause, ahead of
+        # the general one, because the number a reader needs is the budget:
+        # the call-count wording ("over the LLM budget") would send them to
+        # `max_calls_per_run`, which was not what stopped the run.
+        bits.append(
+            f"model time budget of {_minutes(result.llm_max_minutes)} spent; "
+            f"{_plural(timed_out, 'posting')} deferred to the next run"
+        )
+    if others := [s for s in result.deferred if s.deferred != "llm_time"]:
+        reasons = Counter(s.deferred for s in others)
         parts = [
             f"{reasons[key]} {label}"
             for key, label in _DEFERRED_LABELS.items()
@@ -691,9 +724,7 @@ def _stats(result: ScanResult, view: _HiddenView) -> str:
         parts += [
             f"{n} {key}" for key, n in reasons.items() if key not in _DEFERRED_LABELS
         ]
-        bits.append(
-            f"{len(result.deferred)} deferred to the next run ({', '.join(parts)})"
-        )
+        bits.append(f"{len(others)} deferred to the next run ({', '.join(parts)})")
     if result.unread:
         bits.append(f"{len(result.unread)} listed as unread")
     if view.total:
@@ -1188,6 +1219,8 @@ def _role_html(item: ScoredJob) -> str:
         f'<div style="{_META}">{_esc(_meta_line(job))}</div>',
         f'<div style="{_BADGE_ROW}">{_badges_html(item)}</div>',
     ]
+    if returning := _returning(item):
+        out.append(_tags_html("Returning", [returning]))
     if (fit := item.fit) is not None:
         out += _fit_html(item, fit)
     else:

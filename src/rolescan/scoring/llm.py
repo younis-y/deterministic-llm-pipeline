@@ -9,7 +9,7 @@ parse-retry loop and no defensive JSON repair on either path.
 Three things keep this cheap:
   * the keyword prefilter, so only plausible roles get here at all
   * a persistent verdict cache keyed on the description text
-  * a hard per-run call ceiling
+  * a hard per-run call ceiling, and an optional wall-clock budget (2.7.0)
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Awaitable
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
@@ -501,6 +502,7 @@ class FitScorer:
         model_digest: str = "",
         facts_cache: bool = True,
         context_window: int | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.cfg = cfg
         self.profile = profile
@@ -532,6 +534,12 @@ class FitScorer:
         #: and re-scores - a whole cache lost to a schema that was never wrong.
         self.verdict_model: type[FitVerdict] = FitVerdict
         self._sem = asyncio.Semaphore(cfg.max_concurrent)
+        #: The monotonic clock the time budget (`llm.max_minutes`) reads, in
+        #: seconds. A parameter so a test moves time by hand instead of waiting.
+        self._clock = clock
+        #: When this run's first model call began, or None before it: the
+        #: time budget counts from here, not from the start of the scan.
+        self._first_call_at: float | None = None
         self._calls = 0
         self._cached = 0
         self._deferred = 0
@@ -645,13 +653,37 @@ class FitScorer:
         self._failures_in_a_row = 0
         return out
 
+    def _begin_call(self) -> None:
+        """Count one model call about to start, and on the run's first start
+        the clock the time budget counts from."""
+        if self._first_call_at is None:
+            self._first_call_at = self._clock()
+        self._calls += 1
+
+    def _time_spent(self) -> bool:
+        """Whether `llm.max_minutes` is used up. Never before the first call
+        has started, and never when the budget is 0 (no limit)."""
+        minutes = self.cfg.max_minutes
+        if not minutes or self._first_call_at is None:
+            return False
+        return self._clock() - self._first_call_at >= minutes * 60
+
     def _stop_reason(self) -> str:
-        """Why no model call may start now ("llm_breaker", "llm_ceiling"),
-        or "" when one may."""
+        """Why no model call may start now ("llm_breaker", "llm_ceiling",
+        "llm_time"), or "" when one may.
+
+        The call ceiling is read before the time budget, and that is also the
+        order they were reached in: a call only starts while both are open, so
+        when both are spent at once the ceiling went first (the call that took
+        the count to the ceiling began inside the time budget). The limit that
+        stops the run is therefore the only one a posting is ever deferred
+        for."""
         if self._tripped:
             return "llm_breaker"
         if self._calls >= self.cfg.max_calls_per_run:
             return "llm_ceiling"
+        if self._time_spent():
+            return "llm_time"
         return ""
 
     def _get_judge(self) -> Judge:
@@ -735,7 +767,10 @@ class FitScorer:
                     job.title,
                 )
                 return verdict
-            self._calls += 1
+            if self._time_spent():
+                log.info("LLM time budget spent, skipping enrichment for %r", job.title)
+                return verdict
+            self._begin_call()
             try:
                 return await enricher.enrich(job, verdict)
             except Exception as e:
@@ -833,7 +868,7 @@ class FitScorer:
                 log.info("%s: deferring %r to the next run", stop, job.title)
                 self._deferred += 1
                 return scored.model_copy(update={"deferred": stop})
-            self._calls += 1
+            self._begin_call()
             verdict = await self._counted(self._call_judge(scored))
 
         if self.store is not None:
@@ -881,7 +916,7 @@ class FitScorer:
                 log.info("%s: deferring %r to the next run", stop, job.title)
                 self._deferred += 1
                 return scored.model_copy(update={"deferred": stop})
-            self._calls += 1
+            self._begin_call()
             raw = await self._counted(self._call_facts(scored))
 
         # The RAW facts are cached; verification and the resolvers run on

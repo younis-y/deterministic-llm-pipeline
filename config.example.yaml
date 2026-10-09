@@ -212,6 +212,11 @@ llm:
 
   max_concurrent: 5
   max_calls_per_run: 60      # hard spend ceiling
+  # Wall-clock budget for the model in one scan, in minutes, counted from its
+  # first call. A call count says little about time on a local model, where
+  # one call takes 10 to 40 seconds. When it is spent no new call starts and
+  # the postings not yet scored are deferred to the next run. 0 = no limit.
+  # max_minutes: 0
   description_chars: 6000
   cache_days: 30             # verdicts are cached on description text; 0 = never expire
 
@@ -247,6 +252,12 @@ output:
   # first, counted across every rule). The rest go to a -hidden.md file beside
   # the digest, which names it. 0 lists none.
   # hidden_max: 60
+  # A yearly programme whose title names no year ("Summer Internship",
+  # "Graduate Programme") has the same identity every year, so it was listed
+  # once and never again. One no scan has found on a board for this many days
+  # counts as new again, and the digest says how long it was off the board. A
+  # posting a board lists on every scan never comes back. 0 turns it off.
+  # reopen_programme_days: 120
   # Daily copies of the store kept in backups/ beside it, taken before a scan
   # opens it. 0 turns the automatic copy off; `rolescan backup` still copies
   # on demand and never deletes.
