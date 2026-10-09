@@ -113,6 +113,18 @@ class Source(ABC):
                  board are otherwise the same number, and the run reads ok.
       note       one line for the digest's "Notes" that is not a failure
                  (postings skipped as unreadable, a backlog waiting).
+
+    A source that reads only what changed since its last whole read (2.6.0)
+    also says three more things, all optional and read by the pipeline with
+    `getattr`:
+
+      incremental  True when it does. Its counts then vary by design, so the
+                   quiet and shrink alarms leave it alone.
+      since        what the pipeline hands IN before `fetch`: the opaque mark
+                   `next_mark` returned last time, or "" for none.
+      next_mark    what `fetch` hands OUT: the mark to keep once this scan's
+                   results are recorded, or "" to keep the old one (the read
+                   was not whole, so the next scan must cover it again).
     """
 
     name: ClassVar[str] = ""
@@ -148,6 +160,10 @@ class Source(ABC):
         self.truncated = ""
         #: A line for the digest's "Notes", not a failure (2.5.8).
         self.note = ""
+        #: The last whole read's mark, set by the pipeline (2.6.0).
+        self.since = ""
+        #: The mark to keep once this scan is recorded, or "" (2.6.0).
+        self.next_mark = ""
 
     async def probe(self) -> ProbeResult:
         """Test this slug and classify the outcome honestly."""

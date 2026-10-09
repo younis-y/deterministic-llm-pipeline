@@ -426,8 +426,8 @@ class LLMConfig(BaseModel):
         default="facts",
         description=(
             "Scoring mode. facts: the model extracts quoted facts and code "
-            "applies profile.rules. judge: the old single-call judge, kept for "
-            "ONE release so the evaluation can compare the two, then removed."
+            "applies profile.rules. judge: one call, the model decides the "
+            "verdict itself and profile.rules do not apply. Both are supported."
         ),
     )
     enricher: str = Field(
@@ -600,6 +600,14 @@ class OutputConfig(BaseModel):
     max_roles: Annotated[int, Field(ge=1)] = 15
     show_blocked: bool = True
     """Blocked roles are still worth seeing once, so you know the market moved."""
+    hidden_max: Annotated[int, Field(ge=0)] = 60
+    """Most lines in the digest's "Hidden by your rules" section (2.6.0),
+    counted across every rule, highest scores first. The rest are written to a
+    file beside the digest, which names it. The section used to have no cap,
+    at about a third of a kilobyte a line, so a long list pushed the alarms
+    past the point where Gmail clips a message. 0 lists none: the counts and
+    the file only. In the email the roles are laid out first and this section
+    gets what they leave, so a high value never pushes a role out of it."""
     thin_unread_after: Annotated[int, Field(ge=1)] = 3
     """After this many runs without a description, a posting is listed once
     under "Unread" and recorded as seen. A posting with no text cannot be

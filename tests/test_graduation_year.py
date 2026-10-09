@@ -142,7 +142,7 @@ def test_m5_a_downgraded_year_no_longer_fires_the_year_rule() -> None:
 
 # --- the rule --------------------------------------------------------------
 
-OWNER = RulesConfig(student_only="skip", max_graduation_year=2027)
+USER_RULES = RulesConfig(student_only="skip", max_graduation_year=2027)
 
 
 def test_max_graduation_year_defaults_to_no_limit() -> None:
@@ -152,7 +152,7 @@ def test_max_graduation_year_defaults_to_no_limit() -> None:
 def test_a_stated_year_above_the_limit_skips_with_its_quote() -> None:
     v = decide(
         _f(fit=90, graduation_year=GraduationYearFact(value=2028, quote="graduating in 2028")),
-        OWNER,
+        USER_RULES,
         55,
     )
     assert v.verdict.value == "skip"
@@ -168,7 +168,7 @@ def test_a_year_within_the_limit_passes_even_when_student_only_would_skip() -> N
             graduation_year=GraduationYearFact(value=2027, quote="class of 2027"),
             student_only=StudentFact(value=True, quote="Current students only"),
         ),
-        OWNER,
+        USER_RULES,
         55,
     )
     assert v.verdict.value == "apply"
@@ -178,7 +178,7 @@ def test_a_year_within_the_limit_passes_even_when_student_only_would_skip() -> N
 def test_no_stated_year_leaves_student_only_in_charge() -> None:
     v = decide(
         _f(fit=80, student_only=StudentFact(value=True, quote="Current students only")),
-        OWNER,
+        USER_RULES,
         55,
     )
     assert v.verdict.value == "skip"
@@ -191,7 +191,7 @@ def test_the_year_rule_runs_before_student_only() -> None:
             graduation_year=GraduationYearFact(value=2028, quote="graduating in 2028"),
             student_only=StudentFact(value=True, quote="Current students only"),
         ),
-        OWNER,
+        USER_RULES,
         55,
     )
     assert "graduating in 2028" in v.reason
@@ -203,7 +203,7 @@ def test_the_year_rule_runs_before_level() -> None:
             graduation_year=GraduationYearFact(value=2028, quote="graduating in 2028"),
             level=LevelFact(value=Level.senior, quote="Senior Data Scientist"),
         ),
-        OWNER.model_copy(update={"allowed_levels": [Level.graduate_entry]}),
+        USER_RULES.model_copy(update={"allowed_levels": [Level.graduate_entry]}),
         55,
     )
     assert "graduating in 2028" in v.reason
@@ -218,7 +218,7 @@ def test_hard_bars_still_beat_the_year_rule() -> None:
             graduation_year=GraduationYearFact(value=2028, quote="graduating in 2028"),
             hard_bars=[HardBar(kind=BarKind.clearance, quote="SC clearance")],
         ),
-        OWNER,
+        USER_RULES,
         55,
     )
     assert v.verdict.value == "blocked"
@@ -227,7 +227,7 @@ def test_hard_bars_still_beat_the_year_rule() -> None:
 def test_a_year_at_the_limit_passes() -> None:
     v = decide(
         _f(fit=80, graduation_year=GraduationYearFact(value=2027, quote="graduating in 2027")),
-        OWNER,
+        USER_RULES,
         55,
     )
     assert v.verdict.value == "apply"

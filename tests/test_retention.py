@@ -20,7 +20,7 @@ from typer.testing import CliRunner
 from conftest import plain
 from rolescan.cli import app
 from rolescan.config import Config, RetentionConfig
-from rolescan.store import PruneReport, Store
+from rolescan.store import LlmRun, PruneReport, Store
 from rolescan.storefile import run_lock
 
 OLD = "2020-01-01T00:00:00+00:00"
@@ -99,6 +99,30 @@ async def test_prune_all_trims_each_cache_and_keeps_what_is_still_needed(
         assert await _column(store, "SELECT uid FROM seen") == {"u1", "u2"}
         assert await _column(store, "SELECT url FROM applications") == {
             "https://old.example/applied"
+        }
+
+
+async def test_prune_all_trims_llm_runs_on_the_source_counts_window(
+    tmp_path: Path,
+) -> None:
+    """`llm_runs` is a trend table like `source_counts`: the Model health line
+    reads the last five, so rows past the 90-day window are nothing it reads."""
+    recent = (datetime.now(UTC) - timedelta(days=60)).isoformat(timespec="seconds")
+    stale = (datetime.now(UTC) - timedelta(days=100)).isoformat(timespec="seconds")
+    async with Store(tmp_path / "s.db") as store:
+        await store.record_llm_run(LlmRun(run_id="old", ran=OLD, postings=10))
+        await store.record_llm_run(LlmRun(run_id="stale", ran=stale, postings=10))
+        await store.record_llm_run(LlmRun(run_id="recent", ran=recent, postings=10))
+        await store.record_llm_run(LlmRun(run_id="new", ran=NEW, postings=10))
+
+        report = await store.prune_all(
+            postings_days=90, deferred_days=45, verdicts_days=180
+        )
+
+        assert report.llm_runs == 2
+        assert await _column(store, "SELECT run_id FROM llm_runs") == {
+            "recent",
+            "new",
         }
 
 

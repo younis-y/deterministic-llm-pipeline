@@ -15,6 +15,14 @@ Tables with different jobs:
            answer 200 with the full body (verified 2026-08-25), so lastmod is the
            only invalidation signal available and this table is what makes it
            usable.
+  llm_runs one row per scan that used the model (2.6.0): its calls, cache hits
+           and errors, and how often the quote guard and the resolvers
+           changed what the model said. Counts only, no posting text. The
+           digest's "Model health" line compares a run with up to five
+           earlier ones (at least three).
+  source_marks one row per source that reads only what changed since its last
+           whole scan (2.6.0): the opaque mark it handed back, kept when that
+           scan's results were recorded.
 
 Schema changes go through `_MIGRATIONS`; the file survives upgrades.
 """
@@ -27,18 +35,25 @@ import re
 import sqlite3
 from collections.abc import Iterable, Mapping
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
 from typing import ClassVar, Self, TypeVar, overload
+from uuid import uuid4
 
 import aiosqlite
 from pydantic import BaseModel, ValidationError
 
 from rolescan.models import FitVerdict, Job, ScoredJob
 
-__all__ = ["PruneReport", "Store", "StoreTooNewError", "refuse_a_newer_store"]
+__all__ = [
+    "LlmRun",
+    "PruneReport",
+    "Store",
+    "StoreTooNewError",
+    "refuse_a_newer_store",
+]
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +145,39 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE source_counts ADD COLUMN total INTEGER NOT NULL DEFAULT 0;
     """,
+    # 2.6.0: what the model did each run (`LlmRun`). Every count is a number
+    # of postings, not of facts: a posting is counted once however many of its
+    # facts the quote guard or a resolver changed.
+    """
+    CREATE TABLE IF NOT EXISTS llm_runs (
+        run_id           TEXT PRIMARY KEY,
+        ran              TEXT NOT NULL,
+        backend          TEXT NOT NULL DEFAULT '',
+        model            TEXT NOT NULL DEFAULT '',
+        model_digest     TEXT NOT NULL DEFAULT '',
+        calls            INTEGER NOT NULL DEFAULT 0,
+        cached           INTEGER NOT NULL DEFAULT 0,
+        errors           INTEGER NOT NULL DEFAULT 0,
+        breaker          INTEGER NOT NULL DEFAULT 0,
+        deferred         INTEGER NOT NULL DEFAULT 0,
+        quotes_rejected  INTEGER NOT NULL DEFAULT 0,
+        level_overridden INTEGER NOT NULL DEFAULT 0,
+        field_overridden INTEGER NOT NULL DEFAULT 0,
+        years_set        INTEGER NOT NULL DEFAULT 0,
+        years_cleared    INTEGER NOT NULL DEFAULT 0,
+        bars_added       INTEGER NOT NULL DEFAULT 0,
+        postings         INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS llm_runs_ran ON llm_runs(ran);
+    """,
+    # 2.6.0: where an incremental source left off (`Source.next_mark`).
+    """
+    CREATE TABLE IF NOT EXISTS source_marks (
+        source_key TEXT PRIMARY KEY,
+        mark       TEXT NOT NULL,
+        updated    TEXT NOT NULL
+    );
+    """,
 )
 
 
@@ -164,9 +212,10 @@ def _statements(script: str) -> list[str]:
     return out
 
 
-#: `source_counts` rows older than this are trimmed by `prune_all`. The
-#: quiet-source alarm reads 14 days (`source_high_water`), so this only ever
-#: removes rows nothing reads.
+#: `source_counts` and `llm_runs` rows older than this are trimmed by
+#: `prune_all`. The quiet-source alarm reads 14 days (`source_high_water`) and
+#: the Model health line at most the last five runs, so this only ever removes rows
+#: nothing reads.
 _SOURCE_COUNTS_DAYS = 90
 
 #: `prune_all` rebuilds the file (VACUUM) once more than this share of its
@@ -185,6 +234,55 @@ class PruneReport:
     deferred: int = 0
     source_counts: int = 0
     vacuumed: bool = False
+    llm_runs: int = 0
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+@dataclass(frozen=True, slots=True)
+class LlmRun:
+    """What the model did in one scan (2.6.0): a row of `llm_runs`.
+
+    `calls`, `cached`, `errors` and `deferred` count postings the way the scan
+    already counts them. `postings` is how many postings had their facts
+    finished (read from the model or from the cache), the denominator of every
+    rate below it. Each of the six counts after `deferred` is the number of
+    those postings in which it happened, once per posting:
+
+      quotes_rejected   the quote guard dropped a fact or a hard bar
+      level_overridden  `resolve_level` changed the level
+      field_overridden  `resolve_field` changed the field
+      years_set         `resolve_years` filled or corrected the years required
+      years_cleared     `resolve_years` removed the years the model gave
+      bars_added        `resolve_hard_bars` added a bar the model did not name
+    """
+
+    run_id: str = field(default_factory=lambda: uuid4().hex[:12])
+    ran: str = field(default_factory=_now)
+    backend: str = ""
+    model: str = ""
+    model_digest: str = ""
+    calls: int = 0
+    cached: int = 0
+    errors: int = 0
+    breaker: bool = False
+    deferred: int = 0
+    quotes_rejected: int = 0
+    level_overridden: int = 0
+    field_overridden: int = 0
+    years_set: int = 0
+    years_cleared: int = 0
+    bars_added: int = 0
+    postings: int = 0
+
+
+_LLM_RUN_COLUMNS = (
+    "run_id, ran, backend, model, model_digest, calls, cached, errors, breaker, "
+    "deferred, quotes_rejected, level_overridden, field_overridden, years_set, "
+    "years_cleared, bars_added, postings"
+)
 
 
 class StoreTooNewError(RuntimeError):
@@ -751,6 +849,109 @@ class Store:
         )
         return [int(r[0]) for r in rows]
 
+    # -- incremental sources -------------------------------------------------
+
+    async def source_mark(self, key: str) -> str:
+        """The mark an incremental source last kept under `key` (2.6.0), or
+        "" when it has none. Opaque here: the source writes and reads it."""
+        rows = list(
+            await self.db.execute_fetchall(
+                "SELECT mark FROM source_marks WHERE source_key = ?", (key,)
+            )
+        )
+        return str(rows[0][0]) if rows else ""
+
+    async def set_source_mark(self, key: str, mark: str) -> None:
+        """Keep `mark` for the source under `key`, replacing the last one."""
+        await self.db.execute(
+            "INSERT INTO source_marks (source_key, mark, updated) VALUES (?, ?, ?) "
+            "ON CONFLICT(source_key) DO UPDATE SET "
+            "mark = excluded.mark, updated = excluded.updated",
+            (key, mark, _now()),
+        )
+        await self.db.commit()
+
+    # -- model telemetry -----------------------------------------------------
+
+    async def record_llm_run(self, run: LlmRun) -> None:
+        """Keep one scan's model figures (2.6.0). A scan calls this once, and
+        not on a dry run."""
+        marks = ",".join("?" * 17)
+        await self.db.execute(
+            f"INSERT INTO llm_runs ({_LLM_RUN_COLUMNS}) VALUES ({marks})",
+            (
+                run.run_id,
+                run.ran,
+                run.backend,
+                run.model,
+                run.model_digest,
+                run.calls,
+                run.cached,
+                run.errors,
+                int(run.breaker),
+                run.deferred,
+                run.quotes_rejected,
+                run.level_overridden,
+                run.field_overridden,
+                run.years_set,
+                run.years_cleared,
+                run.bars_added,
+                run.postings,
+            ),
+        )
+        await self.db.commit()
+
+    async def recent_llm_runs(
+        self,
+        limit: int = 5,
+        *,
+        backend: str | None = None,
+        model: str | None = None,
+    ) -> list[LlmRun]:
+        """The latest `limit` runs that finished at least one posting's facts,
+        newest first (2.6.0).
+
+        A run that finished none has no rates to compare, so it is no baseline
+        and is left out. `backend` and `model`, when given, keep only runs of
+        that configured model: a rate measured on another model says nothing
+        about this one. Only constants are interpolated into the SQL; every
+        value is bound."""
+        where = ["postings > 0"]
+        args: list[object] = []
+        if backend is not None:
+            where.append("backend = ?")
+            args.append(backend)
+        if model is not None:
+            where.append("model = ?")
+            args.append(model)
+        rows = await self.db.execute_fetchall(
+            f"SELECT {_LLM_RUN_COLUMNS} FROM llm_runs "
+            f"WHERE {' AND '.join(where)} ORDER BY ran DESC, rowid DESC LIMIT ?",
+            (*args, limit),
+        )
+        return [
+            LlmRun(
+                run_id=str(r[0]),
+                ran=str(r[1]),
+                backend=str(r[2]),
+                model=str(r[3]),
+                model_digest=str(r[4]),
+                calls=int(r[5]),
+                cached=int(r[6]),
+                errors=int(r[7]),
+                breaker=bool(r[8]),
+                deferred=int(r[9]),
+                quotes_rejected=int(r[10]),
+                level_overridden=int(r[11]),
+                field_overridden=int(r[12]),
+                years_set=int(r[13]),
+                years_cleared=int(r[14]),
+                bars_added=int(r[15]),
+                postings=int(r[16]),
+            )
+            for r in rows
+        ]
+
     async def prune_all(
         self, *, postings_days: int, deferred_days: int, verdicts_days: int
     ) -> PruneReport:
@@ -789,6 +990,11 @@ class Store:
                 _SOURCE_COUNTS_DAYS,
                 "DELETE FROM source_counts WHERE ran < :cutoff",
             ),
+            (
+                "llm_runs",
+                _SOURCE_COUNTS_DAYS,
+                "DELETE FROM llm_runs WHERE ran < :cutoff",
+            ),
         ):
             if not days:
                 counts[table] = 0
@@ -805,6 +1011,7 @@ class Store:
             deferred=counts["deferred"],
             source_counts=counts["source_counts"],
             vacuumed=await self._vacuum_if_worth_it(),
+            llm_runs=counts["llm_runs"],
         )
 
     async def _vacuum_if_worth_it(self) -> bool:

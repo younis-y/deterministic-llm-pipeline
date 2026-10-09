@@ -31,6 +31,7 @@ from rolescan.pipeline import (
     SourceReport,
     _check_coverage,
     _fetch_one,
+    _read_shape,
     _source_key,
     run_scan,
 )
@@ -89,7 +90,7 @@ async def test_an_older_store_gains_total_and_its_rows_read_zero(
 
     assert _rows(path) == [(KEY, 40, 0)]
     with closing(sqlite3.connect(path)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == len(_MIGRATIONS)
 
 
 async def test_migration_8_skips_a_total_column_that_is_already_there(
@@ -347,6 +348,25 @@ async def test_a_board_with_no_read_shaping_option_keeps_its_old_key(
         ("workday", {"search_text": ["data", "analyst"]}),
         ("adzuna", {"queries": ["energy analyst"]}),
         ("structured", {"exclude_pattern": "/careers/(sales|legal)/"}),
+        # 2.6.0: how much of a board is read, and where, decide the count too
+        ("adzuna", {"max_pages": 2}),
+        ("adzuna", {"results_per_page": 20}),
+        ("adzuna", {"where": "Leeds"}),
+        ("structured", {"max_pages": 50}),
+        ("structured", {"incremental": True}),
+        ("structured", {"max_age_days": 14}),
+        ("structured", {"max_sitemap_urls": 1000}),
+        ("reed", {"queries": ["energy analyst"], "where": "Leeds"}),
+        ("reed", {"queries": ["energy analyst"], "distance": 5}),
+        ("reed", {"queries": ["energy analyst"], "graduate": True}),
+        ("reed", {"queries": ["energy analyst"], "direct_employer_only": True}),
+        ("reed", {"queries": ["energy analyst"], "max_pages": 2}),
+        ("reed", {"queries": ["energy analyst"], "results_per_page": 20}),
+        ("jooble", {"queries": ["energy analyst"], "radius": 5}),
+        ("jooble", {"queries": ["energy analyst"], "salary": 30000}),
+        ("jooble", {"queries": ["energy analyst"], "max_pages": 2}),
+        ("workable_search", {"queries": ["energy analyst"], "where": "Leeds"}),
+        ("workable_search", {"queries": ["energy analyst"], "max_pages": 2}),
     ],
 )
 async def test_a_read_shaping_option_adds_a_short_hash_of_its_value(
@@ -423,3 +443,50 @@ async def test_narrowing_a_board_starts_a_fresh_baseline_not_a_week_of_alarms(
     result = await run_scan(cfg, dry_run=True)
 
     assert result.shrunk_sources == shrunk
+
+
+@pytest.mark.parametrize(
+    ("kind", "before", "after", "shrunk"),
+    [
+        # the control: nothing changed but the count, so the collapse is named
+        ("adzuna", {"queries": ["x"]}, {"queries": ["x"]}, True),
+        # a smaller `max_pages` reads fewer rows by design (2.6.0)
+        ("adzuna", {"queries": ["x"]}, {"queries": ["x"], "max_pages": 1}, False),
+        ("structured", {"url_pattern": "/job/"}, {"max_pages": 20}, False),
+        ("structured", {"url_pattern": "/job/"}, {"incremental": True}, False),
+    ],
+)
+async def test_changing_how_much_is_read_starts_a_fresh_baseline(
+    tmp_path: Path,
+    kind: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    shrunk: bool,
+) -> None:
+    """Fourteen days at 500, then the entry is told to read less: 40 is the
+    new normal, not a week of "shrank" alarms (2.6.0)."""
+    old_entry, new_entry = _entry(kind, **before), _entry(kind, **after)
+    old_key = _source_key(
+        SourceReport(kind, "acme", "Acme", read_shape=_read_shape(old_entry))
+    )
+    async with Store(tmp_path / "s.db") as store:
+        newest = datetime.now(UTC) - timedelta(days=1)
+        await store.db.executemany(
+            "INSERT INTO source_counts (source_key, ran, count) VALUES (?, ?, ?)",
+            [
+                (
+                    old_key,
+                    (newest - timedelta(hours=i)).isoformat(timespec="seconds"),
+                    500,
+                )
+                for i in range(5)
+            ],
+        )
+        await store.db.commit()
+
+        report = SourceReport(
+            kind, "acme", "Acme", count=40, read_shape=_read_shape(new_entry)
+        )
+        found = await _check_coverage([report], store, record=False)
+
+    assert bool(found.shrunk) is shrunk

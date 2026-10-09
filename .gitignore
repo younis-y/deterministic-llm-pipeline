@@ -11,8 +11,10 @@ seen.db-wal
 seen.db-shm
 *.db
 digests/*
-cvs/*
-!cvs/README.md
+
+# A local folder of your own CV files, if you keep one beside your config.
+# Never committed.
+cvs/
 
 # Credentials.
 .env
@@ -34,5 +36,5 @@ NEXT.md
 
 # Lockfile: this is a library, not an application. Consumers resolve their own
 # dependency tree; pinning ours here would be noise in every downstream diff.
-# (rolescan-extra, which runs unattended twice daily, does commit its lock.)
+# (A deployment that runs unattended does commit its lock.)
 uv.lock

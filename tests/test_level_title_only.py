@@ -1,6 +1,6 @@
 """2.5.0: `rules.level_from_title_only` and the provenance it reads.
 
-The owner judges seniority from the job title. A model that reads "mid" or
+The user judges seniority from the job title. A model that reads "mid" or
 "senior" out of the description (a sentence about the team, a "we value
 experience" line) skipped good roles, so with the flag on only a level read
 from the title can fire the level rule.
@@ -94,7 +94,7 @@ def test_a_mid_level_title_is_sourced_from_the_title_by_keyword() -> None:
 # -> skip 49. Only a level KEYWORD in the title is the title speaking.
 
 #: A profile that wants junior and graduate roles only, judged on the title.
-OWNER_RULES = RulesConfig(
+USER_RULES = RulesConfig(
     max_years_required=1,
     allowed_levels=[Level.graduate_entry, Level.junior, Level.not_stated],
     level_from_title_only=True,
@@ -116,11 +116,11 @@ def test_c1_a_model_level_quoting_a_bare_title_is_sourced_from_text() -> None:
     assert got.level.source == "text"
 
 
-def test_c1_live_repro_does_not_skip_under_the_owner_rules() -> None:
+def test_c1_live_repro_does_not_skip_under_the_user_rules() -> None:
     job = _job("Data Engineer", "Build pipelines.")
     facts = _resolved(job, LevelFact(value=Level.mid, quote="Data Engineer"))
 
-    v = decide(facts, OWNER_RULES, 50)
+    v = decide(facts, USER_RULES, 50)
 
     assert v.verdict.value == "apply"
     assert v.fit_score == 80
@@ -135,15 +135,15 @@ def test_c1_a_level_derived_from_a_title_fragment_is_sourced_from_text() -> None
     job = _job("Data Seniority Analyst", "Build pipelines.")
     got = _resolved(job, LevelFact(value=Level.not_stated, quote="Data Senior"))
     assert got.level.value == Level.senior and got.level.source == "text"
-    assert decide(got, OWNER_RULES, 50).verdict.value == "apply"
+    assert decide(got, USER_RULES, 50).verdict.value == "apply"
 
 
-def test_c1_mid_level_title_skips_under_the_owner_rules() -> None:
+def test_c1_mid_level_title_skips_under_the_user_rules() -> None:
     job = _job("Mid-Level Data Engineer", "Build pipelines.")
     facts = _resolved(job, LevelFact())
 
     assert facts.level.value == Level.mid and facts.level.source == "title"
-    v = decide(facts, OWNER_RULES, 50)
+    v = decide(facts, USER_RULES, 50)
     assert v.verdict.value == "skip"
     assert v.reason == 'Skip: advert is for "Mid-Level Data Engineer"'
 

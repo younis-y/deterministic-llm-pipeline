@@ -3,7 +3,7 @@
 Weighted `blockers` terms: 82 of 3,357 cached adverts were prefilter rejects
 only because of their weight, mostly `head of`, `crypto` and `military`, and
 `military` matched the equal-opportunity line "military or veteran status"
-on three internships. Near-gate rejects: 20 of 50 good roles in the owner's
+on three internships. Near-gate rejects: 20 of 50 good roles in the user's
 labelled set scored under the gate by a few points and were recorded."""
 
 from __future__ import annotations

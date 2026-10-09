@@ -1,4 +1,4 @@
-"""Stage two: LLM fit scoring and CV matching.
+"""Stage two: LLM fit scoring.
 
 Backend-agnostic: whichever judge is configured returns `FitVerdict` as a
 validated pydantic object rather than JSON coaxed out of prose. Both built-in
@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
 from rolescan.config import LLMConfig, ProfileConfig
@@ -36,6 +37,7 @@ from rolescan.scoring.facts import (
 )
 from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
 from rolescan.scoring.rules import decide
+from rolescan.store import LlmRun
 
 if TYPE_CHECKING:
     from rolescan.store import Store
@@ -43,6 +45,7 @@ if TYPE_CHECKING:
 __all__ = [
     "FACTS_KEY_VERSION",
     "SYSTEM_FACTS",
+    "FactsCounter",
     "FitScorer",
     "cache_key",
     "final_key",
@@ -158,7 +161,7 @@ as "Title:"."""
 # the history behind that split. That is also why every enum value gets its
 # own line below rather than relying on the schema's description strings.
 #
-# No extra_prompt and no CV vocabulary: unlike SYSTEM, this prompt has no seam
+# No extra_prompt and no document vocabulary: unlike SYSTEM, this prompt has no seam
 # for free-text private context. The judgement it makes is skills and domain
 # fit only; level, years, student status, graduation year and eligibility are
 # decided afterwards by `rolescan.scoring.rules.decide`, from the quoted facts
@@ -275,7 +278,75 @@ def prompt_fingerprint(system: str, cfg: LLMConfig, *, model_digest: str = "") -
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()[:12]
 
 
-def finish_facts(raw: PostingFacts, job: Job) -> PostingFacts:
+@dataclass(slots=True)
+class FactsCounter:
+    """What `verify_facts` and the resolvers changed, in postings (2.6.0).
+
+    `finish_facts` adds one posting at a time, so the figures are a count of
+    postings, each once however many of its facts changed. Compared stage by
+    stage, so a change the quote guard made is not also counted as the
+    resolver's. Counting reads the stages and changes nothing: the facts
+    `finish_facts` returns are the same with or without a counter.
+
+    These are the model's own errors and the code's corrections to them: a
+    rate that doubles means the model, its prompt or a resolver changed.
+    """
+
+    postings: int = 0
+    """Postings whose facts were finished, from the model or the cache."""
+    quotes_rejected: int = 0
+    """`verify_facts` dropped a fact or a hard bar the advert does not say."""
+    level_overridden: int = 0
+    """`resolve_level` changed the level (read it from the title, or filled)."""
+    field_overridden: int = 0
+    """`resolve_field` changed the field."""
+    years_set: int = 0
+    """`resolve_years` filled the years required, or corrected the model's."""
+    years_cleared: int = 0
+    """`resolve_years` removed years the model gave (a range from zero)."""
+    bars_added: int = 0
+    """`resolve_hard_bars` added a bar of a kind the model did not name."""
+
+    def observe(
+        self,
+        raw: PostingFacts,
+        verified: PostingFacts,
+        aged: PostingFacts,
+        barred: PostingFacts,
+        levelled: PostingFacts,
+        final: PostingFacts,
+    ) -> None:
+        """Count one posting from the facts as each step left them: the
+        model's own, after the quote guard, after the years pass, after the
+        bar pass, after the level pass (the student pass sits between the
+        bar and level passes and is not counted) and after the field pass."""
+        self.postings += 1
+        if (
+            raw.level != verified.level
+            or raw.years_required != verified.years_required
+            or raw.student_only != verified.student_only
+            or raw.graduation_year != verified.graduation_year
+            or raw.field != verified.field
+            or len(raw.hard_bars) != len(verified.hard_bars)
+        ):
+            self.quotes_rejected += 1
+        before, after = verified.years_required.value, aged.years_required.value
+        if after is not None and after != before:
+            self.years_set += 1
+        elif before is not None and after is None:
+            self.years_cleared += 1
+        named = {bar.kind for bar in aged.hard_bars}
+        if {bar.kind for bar in barred.hard_bars} - named:
+            self.bars_added += 1
+        if levelled.level.value != verified.level.value:
+            self.level_overridden += 1
+        if final.field.value != levelled.field.value:
+            self.field_overridden += 1
+
+
+def finish_facts(
+    raw: PostingFacts, job: Job, counter: FactsCounter | None = None
+) -> PostingFacts:
     """The model's raw facts, verified against the advert and resolved.
 
     `verify_facts` drops what the advert does not say; the five resolvers
@@ -283,10 +354,18 @@ def finish_facts(raw: PostingFacts, job: Job) -> PostingFacts:
     runs on every read of the cache as well as after every call (2.5.8):
     a resolver fix reaches cached postings on the next run, where it used to
     cost a cache bump and a 40-minute re-score of the evaluation set.
+
+    `counter`, when given, is told what each step changed (2.6.0). It never
+    alters the result.
     """
     verified = verify_facts(raw, job)
-    facts = resolve_hard_bars(resolve_years(verified, job), job)
-    return resolve_field(resolve_level(resolve_student(facts, job), job), job)
+    aged = resolve_years(verified, job)
+    barred = resolve_hard_bars(aged, job)
+    levelled = resolve_level(resolve_student(barred, job), job)
+    final = resolve_field(levelled, job)
+    if counter is not None:
+        counter.observe(raw, verified, aged, barred, levelled, final)
+    return final
 
 
 def cache_key(
@@ -348,7 +427,7 @@ def cache_key(
 
     `examples_digest` names the worked examples the prompt carried (see
     `FitScorer._facts_cache_key`): they change what the model extracts, and
-    the owner edits them, which no version string here can track. Empty -
+    the user edits them, which no version string here can track. Empty -
     no examples - leaves the key exactly as it was.
 
     The facts key also names `cfg.backend` and `cfg.model`: facts extracted by
@@ -357,12 +436,12 @@ def cache_key(
     evaluation of the two exists to inform. The judge-mode key is unchanged.
     v11 (2.5.5) adds the deterministic years pass (`resolve_years`): a null
     `years_required` is filled from the advert's own "N+ years of experience"
-    wording. A v10 row could replay a null the owner's years rule never sees.
+    wording. A v10 row could replay a null the user's years rule never sees.
     v12 (2.5.6) adds the deterministic bar pass (`resolve_hard_bars`): a
     nationality or clearance bar the model left out is added from the
     advert's own eligibility wording ("UAE Nationals only", "Emirati Talent"
     in the title, "active eDV clearance"). A v11 row could replay an APPLY for
-    a role the owner cannot hold.
+    a role the user cannot hold.
     v13 (2.5.7): student alternative routes, range low end, graduation word,
     field rows, nationalities. A v12 row could replay a resolver verdict the
     corrected passes would no longer give.
@@ -454,6 +533,8 @@ class FitScorer:
         self.verdict_model: type[FitVerdict] = FitVerdict
         self._sem = asyncio.Semaphore(cfg.max_concurrent)
         self._calls = 0
+        self._cached = 0
+        self._deferred = 0
         self._errors = 0
         self._first_error = ""
         self._failures_in_a_row = 0
@@ -471,6 +552,10 @@ class FitScorer:
         #: question `FitVerdict` alone cannot answer once `decide` has turned
         #: the facts into a verdict.
         self.last_facts: dict[str, PostingFacts] = {}
+        #: What `verify_facts` and the resolvers changed across every posting
+        #: this scorer finished, whether the facts came from a call or from
+        #: the cache (2.6.0). All zero in judge mode, which has no facts.
+        self.facts_counter = FactsCounter()
         #: The rendered worked examples (`cfg.facts_examples_file`), loaded on
         #: first use and kept for the scorer's life, so every posting in a run
         #: is scored - and cache-keyed - against the same examples even if the
@@ -507,6 +592,31 @@ class FitScorer:
     @property
     def first_error(self) -> str:
         return self._first_error
+
+    def run_record(self) -> LlmRun | None:
+        """This scorer's run as a row for `llm_runs` (2.6.0), or None when it
+        did nothing: no call, no cache hit, no error, nothing deferred (a
+        keyword-only run, or one with no candidates)."""
+        if not (self._calls or self._cached or self._errors or self._deferred):
+            return None
+        c = self.facts_counter
+        return LlmRun(
+            backend=self.cfg.backend,
+            model=self.cfg.model,
+            model_digest=self.model_digest,
+            calls=self._calls,
+            cached=self._cached,
+            errors=self._errors,
+            breaker=self._tripped,
+            deferred=self._deferred,
+            quotes_rejected=c.quotes_rejected,
+            level_overridden=c.level_overridden,
+            field_overridden=c.field_overridden,
+            years_set=c.years_set,
+            years_cleared=c.years_cleared,
+            bars_added=c.bars_added,
+            postings=c.postings,
+        )
 
     @property
     def tripped(self) -> bool:
@@ -715,11 +825,13 @@ class FitScorer:
                 key, self.cfg.cache_days, self.verdict_model
             )
             if cached is not None and not self._stale_triage(cached):
+                self._cached += 1
                 return scored.model_copy(update={"fit": cached, "llm_cached": True})
 
         async with self._sem:
             if stop := self._stop_reason():
                 log.info("%s: deferring %r to the next run", stop, job.title)
+                self._deferred += 1
                 return scored.model_copy(update={"deferred": stop})
             self._calls += 1
             verdict = await self._counted(self._call_judge(scored))
@@ -750,7 +862,8 @@ class FitScorer:
         if self.store is not None and self.facts_cache:
             raw = await self.store.get_verdict(key, self.cfg.cache_days, PostingFacts)
             if raw is not None:
-                cached_facts = finish_facts(raw, job)
+                self._cached += 1
+                cached_facts = finish_facts(raw, job, self.facts_counter)
                 self.last_facts[job.url] = cached_facts
                 verdict = decide(
                     cached_facts,
@@ -766,6 +879,7 @@ class FitScorer:
         async with self._sem:
             if stop := self._stop_reason():
                 log.info("%s: deferring %r to the next run", stop, job.title)
+                self._deferred += 1
                 return scored.model_copy(update={"deferred": stop})
             self._calls += 1
             raw = await self._counted(self._call_facts(scored))
@@ -774,7 +888,7 @@ class FitScorer:
         # every read, so a resolver fix reaches this row without a re-call.
         if self.store is not None and self.facts_cache:
             await self.store.put_verdict(key, raw)
-        facts = finish_facts(raw, job)
+        facts = finish_facts(raw, job, self.facts_counter)
         self.last_facts[job.url] = facts
         verdict = decide(
             facts,

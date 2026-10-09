@@ -80,6 +80,7 @@ class _FakeSMTP:
             "implicit_tls": self.implicit_tls,
             "context": context,
             "starttls": False,
+            "starttls_context": None,
             "login": None,
             "sent": 0,
             "closed": False,
@@ -102,9 +103,10 @@ class _FakeSMTP:
     def close(self) -> None:
         self.record["closed"] = True
 
-    def starttls(self) -> None:
+    def starttls(self, *, context: ssl.SSLContext | None = None) -> None:
         assert not self.implicit_tls, "STARTTLS on a connection that is already TLS"
         self.record["starttls"] = True
+        self.record["starttls_context"] = context
         self._maybe_fail("starttls")
 
     def login(self, user: str, password: str) -> None:
@@ -235,6 +237,38 @@ def test_port_465_verifies_the_servers_certificate(smtp: type[_FakeSMTP]) -> Non
     assert isinstance(context, ssl.SSLContext)
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
+
+
+def test_starttls_verifies_the_servers_certificate(smtp: type[_FakeSMTP]) -> None:
+    """`starttls()` with no context does not check the certificate or the
+    host name, so a machine in the path could read the login and the digest.
+    The context is the one `ssl.create_default_context()` makes."""
+    send_email("body", _cfg(smtp_port=587))
+    context = smtp.log[0]["starttls_context"]
+    assert isinstance(context, ssl.SSLContext), "starttls was called with no context"
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
+def test_every_non_implicit_port_verifies_on_starttls(smtp: type[_FakeSMTP]) -> None:
+    for port in (25, 587, 2525):
+        smtp.log.clear()
+        send_email("body", _cfg(smtp_port=port))
+        context = smtp.log[0]["starttls_context"]
+        assert isinstance(context, ssl.SSLContext), port
+        assert context.verify_mode == ssl.CERT_REQUIRED, port
+
+
+def test_a_certificate_failure_at_starttls_reaches_the_caller_unchanged(
+    smtp: type[_FakeSMTP],
+) -> None:
+    """A self-signed relay now fails here. The error is the certificate's own,
+    not a port blamed on the network, so the fix (a trusted certificate) is
+    what the reader is pointed at."""
+    smtp.fail_on = "starttls"
+    smtp.failure = ssl.SSLCertVerificationError("self-signed certificate")
+    with pytest.raises(ssl.SSLCertVerificationError, match="self-signed"):
+        send_email("body", _cfg(smtp_port=587))
 
 
 def test_port_465_binds_the_same_way(

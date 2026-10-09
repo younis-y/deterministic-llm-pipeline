@@ -316,7 +316,7 @@ async def test_no_examples_file_leaves_the_prompt_unchanged() -> None:
 
 
 def test_examples_change_the_facts_cache_key(tmp_path: Path) -> None:
-    """Examples change what the model extracts, and the owner edits them, so
+    """Examples change what the model extracts, and the user edits them, so
     facts cached under one set must not be replayed under another."""
     path = _write(tmp_path, EXAMPLES_YAML)
     with_examples, _ = _scorer(path)

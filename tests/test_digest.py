@@ -112,6 +112,21 @@ def test_the_stats_line_stays_quiet_when_nothing_was_hidden() -> None:
     assert "blocked and hidden" not in render_markdown(ScanResult(unique=12))
 
 
+def test_the_stats_line_counts_postings_below_min_report_score() -> None:
+    """A scored posting under the final gate is in no list. Without this
+    clause "nothing matched" and "everything matched weakly" are the same
+    digest, and the second one is fixed by lowering a number."""
+    result = ScanResult(unique=12, below_min_report_score=3)
+    assert "3 below min_report_score" in render_markdown(result)
+    assert "3 below min_report_score" in render_html(result)
+
+
+def test_the_below_min_report_score_clause_is_quiet_at_zero() -> None:
+    result = ScanResult(unique=12)
+    assert "below min_report_score" not in render_markdown(result)
+    assert "below min_report_score" not in render_html(result)
+
+
 def test_digest_has_a_shortlist_section_when_given_one() -> None:
     result = _empty_result()
     text = render_markdown(
@@ -516,7 +531,7 @@ def test_an_unregistered_backend_loses_the_hint_but_not_the_layout() -> None:
         )
     )
     assert "LLM scoring failed for 1 posting(s)" in text
-    assert text.endswith("`RuntimeError: something went wrong`\n"), (
+    assert "`RuntimeError: something went wrong`\n\n---\n" in text, (
         "the section ends at the detail, with no blank line standing in for "
         "advice that was never produced"
     )
@@ -549,7 +564,7 @@ def test_a_backend_that_really_did_not_run_still_says_so() -> None:
     assert "LLM scoring did not run at all" in text
 
 
-# --- postings hidden by the owner's rules are listed, one line each ---------
+# --- postings hidden by the user's rules are listed, one line each ---------
 # On 2026-10-06, 44 of 109 scored postings were hidden by `profile.rules` with
 # no trace in the digest, so a wrong skip (a mis-read advert, a rule bug) was
 # invisible. This section is where it becomes visible.
@@ -613,7 +628,8 @@ def _rule_hidden_result(**kw: object) -> ScanResult:
 def test_markdown_lists_rule_hidden_postings_grouped_by_rule() -> None:
     text = render_markdown(_rule_hidden_result())
     section = text.index("## Hidden by your rules")
-    assert text.index("## Worth a look") < section < text.index("Sources that failed")
+    # The alarms open the digest (2.6.0), then the roles, then the hidden list.
+    assert text.index("Sources that failed") < text.index("## Worth a look") < section
     body = text[section:]
     assert (
         "- **Halian** · [Data Engineer (m/f/d)](https://x/halian) · Abu Dhabi: "
@@ -637,16 +653,14 @@ def test_markdown_lists_rule_hidden_postings_grouped_by_rule() -> None:
         < body.index("**Acme**")
         < body.index("**Halian**")
     )
-    assert (
-        "Skip: " not in body.split("---")[0] and "Blocked: " not in body.split("---")[0]
-    )
+    assert "Skip: " not in body and "Blocked: " not in body
 
 
 def test_html_lists_rule_hidden_postings_grouped_by_rule() -> None:
     html = render_html(_rule_hidden_result())
     section = html.index("Hidden by your rules")
-    assert html.index("Worth a look") < section < html.index("Sources that failed")
-    body = html[section : html.index("Sources that failed")]
+    assert html.index("Sources that failed") < html.index("Worth a look") < section
+    body = html[section:]
     assert 'href="https://x/halian"' in body
     assert (
         "Data Engineer (m/f/d)</a> · Abu Dhabi: advert asks for &quot;3+ years of experience&quot;"

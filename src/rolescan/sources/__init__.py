@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from rolescan.sources import (  # noqa: F401 - import registers
     adzuna,
+    aggregators,
     ats,
     structured,
     workday,

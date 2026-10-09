@@ -5,7 +5,7 @@
       -> keyword score
       -> drop anything already reported
       -> prefilter to plausible roles
-      -> LLM fit score and CV match (cached)
+      -> LLM fit score (cached)
       -> rank, then record what was assessed
 
 Everything here is orchestration. The judgement lives in scoring, the IO in
@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 
 from rolescan.config import Config, ProfileConfig, SourceEntry
 from rolescan.dedup import merge_near_duplicates
+from rolescan.health import TRAILING_RUNS, HealthFlag, model_health
 from rolescan.http import Fetcher
 from rolescan.models import Job, ScoredJob, Verdict
 from rolescan.scoring import (
@@ -40,7 +41,7 @@ from rolescan.scoring.judges import (
 from rolescan.scoring.keyword import SYNTHETIC_PENALTIES
 from rolescan.sources import get_source
 from rolescan.sources.base import _REGISTRY, PostingCache, SourceSkipped
-from rolescan.store import Store
+from rolescan.store import LlmRun, Store
 
 __all__ = ["ScanResult", "SourceReport", "record_scan", "run_scan"]
 
@@ -67,6 +68,11 @@ class SourceReport:
     """A short hash of the options that decide what the source reads, or ""
     when none is set (2.5.8). It is part of the history key, so narrowing a
     board starts a fresh baseline; see `_read_shape`."""
+    incremental: bool = False
+    """The source reads only what changed since its last whole scan (2.6.0),
+    so its counts vary by design and the quiet and shrink alarms skip it."""
+    next_mark: str = ""
+    """The mark the source asks to keep, once this scan is recorded (2.6.0)."""
 
     @property
     def ok(self) -> bool:
@@ -183,15 +189,15 @@ class ScanResult:
     out by the block and is not counted here."""
     reportable: list[ScoredJob] = field(default_factory=list)
     rule_hidden: list[ScoredJob] = field(default_factory=list)
-    """Postings the owner's rules kept out of `reportable`: one of
+    """Postings the user's rules kept out of `reportable`: one of
     `profile.rules` fired (`fit.rule` is set), the model blocked it in judge
     mode (`fit.verdict` is blocked with no rule), or a `profile.hard_blockers`
     term or `excluded_locations` entry matched (`blocker_hits`), whichever way
     they left it. A rule skip's score is capped below `min_report_score`; a
     block, by the model's bar or by a term, is dropped by
     `output.show_blocked: false`; and a term hit is usually a prefilter
-    reject, never judged at all, because the owner's config carries the same
-    phrases as 60-point `blockers` too. Each posting appears once, however
+    reject, never judged at all, because a config often carries the same
+    phrases as heavily weighted `blockers` too. Each posting appears once, however
     many of these caught it, and `fit` is None for one the model never scored.
 
     On 2026-10-06, 44 of 109 scored postings were hidden by rules with no
@@ -239,6 +245,14 @@ class ScanResult:
     unread_after: int = 3
     """`output.thin_unread_after` for this run, so the digest can say "no text
     after 3 runs"."""
+    below_min_report_score: int = 0
+    """Postings that were scored this run and fell under
+    `profile.min_report_score`, so are in no list (2.6.0). Not the ones a
+    rule, a model block or a `hard_blockers` term caught, nor the ones
+    deferred: those have their own clauses, and two clauses must not read as
+    two postings. It is how a reader tells "nothing matched" from "everything
+    matched weakly", most of all on a keyword-only run, whose scores sit on a
+    lower scale than the number the gate ships with."""
     to_record: list[tuple[ScoredJob, str]] = field(default_factory=list)
     """What a real run writes to `seen` once the digest is on disk (2.5.7),
     each posting with the reason it was assessed (see `assessed`). Empty on a
@@ -247,6 +261,15 @@ class ScanResult:
     """`profile.min_keyword_score` for this run (2.5.7), so the digest can say
     "scored 12 of 20" for a reject listed as just under it."""
     dry_run: bool = False
+    llm_run: LlmRun | None = None
+    """What the model did this run, as the row `llm_runs` keeps (2.6.0), or
+    None when no model call, cache hit or error happened (a keyword-only run,
+    or nothing new to score). Set on a dry run too: the run is measured, it is
+    only not written."""
+    model_health: list[HealthFlag] = field(default_factory=list)
+    """The rates of this run that are more than twice the median of up to the
+    last five runs of the same model (2.6.0), for the digest's "Model health" line.
+    Empty when they are not, and when fewer than three earlier runs exist."""
 
     @property
     def llm_failure(self) -> str:
@@ -299,6 +322,7 @@ async def _fetch_one(
     )
     try:
         source = get_source(entry, fetcher, cache)
+        await _hand_over_mark(source, cache, _source_key(report))
         jobs = await source.fetch()
     except SourceSkipped as e:
         report.skipped = True
@@ -317,6 +341,17 @@ async def _fetch_one(
     return report, jobs
 
 
+async def _hand_over_mark(source: object, cache: PostingCache | None, key: str) -> None:
+    """Give an incremental source the mark its last whole scan kept (2.6.0).
+
+    Read with `getattr`, like the read report: a source that does not read
+    incrementally has none of this, and a cache that is not a `Store` keeps no
+    marks, which reads as a first scan."""
+    reader = getattr(cache, "source_mark", None)
+    if getattr(source, "incremental", False) is True and reader is not None:
+        source.since = await reader(key)  # type: ignore[attr-defined]
+
+
 def _copy_read_report(source: object, report: SourceReport) -> None:
     """Copy what the source said about its read onto its report (2.5.8).
 
@@ -328,6 +363,8 @@ def _copy_read_report(source: object, report: SourceReport) -> None:
     report.total = total if valid else None
     report.truncated = str(getattr(source, "truncated", "") or "")
     report.note = str(getattr(source, "note", "") or "")
+    report.incremental = getattr(source, "incremental", False) is True
+    report.next_mark = str(getattr(source, "next_mark", "") or "")
 
 
 async def fetch_all(
@@ -460,8 +497,29 @@ async def _drop_already_handled(
 
 
 #: The options that decide what a source reads (2.5.8): Workday's own filters
-#: and search texts, Adzuna's queries, a structured source's url exclusion.
-_READ_SHAPING_OPTIONS = ("applied_facets", "search_text", "queries", "exclude_pattern")
+#: and search texts, the queries of the aggregators, a structured source's url
+#: exclusion. 2.6.0 adds how much is read (`max_pages`, `results_per_page`, and
+#: a structured source's `max_age_days`, `incremental` and `max_sitemap_urls`)
+#: and where and what is searched for (`where`, `distance`, `graduate`,
+#: `direct_employer_only`, `radius`, `salary`): each moves a source's count,
+#: and a count that moves by design is not a collapse.
+_READ_SHAPING_OPTIONS = (
+    "applied_facets",
+    "search_text",
+    "queries",
+    "exclude_pattern",
+    "max_pages",
+    "results_per_page",
+    "max_age_days",
+    "incremental",
+    "max_sitemap_urls",
+    "where",
+    "distance",
+    "graduate",
+    "direct_employer_only",
+    "radius",
+    "salary",
+)
 
 
 def _read_shape(entry: SourceEntry) -> str:
@@ -474,9 +532,10 @@ def _read_shape(entry: SourceEntry) -> str:
     the options are part of the history key and narrowing starts a fresh
     baseline. An option that is unset or empty adds nothing, so a key written
     before 2.5.8 is unchanged only for an entry that sets none of
-    `queries`, `exclude_pattern`, `applied_facets` and `search_text`. An
-    entry that already set Adzuna `queries` or an `exclude_pattern` gets a
-    new key at the upgrade, and its alarms start from a fresh history.
+    `_READ_SHAPING_OPTIONS`. An entry that already set Adzuna `queries` or an
+    `exclude_pattern` got a new key at 2.5.8, and one that sets any option
+    added in 2.6.0 (`max_pages` or `where`, say) gets one at that upgrade; its
+    alarms start from a fresh history.
     """
     options = entry.options
     shaping = {k: options[k] for k in _READ_SHAPING_OPTIONS if options.get(k)}
@@ -541,11 +600,11 @@ def _prefilter(
     judged, is recorded as seen, and never surfaces again.
 
     A posting whose description never arrived is gated on its title alone,
-    which keeps 85% of what the full text keeps (measured 2026-10-07 on the
-    owner's store: a graduate stream titled "IT, Tech and Data" scored 94 on
-    its text and 0 on its title). So a thin reject is deferred, not rejected:
-    the next run may have the text. A thin posting that clears the gate is
-    judged as before; the model's quotes then come from the title.
+    which keeps most of what the full text keeps (a graduate stream titled
+    "IT, Tech and Data" scored 94 on its text and 0 on its title). So a thin
+    reject is deferred, not rejected: the next run may have the text. A thin
+    posting that clears the gate is judged as before; the model's quotes then
+    come from the title.
     """
     candidates = [s for s in fresh if s.keyword_score >= gate]
     under = [s for s in fresh if s.keyword_score < gate]
@@ -623,7 +682,37 @@ async def _judge(
     result.llm_error_detail = scorer.first_error
     result.llm_scored = sum(1 for s in judged if s.fit is not None)
     result.llm_breaker = scorer.tripped
+    result.llm_run = scorer.run_record()
     return judged
+
+
+async def _check_model_health(
+    store: Store, result: ScanResult, *, record: bool
+) -> None:
+    """Compare this run's model figures with the runs before it, then keep
+    them (2.6.0).
+
+    The history is read before this run is written, so a run is never its own
+    baseline (as in `_check_coverage`). Only earlier runs of the same
+    configured backend and model count: a rate measured on another model says
+    nothing about this one. `record=False` on a dry run, which writes nothing.
+    """
+    run = result.llm_run
+    if run is None:
+        return
+    earlier = await store.recent_llm_runs(
+        TRAILING_RUNS, backend=run.backend, model=run.model
+    )
+    result.model_health = model_health(run, earlier)
+    if result.model_health:
+        log.warning(
+            "model health: %s",
+            ", ".join(
+                f"{f.label} {f.affected} of {f.postings}" for f in result.model_health
+            ),
+        )
+    if record:
+        await store.record_llm_run(run)
 
 
 def assessed(
@@ -722,6 +811,17 @@ def _rank(
         for s in keep[cfg.output.max_roles :]
     ]
     return shown, hidden, overflow
+
+
+def _count_below_gate(judged: list[ScoredJob], min_report_score: int) -> int:
+    """How many scored postings fell under `min_report_score` and nothing else
+    explains it: not deferred (it will be scored again), and not caught by a
+    rule, a model block or a blocking term (the digest lists those)."""
+    return sum(
+        1
+        for s in judged
+        if not s.deferred and s.score < min_report_score and not _caught_by_a_rule(s)
+    )
 
 
 def _caught_by_a_rule(item: ScoredJob) -> bool:
@@ -891,6 +991,10 @@ async def _check_coverage(
             found.truncated.append(
                 (label, report.count, report.total, report.truncated)
             )
+        if report.incremental:
+            # What it read is what changed: nothing new is a quiet day, and a
+            # few changes after a first read of thousands are not a collapse.
+            continue
         if report.count == 0:
             previous = await store.source_high_water(_source_key(report))
             if previous > 0:
@@ -989,11 +1093,15 @@ async def run_scan(
             result.unread, thin = await _count_thin(thin, store, result.unread_after)
 
         judged = await _judge(candidates, cfg, store, result, context_window=window)
+        await _check_model_health(store, result, record=not dry_run)
 
         result.reportable, result.hidden_blocked, overflow = _rank(judged, cfg)
         cut = {s.job.uid: s for s in overflow}
         judged = [cut.get(s.job.uid, s) for s in judged]
         result.deferred = [s for s in judged if s.deferred] + thin
+        result.below_min_report_score = _count_below_gate(
+            judged, cfg.profile.min_report_score
+        )
         result.gate = cfg.profile.min_keyword_score
         result.rule_hidden = _rule_hidden(
             judged, result.reportable, rejects, cfg.profile, thin=thin
@@ -1023,12 +1131,43 @@ async def record_scan(cfg: Config, result: ScanResult) -> int:
 
     A dry run has an empty `to_record`, so this opens nothing and returns 0.
     """
-    if not result.to_record:
+    marks = _marks_to_keep(result)
+    if not result.to_record and not marks:
         return 0
     async with Store(cfg.resolve(cfg.output.db_path)) as store:
-        await store.record_all(result.to_record)
-        # A recorded posting needs no deferral count any more, whether it was
-        # listed as unread or arrived with its text and was judged. Done here,
-        # after the digest exists, so a failed write leaves the count in place.
-        await store.forget_deferred(s.job.uid for s, _ in result.to_record)
+        if result.to_record:
+            await store.record_all(result.to_record)
+            # A recorded posting needs no deferral count any more, whether it
+            # was listed as unread or arrived with its text and was judged.
+            # Done here, after the digest exists, so a failed write leaves the
+            # count in place.
+            await store.forget_deferred(s.job.uid for s, _ in result.to_record)
+        for key, mark in marks.items():
+            await store.set_source_mark(key, mark)
     return len(result.to_record)
+
+
+def _marks_to_keep(result: ScanResult) -> dict[str, str]:
+    """The marks of incremental sources this scan may keep (2.6.0), by key.
+
+    An incremental source hands a posting over once. A scan that left any
+    posting for a later one (held back by a cap, by a model that failed or by a
+    missing description) would lose it by moving the mark, because that source
+    does not offer the posting again. Such a scan, and a dry run, keep the old
+    mark: the next one reads the same window again, which costs only the pages
+    the posting cache does not hold. So does a source whose read was cut short
+    (`SourceReport.truncated`): what it left unread is inside the window, and
+    would be behind the mark. To read everything once more, set
+    `incremental: false` for a scan."""
+    if (
+        result.dry_run
+        or result.deferred
+        or result.llm_unusable
+        or result.llm_errors > 0
+    ):
+        return {}
+    return {
+        _source_key(r): r.next_mark
+        for r in result.reports
+        if r.ok and r.incremental and r.next_mark and not r.truncated
+    }

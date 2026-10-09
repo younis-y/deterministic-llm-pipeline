@@ -252,6 +252,7 @@ def test_the_ollama_backend_reports_what_was_measured_not_a_disclaimer() -> None
     assert "not yet verified" not in description
     assert "72% verdict accuracy" in description
     assert "50% blocker recall" in description
+    assert "judge mode" in description, "the figures are for the older mode"
 
     # And it has to be where a backend is chosen, not only in the source.
     out = plain(CliRunner().invoke(app, ["backends"]).output).casefold()
@@ -311,6 +312,9 @@ async def test_a_backend_whose_sdk_is_absent_is_reported() -> None:
         _unregister("nosdk")
     assert "a_package_that_is_not_installed_anywhere" in reason
     assert "not installed" in reason
+    # The package is not on an index: the hint installs from a checkout.
+    assert 'pip install -e ".[nosdk]"' in reason
+    assert "rolescan[" not in reason
 
 
 @respx.mock

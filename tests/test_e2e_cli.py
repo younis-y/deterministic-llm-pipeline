@@ -296,7 +296,6 @@ def test_discover_never_reports_an_unverifiable_slug_as_working(
             "  - {kind: adzuna, slug: gb, label: Adzuna UK, queries: [energy]}",
         )
     )
-    (tmp_path / "cvs").mkdir()
     respx.get("https://api.smartrecruiters.com/v1/companies/Ghost/postings").mock(
         return_value=httpx.Response(200, json={"totalFound": 0, "content": []})
     )
@@ -322,7 +321,6 @@ def test_discover_marks_disabled_sources(tmp_path: Path) -> None:
             "  - {kind: greenhouse, slug: acme, label: Acme, enabled: false}",
         )
     )
-    (tmp_path / "cvs").mkdir()
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(200, json=BOARD)
     )
@@ -401,7 +399,7 @@ class _FakeSMTP:
     def __exit__(self, *exc: object) -> None:
         return None
 
-    def starttls(self) -> None:
+    def starttls(self, *, context: object = None) -> None:
         return None
 
     def login(self, user: str, password: str) -> None:

@@ -1,0 +1,25 @@
+# The smallest config that does something useful, and the one the README's
+# quickstart copies. Keyword scoring only, one public job board, no keys, no
+# model, no email. Copy it to config.yaml and run:
+#
+#   rolescan discover
+#   rolescan scan --dry --no-llm --no-email
+#
+# Everything the other files in this folder add (a model, rules, more sources,
+# email) is optional and documented in docs/config.md.
+profile:
+  name: Quickstart
+  summary: Placeholder. Only a model backend reads this.
+  locations: [london, united kingdom]
+  # Matched as plain substrings, so "data" also hits "metadata"; a title hit
+  # counts triple.
+  keywords: {data: 6, engineer: 5, python: 5, analyst: 4}
+  min_keyword_score: 10
+  # Keyword-only scores run lower than a model's (about 20 to 30 suits them),
+  # so this is far under the 55 that suits model scores. Raise it as your
+  # keywords sharpen.
+  min_report_score: 20
+llm:
+  enabled: false
+sources:
+  - {kind: lever, slug: octoenergy, label: Octopus Energy}

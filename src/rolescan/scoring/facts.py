@@ -932,7 +932,7 @@ def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
     The 2026-10-05/06 digests rated Dubai and London roles APPLY whose
     adverts said "3+ years of experience", "5+ years" and "3-7 years": the
     model's reason text repeated the requirement, but its `years_required`
-    came back null in 12 of 13 such adverts, so the owner's
+    came back null in most of them, so a user's
     `max_years_required` rule never fired. A null is filled from the title
     first, quoting the words `years_required_stated` matched, which are
     verbatim and so would pass the guard themselves. A value the model did
@@ -1009,10 +1009,10 @@ def resolve_student(facts: PostingFacts, job: Job) -> PostingFacts:
 
 
 # Nationality and clearance bars an advert states (2.5.6). The local model
-# named a bar on 7 of the 26 evaluation adverts that state one, so code reads
-# them after `verify_facts`, as `resolve_years` does for years. A bar hides a
+# named a bar on only a minority of the evaluation adverts that state one, so
+# code reads them after `verify_facts`, as `resolve_years` does for years. A bar hides a
 # role for good, so only eligibility-shaped wording counts, every shape below
-# was seen in the owner's cached adverts, and anything softer is left to the
+# was seen in real cached adverts, and anything softer is left to the
 # model and the keyword blockers.
 #
 # Nationality: "<N> nationals only", "only <N> nationals", "(UAE Nationals)",
@@ -1075,7 +1075,7 @@ _NATIONALITY_STATED = tuple(
 #: Looser wording ("We are committed to Emiratisation programmes", "Knowledge
 #: of Emiratisation roles and Nafis incentives", "Oversee the Emiratisation
 #: programme") is as often the HR work or company boilerplate as a hire, and
-#: matched none of the owner's 3,324 cached adverts. The description is not
+#: matched none of the cached adverts it was checked against. The description is not
 #: read for these at all when the title names Emiratisation without being a
 #: bar (`hard_bars_stated`) ...
 _LOCALISATION_STATED = tuple(
@@ -1294,7 +1294,7 @@ _BAR_HEDGED_AFTER = re.compile(
     r"|depending\s+on)\b",
     re.IGNORECASE,
 )
-#: A nationality with an alternative the owner can satisfy is not a bar: a
+#: A nationality with an alternative the user can satisfy is not a bar: a
 #: residency or visa anywhere in the sentence ("Valid UAE residence visa, or be
 #: a UAE or GCC national", "for UAE National students and students who hold a
 #: valid UAE residence visa"), any nationality ("Nationality: UAE / Any",
@@ -1364,7 +1364,7 @@ def _waived(before: str, after: str) -> bool:
 
 
 def _nationality_waived(before: str, match: str, after: str) -> bool:  # noqa: ARG001
-    """`_waived`, or a nationality with an alternative the owner can satisfy."""
+    """`_waived`, or a nationality with an alternative the user can satisfy."""
     return _waived(before, after) or bool(
         _BAR_ALTERNATIVE.search(before)
         or _BAR_ALTERNATIVE.search(after)
@@ -1502,8 +1502,8 @@ def hard_bars_stated(title: str, description: str) -> list[HardBar]:
 def resolve_hard_bars(facts: PostingFacts, job: Job) -> PostingFacts:
     """Add a nationality or clearance bar the model left out (2.5.6).
 
-    On the owner's 200-posting evaluation the local model named a bar on only
-    7 of the 26 adverts that state one, and adverts the keyword blockers do
+    On a labelled evaluation the local model named a bar on only a minority
+    of the adverts that state one, and adverts the keyword blockers do
     not catch reached the digest as APPLY: titles "Data Analyst - UAE
     National, ICQA/LND Analytics Team" and "Officer Regulatory Reporting -
     Emirati Talent", "aimed at preparing UAE Nationals for successful

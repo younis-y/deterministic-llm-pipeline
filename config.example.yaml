@@ -1,14 +1,20 @@
 # rolescan configuration. Copy to config.yaml and edit.
 #
-# NOTHING HERE REQUIRES A CREDENTIAL. Every source except Adzuna is a public
-# endpoint, and keyword scoring is pure Python. Keys are optional upgrades:
-#   ANTHROPIC_API_KEY   LLM fit scoring and CV tailoring  (or use a local model)
-#   ADZUNA_APP_ID/KEY   one extra aggregator source
+# NOTHING HERE REQUIRES A CREDENTIAL. Every source except Adzuna, Reed and
+# Jooble is a public endpoint, and keyword scoring is pure Python. Keys are
+# optional upgrades:
+#   ANTHROPIC_API_KEY   LLM fit scoring  (or use a local model)
+#   ADZUNA_APP_ID/KEY   an extra aggregator source
+#   REED_API_KEY        Reed.co.uk, the UK
+#   JOOBLE_API_KEY      Jooble, 60-odd countries
 #   ROLESCAN_SMTP_PASS   emailing the digest instead of printing it
 # Secrets are read from the environment, so this file stays safe to commit.
 #
 # Relative paths resolve against THIS FILE, not the working directory, so a
 # cron job writes to the same database as an interactive run.
+#
+# Every key, with its type, default and meaning, is in docs/config.md. For the
+# smallest working file, see examples/quickstart.yaml.
 
 profile:
   name: Your Name
@@ -32,6 +38,10 @@ profile:
   # Stage-one prefilter weights. Tripled when the term appears in the title.
   # This is the single biggest lever on cost: postings scoring below
   # min_keyword_score never reach the LLM.
+  #
+  # Each keyword is a plain, case-insensitive SUBSTRING match, not a whole
+  # word: `ai` also matches "maintain" and "email". Write `machine learning`
+  # or `ai engineer`, not `ai`. (Blockers below are whole-word matches.)
   keywords:
     python: 5
     data scientist: 7
@@ -55,6 +65,20 @@ profile:
     director: 15
     unpaid: 30
   location_penalty: 25
+
+  # Places you cannot or will not work. Whole-word match against the posting's
+  # location field only; a match blocks the posting like a hard_blockers term.
+  # excluded_locations: [united states]
+
+  # Recruiters and staffing firms (matched on the COMPANY name only) and what
+  # their listings cost. 0 disables the penalty; a penalty and not a bar, so an
+  # agency-only role still appears, below the employer's own posting.
+  # agencies: [Example Recruitment]
+  # agency_penalty: 15
+
+  # Drop postings older than this many days from aggregator sources. Employer
+  # boards are exempt, as is a posting with no date. 0 turns it off.
+  # max_age_days: 90
 
   # `blockers` terms whose weight counts only when the term is in the job
   # TITLE. For words that name a level or sector in a title but turn up as
@@ -89,7 +113,9 @@ profile:
   # nationalities: []
 
   min_keyword_score: 18   # below this, a posting never reaches the LLM
-  min_report_score: 55    # below this, a posting never reaches the digest
+  min_report_score: 55    # below this, a posting never reaches the digest.
+                          # Suits model scores; a keyword-only run (--no-llm)
+                          # scores lower, so use about 20 to 30 there.
 
   # How far under min_keyword_score a posting may fall and still be listed in
   # the digest's "Hidden by your rules" section, so a weight that is rejecting
@@ -126,7 +152,7 @@ profile:
   #   allowed_fields:            # default null: any field. Values:
   #     - data_engineering       # data_engineering, ai_llm, data_science,
   #     - ai_llm                 # analytics_bi, quant, product, software,
-  #     - data_science           # consulting, other.
+  #     - data_science           # consulting, finance, other.
   #   field_exempt_companies: [] # employers whose postings pass the field
   #                              # rule whatever their field (company name,
   #                              # case-insensitive, whole words). Default none.
@@ -140,13 +166,10 @@ llm:
   #              With no key it disables itself and you get keyword scores,
   #              and the digest says so rather than pretending.
   #   ollama     A local model. Free, offline, no key. Set model to something
-  #              you have pulled, e.g. qwen2.5:7b or llama3.1:8b.
-  #              Measured against a live server over a 25-posting benchmark
-  #              and one 34-posting scan: 72% verdict accuracy, 0%
-  #              score/verdict violations, and 50% blocker recall from the
-  #              model itself. hard_blockers below do not depend on the model,
-  #              so keep the structural bars there rather than trusting it to
-  #              spot them.
+  #              you have pulled, e.g. qwen2.5:7b or llama3.1:8b. The README's
+  #              "Measured quality" says what has and has not been measured.
+  #              hard_blockers below do not depend on the model, so keep the
+  #              structural bars there rather than trusting it to spot them.
   backend: anthropic
   model: claude-sonnet-5
 
@@ -155,10 +178,12 @@ llm:
   #          student-only, field, hard bars - plus a skills/domain fit score.
   #          Code then applies profile.rules. A level word in the title
   #          (senior, lead, graduate, intern...) decides the level outright.
-  #          Only nationality, clearance and work-authorisation bars block;
-  #          any other stated requirement is a skip with its quote.
-  #   judge  The older single-call judge that decides everything itself.
-  #          Kept for one release so you can compare the two, then removed.
+  #          Only nationality and clearance bars block; any other stated
+  #          requirement is a skip with its quote, and a work-authorisation
+  #          bar is ignored (put visa wording in hard_blockers).
+  #   judge  One call per posting: the model gives the score, verdict and
+  #          blockers itself. A supported mode. profile.rules do not apply,
+  #          and llm.extra_prompt is used. See the README, "Judge mode".
   # mode: facts
 
   # Name of a registered enricher (entry-point group `rolescan.enrichers`)
@@ -176,6 +201,11 @@ llm:
   # sent to the scoring call (only an enricher may use it), and rolescan logs
   # a note at startup if it is set with no enricher to receive it.
   # extra_prompt: ""
+
+  # api_key: ""            # leave blank: read from ANTHROPIC_API_KEY
+  # max_tokens: 1500       # the longest answer asked of the model
+  # cascade: true          # two passes where the backend's short call is cheaper
+  # temperature: 0.0       # 0 suits classification against a fixed rubric
 
   # base_url: http://localhost:11434   # ollama only
   # timeout: 120.0                     # local models are slow; per posting
@@ -202,6 +232,7 @@ http:
   timeout: 20.0
   max_concurrent: 8
   max_retries: 3
+  # user_agent: ""         # replaces the whole header when set
   # Every request says "rolescan/<version> (+<contact_url>)", so a site owner
   # can see what is calling. Point it at your fork or a page of your own.
   # contact_url: https://example.org/about-my-job-scanner
@@ -212,6 +243,10 @@ output:
   max_roles: 15
   show_blocked: true         # blocked roles are worth seeing once
   thin_unread_after: 3       # runs a posting may lack text before it is listed as unread
+  # Most lines in the digest's "Hidden by your rules" section (highest scores
+  # first, counted across every rule). The rest go to a -hidden.md file beside
+  # the digest, which names it. 0 lists none.
+  # hidden_max: 60
   # Daily copies of the store kept in backups/ beside it, taken before a scan
   # opens it. 0 turns the automatic copy off; `rolescan backup` still copies
   # on demand and never deletes.
@@ -227,7 +262,8 @@ output:
     enabled: false
     smtp_host: smtp.example.com
     # 587 (the default) connects in plain text and upgrades with STARTTLS;
-    # 465 uses implicit TLS, encrypted from the first byte.
+    # 465 uses implicit TLS, encrypted from the first byte. Either way the
+    # server's certificate must verify: a self-signed relay is refused.
     smtp_port: 587
     username: you@example.com
     to: you@example.com
@@ -251,6 +287,8 @@ output:
 sources:
   # Keyless ATS APIs — the slug is the last path segment of the careers URL.
   - {kind: greenhouse, slug: example, label: Example Co}
+  # Any entry takes `enabled: false` to stay in the file and be skipped, and
+  # `verified: true` as a note to yourself that discover confirmed it.
   # - {kind: lever, slug: example, label: Example Co}
   # - {kind: ashby, slug: example, label: Example Co}
   # - {kind: workable, slug: example, label: Example Co}
@@ -275,10 +313,41 @@ sources:
   # - {kind: structured, slug: example, label: Example Co,
   #    sitemap: "https://careers.example.com/sitemap.xml",
   #    url_pattern: "/job/", delay: 0.4}
+  # A `Crawl-delay` in the site's robots.txt raises `delay` to that. For a
+  # sitemap of thousands of URLs (a job board's latest-jobs sitemap) add
+  # `max_age_days: 14` (skip a URL whose lastmod is older) and `incremental:
+  # true` (after the first scan, read only what changed since the last one).
+  # A sitemap listing more than `max_sitemap_urls` (50000) is refused.
 
-  # The one source that needs credentials. Covers 20 countries; the Gulf is not
+  # An aggregator that needs credentials. Covers 20 countries; the Gulf is not
   # among them. Free tier at developer.adzuna.com.
   # - kind: adzuna
   #   slug: gb
   #   max_days_old: 7
   #   queries: [data scientist, machine learning engineer]
+  #   max_pages: 5          # pages read per query; a longer result list is
+  #                         # reported as cut short (results_per_page: 1 to 50)
+
+  # Reed (the UK) and Jooble (60-odd countries): two more aggregators, each
+  # with a key from the provider. With no key the source is skipped, and the
+  # digest says so. `slug` is only a label. Built from the providers' public
+  # documentation, not yet run against the live services.
+  # - kind: reed
+  #   slug: uk
+  #   queries: [data scientist, energy analyst]
+  #   where: London                 # optional
+  #   graduate: true                # optional: graduate roles only
+  #   direct_employer_only: true    # optional: no recruitment agencies
+  # - kind: jooble
+  #   slug: gb
+  #   queries: [data scientist, energy analyst]
+  #   where: London                 # optional
+
+  # Workable's own search across the employers that post on it: no key, and
+  # `slug` is only a label. Workable's dates are when the advert went up, so
+  # `profile.max_age_days` applies.
+  # - kind: workable_search
+  #   slug: gb
+  #   queries: [data scientist, energy analyst]
+  #   where: London                 # optional
+  #   delay: 2                      # optional: seconds between requests (default 2)

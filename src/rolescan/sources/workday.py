@@ -59,6 +59,12 @@ def _json_option(name: str, text: str) -> object:
 @register
 class Workday(Source):
     name = "workday"
+    #: An employer's own Workday site: the date read is `startDate` from a
+    #: posting's detail, when the requisition opened (the listing carries only
+    #: "Posted Today", so `posted` is None until the detail is read), and its
+    #: presence on the board is the freshness signal (2.6.0; it inherited the
+    #: aggregator default before).
+    dates_are_freshness = False
     slug_hint = (
         "<tenant>.wd3.myworkdayjobs.com/<Site> -> slug: <tenant>, "
         "site: <Site>, host: wd3"

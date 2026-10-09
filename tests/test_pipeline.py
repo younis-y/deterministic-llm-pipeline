@@ -110,6 +110,52 @@ async def test_scan_reports_a_match(config: Config) -> None:
 
 
 @respx.mock
+async def test_postings_scored_under_min_report_score_are_counted(
+    config: Config,
+) -> None:
+    """Two postings clear the prefilter; only one reaches the digest. The
+    other scored (on keywords) and fell under `min_report_score`, which is
+    what the stats line's "N below min_report_score" reports."""
+    payload = {
+        "jobs": [
+            _payload(
+                "Graduate Energy Data Scientist",
+                "Python, trading, energy, day-ahead forecasting.",
+                1,
+            )["jobs"][0],  # type: ignore[index]
+            _payload("Energy Analyst", "Energy.", 2)["jobs"][0],  # type: ignore[index]
+        ]
+    }
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+    result = await run_scan(config)
+    assert len(result.reportable) == 1
+    assert result.below_min_report_score == 1
+    assert "1 below min_report_score" in render_markdown(result)
+
+
+@respx.mock
+async def test_a_posting_a_rule_or_term_hid_is_not_also_counted_below_the_gate(
+    config: Config,
+) -> None:
+    """The "hidden by your rules" clause already counts it: two clauses must
+    not read as two postings."""
+    payload = _payload(
+        "Graduate Energy Data Scientist",
+        "Python, trading, energy. UAE National only.",
+    )
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+    config.output.show_blocked = False
+    result = await run_scan(config)
+    assert result.reportable == []
+    assert result.below_min_report_score == 0
+    assert result.hidden_blocked + len(result.rule_hidden) >= 1
+
+
+@respx.mock
 async def test_second_run_reports_nothing_new(config: Config) -> None:
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
@@ -1400,7 +1446,7 @@ async def test_rule_hidden_carries_postings_a_hard_blockers_term_removed(
 ) -> None:
     """A configured `hard_blockers` term forces `blocked` before (or without)
     the model, so with `show_blocked: false` the posting is gone and only a
-    count said so. The owner added several nationality phrasings in one week;
+    count said so. The user added several nationality phrasings in one week;
     a term that matches the wrong thing is exactly the mistake the digest's
     "Hidden by your rules" section exists to surface, so the posting is
     carried there with the term. Run keyword-only, so `fit` is None."""
@@ -1512,7 +1558,7 @@ def test_rule_hidden_lists_a_term_blocked_posting_once(
 async def test_rule_hidden_carries_a_posting_a_term_pushed_under_the_prefilter(
     tmp_path: Path,
 ) -> None:
-    """The owner's config carries the same nationality and clearance phrases
+    """The user's config carries the same nationality and clearance phrases
     as 60-point `blockers` and as `hard_blockers`, so a term hit almost always
     takes a posting under `min_keyword_score`. It is then a prefilter reject:
     never judged, never ranked, recorded as seen - and, without this, never

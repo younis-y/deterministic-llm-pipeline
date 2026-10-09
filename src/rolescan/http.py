@@ -12,14 +12,64 @@ import logging
 import random
 from types import TracebackType
 from typing import Any, Self
+from urllib.parse import quote
 
 import httpx
 
 from rolescan.config import HTTPConfig
 
-__all__ = ["FetchError", "Fetcher"]
+__all__ = ["REDACTED", "FetchError", "Fetcher", "RedactSecrets", "hide_in_logs"]
 
 log = logging.getLogger(__name__)
+
+REDACTED = "<redacted>"
+
+#: A secret shorter than this is not searched for: it would match inside
+#: ordinary words and turn a log line into noise. Real keys are far longer.
+_MIN_SECRET = 6
+
+
+class RedactSecrets(logging.Filter):
+    """Replaces every secret it has been given, in a log line, with `<redacted>`.
+
+    For a key that travels in a URL: a source whose service wants the key in
+    the path registers it (`hide_in_logs`), and the lines the shared client and
+    httpx write about that URL no longer carry it. It never drops a line, and
+    it changes one only when a registered secret is in it, as written or
+    percent-encoded."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._secrets: set[str] = set()
+
+    def add(self, secret: str) -> None:
+        secret = secret.strip()
+        if len(secret) >= _MIN_SECRET:
+            self._secrets.update({secret, quote(secret, safe="")})
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not self._secrets:
+            return True
+        text = record.getMessage()
+        hidden = text
+        for secret in sorted(self._secrets, key=len, reverse=True):
+            hidden = hidden.replace(secret, REDACTED)
+        if hidden != text:
+            record.msg, record.args = hidden, ()
+        return True
+
+
+#: The one filter, on the two loggers that write a request's URL: this
+#: module's (the retry line) and httpx's own (one line per request, at INFO).
+REDACTOR = RedactSecrets()
+log.addFilter(REDACTOR)
+logging.getLogger("httpx").addFilter(REDACTOR)
+
+
+def hide_in_logs(secret: str) -> None:
+    """Keep `secret` out of the log lines that show a request's URL."""
+    REDACTOR.add(secret)
+
 
 RETRY_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 _MAX_BACKOFF = 30.0

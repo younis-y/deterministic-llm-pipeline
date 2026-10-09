@@ -159,7 +159,7 @@ async def test_cache_key_is_mode_aware() -> None:
 
 async def test_facts_cache_key_changes_with_backend_and_model() -> None:
     """Facts extracted by one model must not be served for 30 days after the
-    owner switches to another - the switch the evaluation exists to inform."""
+    user switches to another - the switch the evaluation exists to inform."""
     job = _job().job
     local = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
     other_model = LLMConfig(enabled=True, backend="ollama", model="llama3.1:8b")
@@ -376,7 +376,7 @@ async def test_a_graduate_title_still_passes_on_fit() -> None:
 # --- the deterministic field pass runs on the live path (2.4.3) -----------
 
 
-_OWNER_FIELDS = RulesConfig(
+_USER_FIELDS = RulesConfig(
     allowed_fields=["data_engineering", "ai_llm", "data_science"]
 )
 
@@ -394,7 +394,7 @@ async def test_an_analyst_title_the_model_left_fieldless_skips_with_the_title_qu
         ),
         keyword_score=40,
     )
-    scorer, _judge = _facts_scorer(_facts(fit_score=75), rules=_OWNER_FIELDS)
+    scorer, _judge = _facts_scorer(_facts(fit_score=75), rules=_USER_FIELDS)
 
     [out] = await scorer.score_all([job])
 
@@ -405,7 +405,7 @@ async def test_an_analyst_title_the_model_left_fieldless_skips_with_the_title_qu
 
 
 async def test_a_data_engineer_title_passes_the_field_rule_on_fit() -> None:
-    scorer, _judge = _facts_scorer(_facts(fit_score=75), rules=_OWNER_FIELDS)
+    scorer, _judge = _facts_scorer(_facts(fit_score=75), rules=_USER_FIELDS)
 
     [out] = await scorer.score_all([_job("Build pipelines.")])
 

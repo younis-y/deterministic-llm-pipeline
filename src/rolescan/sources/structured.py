@@ -18,22 +18,47 @@ Neither host sends ETag or Last-Modified, and both answer a future
 conditional GET would therefore cost a full download per page per run and save
 nothing. The sitemap's <lastmod> is the only invalidation signal that works, and
 it arrives for every URL in a single request, before anything is downloaded.
+
+A LARGE SITEMAP (2.6.0)
+A job board's latest-jobs sitemap lists thousands of URLs, and four options
+keep reading one polite and bounded:
+
+  max_sitemap_urls  refuse a sitemap that lists more than this many URLs
+                    (default 50,000) with an error, instead of working on it.
+  max_age_days      skip a URL whose `lastmod` is more than this many days old.
+  incremental       read only the URLs whose `lastmod` is newer than the last
+                    scan that read its whole window (a read cut at `max_pages`
+                    holds the mark and repeats); see `_since_date`. Only
+                    `lastmod` is compared, so a URL first listed with one older
+                    than the mark is not read until a scan with `incremental`
+                    off sweeps the window.
+  (robots.txt)      a `Crawl-delay` there is a floor under `delay`.
+
+None of them guesses: a URL with no readable `lastmod` is never skipped for
+age, because unknown is not old.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
+from datetime import UTC, date, datetime, timedelta
 from html import unescape
 from typing import Any
+from urllib.parse import urlsplit
+from urllib.robotparser import RobotFileParser
 from xml.etree import ElementTree
 
 import extruct
 
-from rolescan.http import FetchError
+from rolescan.config import SourceEntry
+from rolescan.http import Fetcher, FetchError
 from rolescan.models import Job
 from rolescan.sources.base import (
+    PostingCache,
     ProbeResult,
     ProbeStatus,
     Source,
@@ -46,6 +71,28 @@ __all__ = ["Structured"]
 log = logging.getLogger(__name__)
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+#: A sitemap that lists more URLs than this is refused unless `max_sitemap_urls`
+#: says otherwise: the protocol's own limit is 50,000 per file.
+_DEFAULT_MAX_SITEMAP_URLS = 50_000
+
+#: The longest `Crawl-delay` honoured, in seconds. A site asking for more is
+#: read at this pace and the note says so: with `max_pages` pages a scan would
+#: otherwise be held for hours by one line of a text file.
+_MAX_CRAWL_DELAY = 30.0
+
+#: The product token robots.txt groups are matched against.
+_ROBOTS_AGENT = "rolescan"
+
+#: An incremental read opens its window this many days before the last mark.
+#: The mark is when the sitemap was read, a page edited after that read and
+#: before midnight carries a `lastmod` of the day before the mark's date, and
+#: a date is all most sitemaps give.
+_SLACK_DAYS = 1
+
+#: What a detail page answers when the posting is gone for good. Any other
+#: failure may pass, so an incremental read holds its mark back for it.
+_GONE = frozenset({"HTTP 404", "HTTP 410"})
 
 #: Whole <script>/<style> elements, contents included. strip_html only removes
 #: the tags, so without this a page's JavaScript ends up in the description.
@@ -189,15 +236,42 @@ def _props(node: object) -> dict[str, Any]:
     return inner if isinstance(inner, dict) else node
 
 
+def _lastmod_date(raw: str) -> date | None:
+    """The calendar date a sitemap `lastmod` (or a stored mark) starts with, or
+    None. The W3C forms all begin YYYY-MM-DD; the time and zone after it are
+    ignored, since a day is the grain every comparison here is made at."""
+    text = raw.strip()
+    if not _ISO_DATE.match(text):
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
 @register
 class Structured(Source):
     """Any careers site that publishes schema.org JobPosting and a sitemap."""
 
     name = "structured"
+    #: A careers site's own sitemap: a JobPosting's `datePosted` is when the
+    #: requisition was opened, and the page still being listed is the
+    #: freshness signal (2.6.0; it inherited the aggregator default before).
+    dates_are_freshness = False
     slug_hint = (
         "sitemap: <careers host>/sitemap.xml, url_pattern: a substring or regex "
         "matching job detail URLs, e.g. /job/"
     )
+
+    def __init__(
+        self,
+        entry: SourceEntry,
+        fetcher: Fetcher,
+        cache: PostingCache | None = None,
+    ) -> None:
+        super().__init__(entry, fetcher, cache)
+        #: Crawl-delay floor per origin, so robots.txt is read once a host.
+        self._crawl_floors: dict[str, float] = {}
 
     @property
     def sitemap_url(self) -> str:
@@ -229,8 +303,66 @@ class Structured(Source):
     def max_pages(self) -> int:
         return int(self.entry.options.get("max_pages", 500))
 
+    def _whole_number(self, name: str, default: int | None) -> int | None:
+        """An option that must be a whole number of at least 1, or an error
+        that names it; a bool is not a number here. None when it is absent
+        and has no default."""
+        raw = self.entry.options.get(name, default)
+        if raw is None:
+            return None
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+            msg = (
+                f"structured option {name} must be a whole number of at least 1, "
+                f"not {raw!r}"
+            )
+            raise ValueError(msg)
+        return raw
+
+    @property
+    def max_sitemap_urls(self) -> int:
+        """The most URLs a sitemap may list before it is refused."""
+        return self._whole_number("max_sitemap_urls", _DEFAULT_MAX_SITEMAP_URLS) or 0
+
+    @property
+    def max_age_days(self) -> int | None:
+        """Skip a URL whose `lastmod` is more than this many days old; None
+        (the default) skips none."""
+        return self._whole_number("max_age_days", None)
+
+    @property
+    def incremental(self) -> bool:
+        """Read only what the sitemap says changed since the last whole scan."""
+        raw = self.entry.options.get("incremental", False)
+        if not isinstance(raw, bool):
+            msg = f"structured option incremental must be true or false, not {raw!r}"
+            raise ValueError(msg)
+        return raw
+
+    # -- what to read ---------------------------------------------------------
+
+    def _entries(self, xml: str) -> list[tuple[str, str]]:
+        """The sitemap's (url, lastmod) pairs, or an error when it lists more
+        than `max_sitemap_urls`.
+
+        Counted from the text first, so an oversized file is refused before it
+        is parsed into anything."""
+        limit = self.max_sitemap_urls
+        listed = xml.count("<loc>")
+        entries = [] if listed > limit else self._parse_sitemap(xml)
+        listed = max(listed, len(entries))
+        if listed > limit:
+            msg = (
+                f"the sitemap lists {listed} urls, more than max_sitemap_urls "
+                f"({limit}): narrow the read with url_pattern or max_age_days, "
+                "or raise max_sitemap_urls if this really is one careers board"
+            )
+            raise FetchError(self.sitemap_url, msg)
+        return entries
+
     def _select(self, entries: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        """The sitemap entries this source will actually fetch."""
+        """The sitemap entries in scope: matching `url_pattern`, not matching
+        `exclude_pattern`, and not older than `max_age_days`. Not yet cut to
+        `max_pages`."""
         pattern = re.compile(self.url_pattern)
         wanted = [(u, lm) for u, lm in entries if pattern.search(u)]
         if self.exclude_pattern:
@@ -244,7 +376,52 @@ class Structured(Source):
                     len(wanted),
                 )
             wanted = kept
-        return wanted[: self.max_pages]
+        if (days := self.max_age_days) is not None:
+            oldest = datetime.now(UTC).date() - timedelta(days=days)
+            wanted = [
+                (u, lm)
+                for u, lm in wanted
+                if (when := _lastmod_date(lm)) is None or when >= oldest
+            ]
+        return wanted
+
+    def _fingerprint(self) -> str:
+        """Which read a mark belongs to: the sitemap and the patterns that pick
+        URLs from it. A mark made under other settings says nothing about what
+        these would read, so `_since_date` ignores it."""
+        blob = json.dumps([self.sitemap_url, self.url_pattern, self.exclude_pattern])
+        return hashlib.sha256(blob.encode()).hexdigest()[:8]
+
+    def _since_date(self) -> date | None:
+        """The day the last whole scan read this board, from the mark the
+        pipeline handed back in `since`; None when there is none, it is not
+        this read's, or it is unreadable (everything in scope is then read)."""
+        stamp, _, fingerprint = self.since.partition("|")
+        if not stamp or fingerprint != self._fingerprint():
+            return None
+        return _lastmod_date(stamp)
+
+    def _window(
+        self, wanted: list[tuple[str, str]]
+    ) -> tuple[list[tuple[str, str]], int]:
+        """(the entries an incremental read still has to read, newest first,
+        and how many of the rest had no lastmod to compare).
+
+        An entry with no readable lastmod cannot be shown to be old, so it is
+        always read. Not incremental: the entries as they are, in sitemap
+        order, and 0."""
+        if not self.incremental:
+            return wanted, 0
+        since = self._since_date()
+        floor = since - timedelta(days=_SLACK_DAYS) if since else None
+        undated = sum(1 for _, lm in wanted if _lastmod_date(lm) is None)
+        kept = [
+            (u, lm)
+            for u, lm in wanted
+            if floor is None or (when := _lastmod_date(lm)) is None or when >= floor
+        ]
+        kept.sort(key=lambda e: _lastmod_date(e[1]) or date.min, reverse=True)
+        return kept, undated
 
     async def probe(self) -> ProbeResult:
         """Sitemap plus ONE sample page, never the whole board.
@@ -263,17 +440,26 @@ class Structured(Source):
         except FetchError as e:
             return ProbeResult(ProbeStatus.FAIL, count=-1, detail=e.detail[:110])
 
-        entries = self._parse_sitemap(xml)
+        try:
+            entries = self._entries(xml)
+        except FetchError as e:
+            return ProbeResult(ProbeStatus.FAIL, count=-1, detail=e.detail[:110])
         if not entries:
             return ProbeResult(ProbeStatus.EMPTY, detail="sitemap lists no urls")
 
-        matched = [u for u, _ in self._select(entries)]
+        matched = [u for u, _ in self._select(entries)][: self.max_pages]
         if not matched:
+            aged = (
+                f" within max_age_days {self.max_age_days}"
+                if self.max_age_days is not None
+                else ""
+            )
             return ProbeResult(
                 ProbeStatus.UNKNOWN,
                 detail=(
                     f"{len(entries)} urls in the sitemap, none match "
-                    f"url_pattern {self.url_pattern!r}, e.g. {entries[0][0][:48]}"
+                    f"url_pattern {self.url_pattern!r}{aged}, "
+                    f"e.g. {entries[0][0][:48]}"
                 ),
             )
 
@@ -301,11 +487,70 @@ class Structured(Source):
             # message is already in `msg`, which is what the rule asks for.
             raise FetchError("", msg)  # noqa: EM101
 
-        entries = self._parse_sitemap(await self.fetcher.fetch_text(self.sitemap_url))
-        wanted = self._select(entries)
+        # Every option is read before the first request, so a bad one fails the
+        # source with its own message and not half way through a read.
+        incremental = self.incremental
+        self.total, self.truncated, self.note, self.next_mark = None, "", "", ""
+        read_at = datetime.now(UTC).isoformat(timespec="seconds")
 
+        entries = self._entries(await self.fetcher.fetch_text(self.sitemap_url))
+        wanted, notes = self._plan(entries)
+        jobs, unreachable = await self._read_pages(wanted, notes)
+
+        if incremental:
+            # A mark says "everything up to here was read". A read cut at
+            # `max_pages` left URLs in the window unread, so it holds the mark
+            # whatever the cause: the next scan opens the same window, and
+            # repeats the cut until `max_pages` or `max_age_days` covers it.
+            if unreachable:
+                notes.append(
+                    f"{unreachable} pages could not be read this time and "
+                    "will be tried again next scan"
+                )
+            elif self.truncated:
+                notes.append(
+                    "the mark did not move, so the next scan opens the same "
+                    "window: raise max_pages, or set max_age_days, to cover it"
+                )
+            else:
+                self.next_mark = f"{read_at}|{self._fingerprint()}"
+        self.note = "; ".join(notes)
+        return jobs
+
+    def _plan(
+        self, entries: list[tuple[str, str]]
+    ) -> tuple[list[tuple[str, str]], list[str]]:
+        """(the entries to read this run, notes for the digest), and the
+        board's count and any cut at `max_pages` on `total` and `truncated`."""
+        cap = self.max_pages
+        in_scope = self._select(entries)
+        window, undated = self._window(in_scope)
+        wanted = window[:cap]
+        self.total = len(in_scope)
+        notes: list[str] = []
+        if len(window) > len(wanted):
+            order = "newest " if self.incremental else "first "
+            self.truncated = (
+                f"read the {order}{len(wanted)} of {len(window)} urls in scope "
+                f"(max_pages {cap})"
+            )
+        if self.incremental and undated:
+            notes.append(
+                f"{undated} urls carry no lastmod, so incremental cannot tell "
+                "whether they changed and reads them every run"
+            )
+        return wanted, notes
+
+    async def _read_pages(
+        self, wanted: list[tuple[str, str]], notes: list[str]
+    ) -> tuple[list[Job], int]:
+        """(the postings read, how many pages failed in a way that may pass).
+
+        A page that is gone (404, 410) or carries no markup is lost for good
+        and costs nothing more; any other failure is counted, because an
+        incremental read must come back for it."""
         jobs: list[Job] = []
-        hits = misses = failures = 0
+        hits = misses = failures = unreachable = 0
         fetched_any = False
 
         for url, lastmod in wanted:
@@ -316,8 +561,10 @@ class Structured(Source):
                 continue
             # Space out only the requests that actually go out, so a run that
             # is entirely cache hits costs no wall-clock at all.
-            if fetched_any and self.delay > 0:
-                await asyncio.sleep(self.delay)
+            if fetched_any:
+                gap = max(self.delay, await self._crawl_floor(url, notes))
+                if gap > 0:
+                    await asyncio.sleep(gap)
             fetched_any = True
             try:
                 html = await self.fetcher.fetch_text(url)
@@ -325,6 +572,8 @@ class Structured(Source):
                 # One expired posting must not cost the other 168.
                 log.debug("structured %s: %s", self.slug, e)
                 failures += 1
+                if e.detail not in _GONE:
+                    unreachable += 1
                 continue
             job = self._to_job(html, url)
             if job is None:
@@ -343,7 +592,46 @@ class Structured(Source):
             misses,
             failures,
         )
-        return jobs
+        return jobs, unreachable
+
+    async def _crawl_floor(self, url: str, notes: list[str]) -> float:
+        """The `Crawl-delay` the host of `url` asks for in its robots.txt, in
+        seconds, or 0.0 when it asks for none or cannot be read.
+
+        Asked once per host, and only when a second request is about to go
+        out: a gap needs two requests. Best effort by design: a robots.txt
+        that is missing, unreadable or odd never fails a source. A delay past
+        `_MAX_CRAWL_DELAY` is held to it, and a note says so."""
+        parts = urlsplit(url)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        if origin in self._crawl_floors:
+            return self._crawl_floors[origin]
+        floor = 0.0
+        try:
+            parser = RobotFileParser()
+            parser.parse(
+                (await self.fetcher.fetch_text(f"{origin}/robots.txt")).splitlines()
+            )
+            parser.modified()
+            asked = parser.crawl_delay(_ROBOTS_AGENT)
+        except Exception as e:  # robots.txt must never fail a source
+            log.debug("structured %s: no robots.txt for %s: %s", self.slug, origin, e)
+            asked = None
+        if asked:
+            floor = min(float(asked), _MAX_CRAWL_DELAY)
+            log.info(
+                "structured %s: %s asks for a crawl delay of %gs",
+                self.slug,
+                origin,
+                floor,
+            )
+            if float(asked) > _MAX_CRAWL_DELAY:
+                notes.append(
+                    f"robots.txt asks for a {asked}s crawl delay; pages are read "
+                    f"{_MAX_CRAWL_DELAY:g}s apart at most"
+                )
+        self._crawl_floors[origin] = floor
+        return floor
 
     # -- discovery ----------------------------------------------------------
 

@@ -4,8 +4,7 @@ Every source except Adzuna is a public endpoint and keyword scoring is pure
 Python, so the LLM stage is the only part of rolescan that ever needed a
 credential. Making it a plugin keeps the tool useful with none: run the
 keyword prefilter alone, point it at a local model, or supply an API key —
-the pipeline, the cache, the digest and the CV matching are identical either
-way.
+the pipeline, the cache and the digest are identical either way.
 
 A judge does one thing: turn a rendered prompt into a validated FitVerdict.
 Everything expensive and easy to get wrong — the verdict cache, the spend
@@ -402,7 +401,8 @@ async def _check_backend(cfg: LLMConfig) -> tuple[str, Judge | None]:
     if cls.requires_module and not _importable(cls.requires_module):
         return (
             f"backend {cfg.backend!r} needs the {cls.requires_module} package, "
-            f"which is not installed (pip install 'rolescan[{cfg.backend}]')"
+            "which is not installed (from your rolescan checkout: "
+            f'pip install -e ".[{cfg.backend}]")'
         ), None
     try:
         judge = cls(cfg)
@@ -683,10 +683,12 @@ class OllamaJudge(Judge):
     to it, so FitVerdict still arrives validated rather than coaxed out of
     prose — the same contract the Claude backend gives, locally.
 
-    Measured against a live server, not only a mock: a 25-posting benchmark
-    plus one 34-posting scan. Verdict accuracy 72% against hand-labelled
-    expectations, and 0% score/verdict violations — the band table in `SYSTEM`
-    and the verdict it returned never disagreed.
+    Measured once against a live server, not only a mock, in judge mode and
+    recorded on 24 September 2026 (the README's "Measured quality" has the
+    whole record): a 25-posting benchmark plus one 34-posting scan. Verdict
+    accuracy 72% against hand-labelled expectations, and 0% score/verdict
+    violations — the band table in `SYSTEM` and the verdict it returned never
+    disagreed.
 
     Model-level blocker recall was 50%: the model itself named half the
     structural bars in the benchmark set. That is the number to design around
@@ -703,8 +705,9 @@ class OllamaJudge(Judge):
     name = "ollama"
     needs_api_key = False
     description = (
-        "Local model via Ollama. Free, offline, no key. Run against a live "
-        "server: 72% verdict accuracy over 25 postings, 50% blocker recall."
+        "Local model via Ollama. Free, offline, no key. Measured once, in judge "
+        "mode (September 2026): 72% verdict accuracy over 25 postings, 50% "
+        "blocker recall."
     )
 
     cheap_triage = True

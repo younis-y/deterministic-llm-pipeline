@@ -3,7 +3,7 @@
 The local model was observed leaving `years_required` null on adverts that
 state it in so many words. In the 2026-10-05/06 digests, 12 of 13 adverts
 with a plain "N+ years of experience" line came back null, while the model's
-own reason text said "requires 3+ years of experience"; the owner's
+own reason text said "requires 3+ years of experience"; the user's
 `max_years_required: 1` rule therefore never fired and senior roles were
 rated APPLY. After `verify_facts`, code reads the advert for an unambiguous
 requirement and fills the fact only when the model left it empty, quoting
@@ -261,7 +261,7 @@ def test_an_advert_without_a_requirement_is_unchanged() -> None:
     )
 
 
-def test_the_filled_fact_fires_the_owners_years_rule() -> None:
+def test_the_filled_fact_fires_the_users_years_rule() -> None:
     rules = RulesConfig(max_years_required=1)
     facts = resolve_years(_facts(), _job(ADVERT))
     verdict = decide(facts, rules, 40)
@@ -269,7 +269,7 @@ def test_the_filled_fact_fires_the_owners_years_rule() -> None:
     assert "3+ years of experience" in verdict.reason
 
 
-def test_one_year_stays_within_the_owners_cap() -> None:
+def test_one_year_stays_within_the_users_cap() -> None:
     rules = RulesConfig(max_years_required=1)
     facts = resolve_years(
         _facts(), _job("Requirements: 1 year of experience with Python. Great team.")

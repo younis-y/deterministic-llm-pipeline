@@ -298,7 +298,7 @@ def test_allowed_fields_accepts_the_new_fields() -> None:
     assert rules.allowed_fields == [JobField.quant, JobField.product, JobField.consulting]
 
 
-# 2.5.3: a finance row. Titles from adverts the owner applied to on
+# 2.5.3: a finance row. Titles from adverts the user applied to on
 # 2026-10-03/04 (Lazard, Modo Energy, InCommodities) were "other" before, so
 # `allowed_fields` skipped them however well they fitted.
 @pytest.mark.parametrize(

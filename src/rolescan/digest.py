@@ -7,10 +7,11 @@ import logging
 import smtplib
 import ssl
 from collections import Counter
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from rolescan.config import EmailConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
@@ -22,10 +23,15 @@ from rolescan.scoring.rules import RULE_ORDER
 
 __all__ = [
     "EmailError",
+    "hidden_list_needed",
+    "hidden_list_path",
+    "next_digest_path",
+    "render_hidden_list",
     "render_html",
     "render_markdown",
     "send_email",
     "write_digest",
+    "write_hidden_list",
 ]
 
 log = logging.getLogger(__name__)
@@ -178,35 +184,117 @@ def _hidden_group(item: ScoredJob, gate: int) -> tuple[str, str] | None:
     return None
 
 
-def _rule_hidden_groups(result: ScanResult) -> list[tuple[str, list[tuple[Job, str]]]]:
-    """(heading, [(posting, reason)]) per rule, in `decide`'s order, then the
-    `hard_blockers` terms group, then (2.5.7) the weighted `blockers` group and
-    the just-under-the-gate group.
+class _HiddenRow(NamedTuple):
+    rule: str
+    heading: str
+    job: Job
+    reason: str
+    score: int
+
+
+def _rule_hidden_rows(result: ScanResult) -> list[_HiddenRow]:
+    """Every posting the section lists, grouped by rule in `decide`'s order,
+    then the `hard_blockers` terms group, then (2.5.7) the weighted `blockers`
+    group and the just-under-the-gate group, each group sorted by company.
 
     A rule name this module has no label for (one added to `decide` without
     updating `_RULE_LABELS`) still renders, under its own name and after the
     known rules, rather than vanishing from the one place it is reported.
     """
-    groups: dict[str, list[tuple[Job, str]]] = {}
+    groups: dict[str, list[_HiddenRow]] = {}
     for item in result.rule_hidden:
         if (found := _hidden_group(item, result.gate)) is None:
             continue
-        group, reason = found
-        groups.setdefault(group, []).append((item.job, reason))
+        rule, reason = found
+        groups.setdefault(rule, []).append(
+            _HiddenRow(rule, _RULE_LABELS.get(rule, rule), item.job, reason, item.score)
+        )
     rank = {rule: i for i, rule in enumerate(RULE_ORDER)}
     rank[_TERMS] = len(RULE_ORDER) + 1
     rank["blockers"] = len(RULE_ORDER) + 2
     rank["gate"] = len(RULE_ORDER) + 3
-    return [
-        (
-            _RULE_LABELS.get(rule, rule),
-            sorted(
-                groups[rule],
-                key=lambda row: (row[0].company.casefold(), row[0].title.casefold()),
+    rows: list[_HiddenRow] = []
+    for rule in sorted(groups, key=lambda r: (rank.get(r, len(RULE_ORDER)), r)):
+        rows += sorted(
+            groups[rule],
+            key=lambda row: (row.job.company.casefold(), row.job.title.casefold()),
+        )
+    return rows
+
+
+@dataclass(frozen=True, slots=True)
+class _HiddenGroup:
+    heading: str
+    total: int
+    """How many postings this rule hid."""
+    rows: list[tuple[Job, str]]
+    """The ones listed: all of them unless the section is capped."""
+
+    @property
+    def count(self) -> str:
+        """ "4", or "2 of 4 listed" when the cap left some out."""
+        if len(self.rows) == self.total:
+            return str(self.total)
+        return f"{len(self.rows)} of {self.total} listed"
+
+
+@dataclass(frozen=True, slots=True)
+class _HiddenView:
+    """What the "Hidden by your rules" section shows (2.6.0), built once and
+    read by both renderers and the stats line, so the three cannot disagree.
+
+    `groups` holds every group the rules hid something under, in order, even
+    one whose rows were all cut; `total` and `listed` count postings. `file`
+    is the name of the file holding the whole list, and is "" unless the list
+    was cut and the caller named one. `fitted` is True for the email's view
+    when the roles left room for fewer rows than the cap allows (see
+    `_fit_hidden`)."""
+
+    groups: list[_HiddenGroup]
+    total: int
+    listed: int
+    file: str = ""
+    fitted: bool = False
+
+    @property
+    def capped(self) -> bool:
+        return self.listed < self.total
+
+
+def _hidden_view(
+    result: ScanResult, hidden_max: int | None = None, hidden_file: str = ""
+) -> _HiddenView:
+    """The groups of `_rule_hidden_rows`, cut to `hidden_max` postings.
+
+    The cut keeps the highest-scoring postings: a hide with a high score is the
+    likeliest wrong one, which is what the section is for. Ties fall to company
+    and title, so the choice is the same on every render. `hidden_max=None` is
+    no cap, which is what a caller that does not know about the cap gets."""
+    rows = _rule_hidden_rows(result)
+    keep = set(range(len(rows)))
+    if hidden_max is not None and len(rows) > hidden_max:
+        order = sorted(
+            keep,
+            key=lambda i: (
+                -rows[i].score,
+                rows[i].job.company.casefold(),
+                rows[i].job.title.casefold(),
+                rows[i].job.url,
             ),
         )
-        for rule in sorted(groups, key=lambda r: (rank.get(r, len(RULE_ORDER)), r))
-    ]
+        keep = set(order[: max(hidden_max, 0)])
+    totals: dict[str, int] = {}
+    listed: dict[str, list[tuple[Job, str]]] = {}
+    headings: dict[str, str] = {}
+    for i, row in enumerate(rows):
+        headings.setdefault(row.rule, row.heading)
+        totals[row.rule] = totals.get(row.rule, 0) + 1
+        listed.setdefault(row.rule, [])
+        if i in keep:
+            listed[row.rule].append((row.job, row.reason))
+    groups = [_HiddenGroup(headings[r], totals[r], listed[r]) for r in totals]
+    capped = len(keep) < len(rows)
+    return _HiddenView(groups, len(rows), len(keep), hidden_file if capped else "")
 
 
 def _unread_heading(result: ScanResult) -> str:
@@ -254,20 +342,85 @@ def _unread_section(result: ScanResult) -> list[str]:
     return lines
 
 
-def _rule_hidden_section(result: ScanResult) -> list[str]:
-    groups = _rule_hidden_groups(result)
-    if not groups:
-        return []
-    lines = ["## Hidden by your rules", "", _RULE_HIDDEN_LEAD, ""]
-    for heading, rows in groups:
-        lines += [f"**{heading}**", ""]
-        for job, reason in rows:
-            bits = [f"**{job.company}**", f"[{job.title}]({job.url})"]
-            if job.location:
-                bits.append(job.location)
-            lines.append(f"- {' · '.join(bits)}: {reason}")
+def _hidden_counts(view: _HiddenView) -> str:
+    """ "Level 200, Years of experience 150": what each rule hid."""
+    return ", ".join(f"{g.heading} {g.total}" for g in view.groups)
+
+
+def _capped_frags(view: _HiddenView) -> _Frags:
+    """The sentence that opens a capped "Hidden by your rules" section: every
+    rule's count, which postings are listed, and where the rest are."""
+    shown = (
+        f"Listed below: {_plural(view.listed, 'posting')} with the highest scores."
+        if view.listed
+        else "None are listed below."
+    )
+    frags: _Frags = [(f"{view.total} hidden: {_hidden_counts(view)}. {shown}", False)]
+    if view.file:
+        frags += [(f" All {view.total} are in ", False), (view.file, True)]
+        frags.append((", beside this digest.", False))
+    elif view.fitted:
+        # `output.hidden_max` did not cut this list, so there is no file and
+        # none may be named: the Markdown digest holds all of it.
+        frags.append((f" All {view.total} are in the digest on disk.", False))
+    if view.file or not view.fitted:
+        frags += [(" The cap is ", False), ("output.hidden_max", True), (".", False)]
+    if view.fitted:
+        frags.append(
+            (
+                " The email lists only what fits, after the roles, under the "
+                "size Gmail clips at.",
+                False,
+            )
+        )
+    return frags
+
+
+def _hidden_line_md(job: Job, reason: str) -> str:
+    bits = [f"**{job.company}**", f"[{job.title}]({job.url})"]
+    if job.location:
+        bits.append(job.location)
+    return f"- {' · '.join(bits)}: {reason}"
+
+
+def _hidden_groups_md(view: _HiddenView) -> list[str]:
+    lines: list[str] = []
+    for group in view.groups:
+        if not group.rows:
+            continue
+        lines += [f"**{group.heading}** ({group.count})", ""]
+        lines += [_hidden_line_md(job, reason) for job, reason in group.rows]
         lines.append("")
     return lines
+
+
+def _rule_hidden_section(view: _HiddenView) -> list[str]:
+    if not view.total:
+        return []
+    lines = ["## Hidden by your rules", "", _RULE_HIDDEN_LEAD, ""]
+    if view.capped:
+        lines += [_md_frags(_capped_frags(view)), ""]
+    return lines + _hidden_groups_md(view)
+
+
+def render_hidden_list(result: ScanResult) -> str:
+    """The whole "Hidden by your rules" list as Markdown, or "" when nothing
+    was hidden (2.6.0): what the digest's capped section leaves out, written
+    beside it when `output.hidden_max` cut the list."""
+    view = _hidden_view(result)
+    if not view.total:
+        return ""
+    stamp = datetime.now(UTC).strftime("%A %d %B %Y")
+    lines = [
+        f"# Hidden by your rules, {stamp}",
+        "",
+        "Every posting one of your rules or terms kept out of the digest in this "
+        "scan, one line each, so a wrong skip can be spotted.",
+        "",
+        f"{view.total} hidden: {_hidden_counts(view)}.",
+        "",
+    ]
+    return "\n".join(lines + _hidden_groups_md(view))
 
 
 def _role(item: ScoredJob) -> list[str]:
@@ -367,23 +520,37 @@ def render_markdown(
     title: str = "Job scan",
     shortlist: list[tuple[str, str, str]] | None = None,
     config_path: Path | None = None,
+    hidden_max: int | None = None,
+    hidden_file: str = "",
 ) -> str:
+    """The digest as Markdown.
+
+    Order (2.6.0): alarms, roles, unread, hidden, shortlist. The alarms are
+    first because they are what a reader must not miss, and a long list below
+    them can no longer push them out of sight.
+
+    `hidden_max` caps the "Hidden by your rules" section at that many lines,
+    counting every rule, and `hidden_file` names the file holding the whole
+    list so the digest can say where it is. None is no cap, for a caller that
+    does not know about the cap."""
     stamp = datetime.now(UTC).strftime("%A %d %B %Y")
     out: list[str] = [f"# {title}, {stamp}", ""]
+    view = _hidden_view(result, hidden_max, hidden_file)
 
     if result.dry_run:
         out += ["*Dry run: nothing was marked as seen.*", ""]
+
+    out += _failures(result)
 
     if not result.reportable:
         out += [
             "Nothing new worth your time today.",
             "",
-            _stats(result),
+            _stats(result, view),
             "",
         ]
         out += _unread_section(result)
-        out += _rule_hidden_section(result)
-        out += _failures(result)
+        out += _rule_hidden_section(view)
         if shortlist:
             out += _shortlist_section(shortlist, config_path)
         return "\n".join(out)
@@ -394,7 +561,7 @@ def render_markdown(
     out.append(
         f"**{len(live)} worth a look**"
         + (f", {len(blocked)} blocked" if blocked else "")
-        + f". {_stats(result)}"
+        + f". {_stats(result, view)}"
     )
     out.append("")
 
@@ -416,8 +583,7 @@ def render_markdown(
 
     out += _unread_section(result)
 
-    out += _rule_hidden_section(result)
-    out += _failures(result)
+    out += _rule_hidden_section(view)
     if shortlist:
         out += _shortlist_section(shortlist, config_path)
     return "\n".join(out)
@@ -425,6 +591,10 @@ def render_markdown(
 
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+#: The baseline sizes the Model health line can name (3 to 5 earlier runs).
+_RUN_WORDS = {3: "three", 4: "four", 5: "five"}
 
 
 def _run_outcome_note(result: ScanResult) -> str:
@@ -470,7 +640,7 @@ _DEFERRED_LABELS = {
 }
 
 
-def _stats(result: ScanResult) -> str:
+def _stats(result: ScanResult, view: _HiddenView) -> str:
     live = sum(1 for r in result.reports if r.ok)
     bits = [
         f"Scanned {_plural(result.unique, 'unique posting')} from "
@@ -490,6 +660,11 @@ def _stats(result: ScanResult) -> str:
             f"{result.llm_scored - result.llm_cached} scored, "
             f"{result.llm_cached} from cache" + _model_note(result)
         )
+    if result.below_min_report_score:
+        # Only when it happened. These scored and fell under the final gate,
+        # so they are in no list: the number is what tells "nothing matched"
+        # from "everything matched weakly".
+        bits.append(f"{result.below_min_report_score} below min_report_score")
     if result.facts_cache_skipped:
         bits.append("facts cache skipped: model identity unknown")
     if result.hidden_blocked:
@@ -521,15 +696,21 @@ def _stats(result: ScanResult) -> str:
         )
     if result.unread:
         bits.append(f"{len(result.unread)} listed as unread")
-    if listed := sum(len(rows) for _, rows in _rule_hidden_groups(result)):
+    if view.total:
         # Only when it happened, for the same reason. Counted separately from
         # the clause above: that one is postings `show_blocked` removed, this
         # one is postings any rule or `hard_blockers` term removed by any
         # route, so a block hidden by `show_blocked` is in both - hence
         # "listed below", so the two numbers do not read as two postings. It
-        # counts the rows the section renders, so the number and the list
-        # can never disagree.
-        bits.append(f"{listed} hidden by your rules (listed below)")
+        # is read from the same view the section is, so the number and the
+        # list can never disagree. A capped section says how many it lists
+        # and where the whole list is (2.6.0).
+        where = "listed below"
+        if view.capped:
+            where = f"{view.listed} listed below"
+            if view.file:
+                where += f", all {view.total} in {view.file}"
+        bits.append(f"{view.total} hidden by your rules ({where})")
     return ". ".join(bits) + "." + _run_outcome_note(result)
 
 
@@ -604,7 +785,33 @@ def _llm_error_hint(result: ScanResult) -> _Frags:
     ]
 
 
+def _model_health_text(result: ScanResult) -> str:
+    """The "Model health" line without its heading (2.6.0): each rate this run
+    that is over twice the median of the last three to five runs (as many as
+    there were), with that median.
+
+    A reader who sees it has one thing to do, which is to look at the model:
+    the quote guard and the resolvers correct what the model says, and a rate
+    that doubles means the model, its prompt or a resolver changed."""
+    flags = result.model_health
+    rates = ", ".join(
+        f"{f.label} {round(100 * f.affected / f.postings)}% "
+        f"(median {round(100 * f.median)}%)"
+        for f in flags
+    )
+    runs = flags[0].runs
+    return (
+        f"More than twice the median of the last {_RUN_WORDS.get(runs, runs)} "
+        f"runs, over "
+        f"{_plural(flags[0].postings, 'posting')}: {rates}. The model, its "
+        "prompt or a resolver may have changed; check before trusting this digest."
+    )
+
+
 def _failures(result: ScanResult) -> list[str]:
+    """The alarm block, which opens the digest (2.6.0): sources that failed,
+    went quiet, shrank or were cut short, a model that did not run, and the
+    notes. Empty when nothing needs attention."""
     failed = result.failed_sources
     skipped = result.skipped_sources
     if (
@@ -613,11 +820,12 @@ def _failures(result: ScanResult) -> list[str]:
         and not result.quiet_sources
         and not _source_alarms(result)
         and not result.llm_errors
+        and not result.model_health
         and not result.llm_unusable
         and not result.enricher_unusable
     ):
         return []
-    lines = ["", "---", ""]
+    lines = ["## Needs attention", ""]
     if result.llm_unusable and not _llm_ran(result):
         # The configured judge never ran at all, so there are no scoring errors
         # to report and the digest would otherwise look like a normal quiet
@@ -673,6 +881,8 @@ def _failures(result: ScanResult) -> list[str]:
         # exists to prevent.
         if hint := _llm_error_hint(result):
             lines += [_md_frags(hint), ""]
+    if result.model_health:
+        lines += [f"**Model health**: {_model_health_text(result)}", ""]
     if result.quiet_sources:
         # Above the failures on purpose. A source that errors says so; a source
         # that quietly returns nothing is the defect this project keeps
@@ -700,7 +910,7 @@ def _failures(result: ScanResult) -> list[str]:
         lines += [f"- `{r.kind}/{r.slug}` {r.error}" for r in skipped]
         lines += [""]
     lines += _notes_md(result)
-    return lines
+    return [*lines, "---", ""]
 
 
 def _source_alarms(result: ScanResult) -> bool:
@@ -959,7 +1169,7 @@ def _apply_html(item: ScoredJob) -> str:
             f"not http(s). {_esc(item.job.url)}</div>"
         )
     # A blocked role is listed so the reader knows the market moved, not as an
-    # option - the same reason CV advice was withheld for one.
+    # option.
     # A button saying "Apply" invites exactly the wasted afternoon the block
     # exists to prevent, so the link stays and the invitation does not.
     label = "View posting" if item.is_blocked else "Apply"
@@ -1050,6 +1260,8 @@ def _llm_notes_html(result: ScanResult) -> list[str]:
                 bodies,
             )
         )
+    if result.model_health:
+        out.append(_note_html("Model health", [_esc(_model_health_text(result))]))
     return out
 
 
@@ -1062,11 +1274,12 @@ def _failures_html(result: ScanResult) -> list[str]:
         and not result.quiet_sources
         and not _source_alarms(result)
         and not result.llm_errors
+        and not result.model_health
         and not result.llm_unusable
         and not result.enricher_unusable
     ):
         return []
-    out = [f'<hr style="{_RULE}">', *_llm_notes_html(result)]
+    out = [f'<h2 style="{_H2}">Needs attention</h2>', *_llm_notes_html(result)]
     if result.quiet_sources:
         out.append(
             _note_html(
@@ -1098,7 +1311,7 @@ def _failures_html(result: ScanResult) -> list[str]:
             _note_html("Sources skipped (not searched)", [_sources_html(skipped)])
         )
     out += _notes_html(result)
-    return out
+    return [*out, f'<hr style="{_RULE}">']
 
 
 def _labelled_list_html(rows: list[tuple[str, str]], sep: str = " ") -> str:
@@ -1206,74 +1419,165 @@ def _unread_html(result: ScanResult) -> list[str]:
     ]
 
 
-def _rule_hidden_html(result: ScanResult) -> list[str]:
+def _rule_hidden_html(view: _HiddenView) -> list[str]:
     """The HTML counterpart of `_rule_hidden_section`."""
-    groups = _rule_hidden_groups(result)
-    if not groups:
+    if not view.total:
         return []
     out = [
         f'<h2 style="{_H2}">Hidden by your rules</h2>',
         f'<div style="{_LEAD}">{_esc(_RULE_HIDDEN_LEAD)}</div>',
     ]
-    for heading, rows in groups:
+    if view.capped:
+        out.append(f'<div style="{_LEAD}">{_html_frags(_capped_frags(view))}</div>')
+    for group in view.groups:
+        if not group.rows:
+            continue
         items = "".join(
             f'<li style="{_LI}">{_rule_hidden_line_html(job, reason)}</li>'
-            for job, reason in rows
+            for job, reason in group.rows
         )
         out += [
-            f'<div style="{_SUB_LABEL}">{_esc(heading)}</div>',
+            f'<div style="{_SUB_LABEL}">{_esc(group.heading)} ({group.count})</div>',
             f'<ul style="{_UL}">{items}</ul>',
         ]
     return out
 
 
-def _roles_html(result: ScanResult) -> list[str]:
+#: What the HTML part may weigh, in bytes (2.6.0). Gmail clips a message past
+#: about 102 KB and hides the rest behind a link, so the digest stays well
+#: under it. Role cards are the part that gives way: one is about 1.7 KB, so
+#: 60 of them would pass the clip alone.
+HTML_BUDGET = 90_000
+
+#: Kept back for the one notice that says the cards gave way, and the line
+#: that says how many roles are left to the digest on disk. Bytes the roles do
+#: not spend go to the hidden list.
+_BUDGET_RESERVE = 700
+
+_COMPACT_NOTICE = (
+    "The roles below are one line each, so this email stays under the size "
+    "Gmail clips at. The full cards are in the digest on disk (rolescan show)."
+)
+
+
+def _size(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def _role_line_html(item: ScoredJob) -> str:
+    """A role in one line, for when the cards no longer fit the budget."""
+    return (
+        f'<div style="{_LI}">{_job_line_html(item.job)} · '
+        f"{_BADGE[item.verdict]} {item.score}</div>"
+    )
+
+
+class _RoleBudget:
+    """Spends the room the roles have, in rank order: a full card while it
+    fits with a line still reserved for every role after it, then one line
+    each, then a count of what is left. Once a card does not fit, no later
+    role gets one, so the cards are always the top of the ranking, and every
+    role has at least a link for as long as the lines themselves fit."""
+
+    def __init__(self, room: int, items: list[ScoredJob]) -> None:
+        self.room = room - _BUDGET_RESERVE
+        self.pending = sum(_size(_role_line_html(item)) for item in items)
+        self.compact = False
+        self.left = 0
+
+    def add(self, items: list[ScoredJob]) -> list[str]:
+        out: list[str] = []
+        for item in items:
+            line = _role_line_html(item)
+            self.pending -= _size(line)
+            if not self.compact:
+                card = _role_html(item)
+                if _size(card) + self.pending <= self.room:
+                    self.room -= _size(card)
+                    out.append(card)
+                    continue
+                self.compact = True
+                out.append(f'<div style="{_LEAD}">{_esc(_COMPACT_NOTICE)}</div>')
+            if _size(line) <= self.room:
+                self.room -= _size(line)
+                out.append(line)
+            else:
+                self.left += 1
+        return out
+
+    def rest(self) -> list[str]:
+        if not self.left:
+            return []
+        more = f"{_plural(self.left, 'more role')} in the digest on disk."
+        return [f'<div style="{_LEAD}">{_esc(more)}</div>']
+
+
+def _roles_intro_html(result: ScanResult, view: _HiddenView) -> list[str]:
+    """What opens the roles: the stats line, and a lead when there are none."""
+    stats = _esc(_stats(result, view))
     if not result.reportable:
         return [
             f'<div style="{_LEAD}">Nothing new worth your time today.</div>',
-            f'<div style="{_STATS}">{_esc(_stats(result))}</div>',
+            f'<div style="{_STATS}">{stats}</div>',
         ]
+    live = sum(1 for s in result.reportable if not s.is_blocked)
+    blocked = len(result.reportable) - live
+    return [
+        f'<div style="{_STATS}"><strong>{live} worth a look</strong>'
+        + (f", {blocked} blocked" if blocked else "")
+        + f". {stats}</div>"
+    ]
+
+
+def _role_cards_html(result: ScanResult, room: int) -> list[str]:
+    """The roles, within `room` bytes (see `HTML_BUDGET`)."""
     live = [s for s in result.reportable if not s.is_blocked]
     blocked = [s for s in result.reportable if s.is_blocked]
-    out = [
-        f'<div style="{_STATS}"><strong>{len(live)} worth a look</strong>'
-        + (f", {len(blocked)} blocked" if blocked else "")
-        + f". {_esc(_stats(result))}</div>"
-    ]
+    out: list[str] = []
+    budget = _RoleBudget(room, live + blocked)
     if live:
         out.append(f'<h2 style="{_H2}">Worth a look</h2>')
-        out += [_role_html(item) for item in live]
+        out += budget.add(live)
     if blocked:
         out += [
             f'<h2 style="{_H2}">Blocked</h2>',
             f'<div style="{_LEAD}">Structurally closed to you. Listed so you '
             "know the market moved, not as options.</div>",
         ]
-        out += [_role_html(item) for item in blocked]
-    return out
+        out += budget.add(blocked)
+    return out + budget.rest()
 
 
-def render_html(
-    result: ScanResult,
-    *,
-    title: str = "Job scan",
-    shortlist: list[tuple[str, str, str]] | None = None,
-    config_path: Path | None = None,
-) -> str:
-    """The email's HTML part, built from the scan result rather than from the
-    markdown. Same inputs as `render_markdown`, and everything that renders
-    there renders here."""
-    stamp = datetime.now(UTC).strftime("%A %d %B %Y")
-    heading = f"{title}, {stamp}"
-    body = [f'<h1 style="{_H1}">{_esc(heading)}</h1>']
-    if result.dry_run:
-        body.append(f'<div style="{_DRY}">Dry run: nothing was marked as seen.</div>')
-    body += _roles_html(result)
-    body += _unread_html(result)
-    body += _rule_hidden_html(result)
-    body += _failures_html(result)
-    if shortlist:
-        body += _shortlist_html(shortlist, config_path)
+def _total(parts: list[str]) -> int:
+    return sum(_size(part) for part in parts)
+
+
+def _fitted(result: ScanResult, view: _HiddenView, rows: int) -> _HiddenView:
+    """`view` cut to its `rows` highest-scoring postings: the same choice the
+    cap makes, so what the email lists is always among what the cap lists."""
+    if rows >= view.listed:
+        return view
+    cut = _hidden_view(result, rows)
+    return replace(cut, file=view.file, fitted=True)
+
+
+def _fit_hidden(result: ScanResult, view: _HiddenView, room: int) -> _HiddenView:
+    """The most rows of `view` whose section costs no more than `room` bytes
+    beyond the section with none (its heading, counts and pointers), found by
+    halving: a row never makes the section smaller."""
+    floor = _total(_rule_hidden_html(_fitted(result, view, 0)))
+    low, high = 0, view.listed
+    while low < high:
+        mid = (low + high + 1) // 2
+        cost = _total(_rule_hidden_html(_fitted(result, view, mid))) - floor
+        if cost <= room:
+            low = mid
+        else:
+            high = mid - 1
+    return _fitted(result, view, low)
+
+
+def _page(heading: str, body: str) -> str:
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -1284,33 +1588,113 @@ def render_html(
         'style="padding:16px">'
         '<table role="presentation" width="100%" cellpadding="0" '
         f'cellspacing="0" border="0" style="{_SHELL}">'
-        f'<tr><td style="{_CELL}">{"".join(body)}</td></tr>'
+        f'<tr><td style="{_CELL}">{body}</td></tr>'
         "</table></td></tr></table></body></html>"
     )
 
 
-def write_digest(text: str, directory: Path, *, name: str | None = None) -> Path:
+def render_html(
+    result: ScanResult,
+    *,
+    title: str = "Job scan",
+    shortlist: list[tuple[str, str, str]] | None = None,
+    config_path: Path | None = None,
+    hidden_max: int | None = None,
+    hidden_file: str = "",
+) -> str:
+    """The email's HTML part, built from the scan result rather than from the
+    markdown. Same inputs as `render_markdown`, and everything that renders
+    there renders here.
+
+    Under `HTML_BUDGET` bytes unless the parts that are not roles are already
+    over it (2.6.0). The alarms, the unread list and the shortlist are laid out
+    first. The role cards spend what is left, then give way to one line each.
+    The "Hidden by your rules" section gets what the roles leave: its heading
+    and counts always, and as many of its rows as fit, the highest scores
+    first."""
+    stamp = datetime.now(UTC).strftime("%A %d %B %Y")
+    heading = f"{title}, {stamp}"
+    view = _hidden_view(result, hidden_max, hidden_file)
+    head = [f'<h1 style="{_H1}">{_esc(heading)}</h1>']
+    if result.dry_run:
+        head.append(f'<div style="{_DRY}">Dry run: nothing was marked as seen.</div>')
+    head += _failures_html(result)
+    unread = _unread_html(result)
+    after = _shortlist_html(shortlist, config_path) if shortlist else []
+    # The roles spend first. What the roles do not need is the hidden list's,
+    # so a long list can never push a role out of the email; the list keeps its
+    # heading, its counts and where the rest is, and as many rows as then fit.
+    bare = _total(_rule_hidden_html(_fitted(result, view, 0)))
+    fixed = _total([*head, *unread, *after, _page(heading, "")]) + bare
+    intro = _roles_intro_html(result, view)  # the widest stats line it can have
+    cards = _role_cards_html(result, HTML_BUDGET - fixed - _total(intro))
+    room = HTML_BUDGET - fixed - _total(intro) - _total(cards)
+    shown = _fit_hidden(result, view, room)
+    roles = [*_roles_intro_html(result, shown), *cards]
+    return _page(
+        heading, "".join([*head, *roles, *unread, *_rule_hidden_html(shown), *after])
+    )
+
+
+def next_digest_path(directory: Path, *, name: str | None = None) -> Path:
+    """The file `write_digest` will write, chosen before the digest is
+    rendered (2.6.0) so the digest can name the files that sit beside it.
+
+    `name` given: `directory / name`. Otherwise the scan is stamped to the
+    minute and suffixed if that minute already has one, so a second scan of the
+    day cannot overwrite the first (2026-09-28: four scans, one file). Writes
+    nothing."""
+    if name is not None:
+        return directory / name
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M")
+    path = directory / f"{stamp}.md"
+    n = 1
+    while path.exists():
+        n += 1
+        path = directory / f"{stamp}-{n}.md"
+    return path
+
+
+def write_digest(
+    text: str,
+    directory: Path,
+    *,
+    name: str | None = None,
+    path: Path | None = None,
+) -> Path:
     """Write the digest atomically; one file per scan.
 
     `name` given: write only that file (a dry run writes `digest-dry.md` and
     must not become `latest.md`, which `rolescan show` and downstream tooling
     read as the last real run). Otherwise the file is stamped to the minute
-    and suffixed if that minute already has one, so a second scan of the day
-    cannot overwrite the first (2026-09-28: four scans, one file).
+    (see `next_digest_path`) and becomes `latest.md` too. `path` is the file a
+    caller already chose with `next_digest_path` for the same `name`.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    if name is None:
-        stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H%M")
-        path = directory / f"{stamp}.md"
-        n = 1
-        while path.exists():
-            n += 1
-            path = directory / f"{stamp}-{n}.md"
-    else:
-        path = directory / name
+    if path is None:
+        path = next_digest_path(directory, name=name)
     _write_atomic(path, text)
     if name is None:
         _write_atomic(directory / "latest.md", text)
+    return path
+
+
+def hidden_list_path(digest: Path) -> Path:
+    """Where the whole "Hidden by your rules" list goes: beside the digest, with
+    its stem and `-hidden` (`2026-10-09T0630.md` -> `2026-10-09T0630-hidden.md`)."""
+    return digest.with_name(f"{digest.stem}-hidden{digest.suffix}")
+
+
+def hidden_list_needed(result: ScanResult, hidden_max: int | None) -> bool:
+    """Whether `hidden_max` cuts the list, so the whole of it needs a file."""
+    return _hidden_view(result, hidden_max).capped
+
+
+def write_hidden_list(text: str, digest: Path) -> Path:
+    """Write the whole hidden list beside `digest`, atomically."""
+    path = hidden_list_path(digest)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_atomic(path, text)
     return path
 
 
@@ -1376,7 +1760,10 @@ def _connect(cfg: EmailConfig, source: tuple[str, int] | None) -> smtplib.SMTP:
             )
         else:
             client = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, **options)
-            client.starttls()
+            # `starttls()` with no context checks neither the certificate nor
+            # the host name, so whoever sits in the path could read the login
+            # and the digest. The default context verifies both (2.6.0).
+            client.starttls(context=ssl.create_default_context())
     except (smtplib.SMTPException, OSError) as e:
         # close(), not a QUIT: the connection is not in a state to be talked to.
         if client is not None:

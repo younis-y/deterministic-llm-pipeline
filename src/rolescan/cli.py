@@ -14,7 +14,17 @@ from rich.markdown import Markdown
 from rich.table import Table
 
 from rolescan.config import Config, SourceEntry
-from rolescan.digest import render_html, render_markdown, send_email, write_digest
+from rolescan.digest import (
+    hidden_list_needed,
+    hidden_list_path,
+    next_digest_path,
+    render_hidden_list,
+    render_html,
+    render_markdown,
+    send_email,
+    write_digest,
+    write_hidden_list,
+)
 from rolescan.http import Fetcher
 from rolescan.models import Verdict
 from rolescan.pipeline import ScanResult, record_scan, run_scan
@@ -27,7 +37,10 @@ from rolescan.storefile import BackupError, RunLockedError, backup, run_lock
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help="Typed, async job scanner with LLM fit scoring and CV matching.",
+    help=(
+        "Scan employers' career sites, score postings against your profile, "
+        "write a ranked digest."
+    ),
 )
 console = Console()
 
@@ -162,7 +175,6 @@ def _ranked_table(result: ScanResult) -> Table:
     table.add_column("Score", justify="right")
     table.add_column("Verdict")
     table.add_column("Role")
-    table.add_column("CV")
     for item in result.reportable:
         table.add_row(
             str(item.score),
@@ -270,15 +282,34 @@ def _scan(cfg: Config, config: Path, *, dry: bool, no_llm: bool, email: bool) ->
     # Both parts of the email are rendered from the same ScanResult. The HTML
     # one is not made from `text`: doing that shipped markdown source as the
     # HTML alternative, so the apply links were not links.
+    #
+    # The digest's file is chosen first (2.6.0): when `output.hidden_max` cuts
+    # the "Hidden by your rules" list, the digest names the file holding the
+    # whole of it, beside the digest.
+    directory = cfg.resolve(cfg.output.dir)
+    name = "digest-dry.md" if dry else None
+    path = next_digest_path(directory, name=name)
+    cap = cfg.output.hidden_max
+    hidden_name = hidden_list_path(path).name
     text = render_markdown(
-        result, shortlist=shortlist_rows, config_path=config.resolve()
+        result,
+        shortlist=shortlist_rows,
+        config_path=config.resolve(),
+        hidden_max=cap,
+        hidden_file=hidden_name,
     )
     html_body = render_html(
-        result, shortlist=shortlist_rows, config_path=config.resolve()
+        result,
+        shortlist=shortlist_rows,
+        config_path=config.resolve(),
+        hidden_max=cap,
+        hidden_file=hidden_name,
     )
-    path = write_digest(
-        text, cfg.resolve(cfg.output.dir), name="digest-dry.md" if dry else None
-    )
+    # The list first, so a digest never names a file that was not written.
+    hidden_path: Path | None = None
+    if hidden_list_needed(result, cap):
+        hidden_path = write_hidden_list(render_hidden_list(result), path)
+    path = write_digest(text, directory, name=name, path=path)
 
     # Recorded only now that the digest is on disk (2.5.7): a crash or a
     # failed write before this point leaves `seen` untouched, so the next run
@@ -297,6 +328,8 @@ def _scan(cfg: Config, config: Path, *, dry: bool, no_llm: bool, email: bool) ->
 
     console.print(Markdown(text))
     console.print(f"\n[dim]written to {path}[/]")
+    if hidden_path is not None:
+        console.print(f"[dim]the whole hidden list is in {hidden_path}[/]")
 
     if result.reportable:
         console.print(_ranked_table(result))

@@ -1,6 +1,6 @@
 """2.5.6: `resolve_hard_bars`, the deterministic nationality and clearance pass.
 
-On the owner's 200-posting evaluation the local model named a bar on only 7 of
+On the user's 200-posting evaluation the local model named a bar on only 7 of
 the 26 adverts that state one. The keyword blockers catch most of the rest,
 but adverts phrased like "Data Analyst - UAE National, ICQA/LND Analytics
 Team", "aimed at preparing UAE Nationals for successful careers", "Officer
@@ -30,7 +30,7 @@ from rolescan.scoring.facts import (
 )
 from rolescan.scoring.rules import _STRUCTURAL_BARS, decide
 
-# Real titles and advert lines from the owner's cached adverts (companies left
+# Real titles and advert lines from the user's cached adverts (companies left
 # out). Each is (title, description).
 NATIONALITY = [
     ("Data Analyst - UAE National, ICQA/LND Analytics Team", ""),
@@ -165,7 +165,7 @@ NOT_A_NATIONALITY_BAR = [
     ),
     ("Analyst", "We welcome applications from all qualified UAE National candidates."),
     ("Analyst", "Nationality All Nationalities (Priority for UAE National) Salary"),
-    # an alternative the owner satisfies
+    # an alternative the user satisfies
     ("Analyst", "Valid UAE residence visa, or be a UAE or GCC national."),
     (
         "Analyst",
@@ -228,7 +228,7 @@ NOT_A_NATIONALITY_BAR = [
     ("Analyst", "Build dashboards for Saudization roles."),
     ("Analyst", "Report on Emiratisation hiring metrics."),
     ("Analyst", "Support Emiratisation opportunities across the business."),
-    # review round: UK and US alternatives the owner may satisfy
+    # review round: UK and US alternatives the user may satisfy
     (
         "Analyst",
         "Applicants must be a UK national or have the right to work in the UK.",
