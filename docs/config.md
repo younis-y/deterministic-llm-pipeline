@@ -78,6 +78,7 @@ How postings are scored, and by what.
 | `llm.max_tokens` | whole number | `1500` | The longest answer asked of the model, in tokens. |
 | `llm.max_concurrent` | whole number, 1 to 32 | `5` | Model calls in flight at once. |
 | `llm.max_calls_per_run` | whole number, 0 or more | `60` | Hard ceiling on model calls in one scan. Postings past it are deferred to the next run, not dropped. `0` allows no calls. |
+| `llm.max_minutes` | number, 0 or more | `0.0` | Wall-clock budget for the model in one scan, in minutes, counted from the first model call. Once it is spent no new call starts, calls already running finish, and the postings not yet scored are deferred to the next run, as the call ceiling defers them. `0` is no time limit. |
 | `llm.cascade` | true or false | `true` | Score in two passes: a short call that settles the score, then the full verdict only for postings that clear `min_report_score`. Used only by a backend whose short call is cheaper. |
 | `llm.extra_prompt` | text | empty | Text appended to the judge-mode prompt. Not sent in facts mode, where only an enricher may use it. |
 | `llm.temperature` | number, 0.0 to 2.0 | `0.0` | Sampling temperature. `0` suits classification against a fixed rubric. A model that refuses the setting is called without it from then on, and the log says so once. |

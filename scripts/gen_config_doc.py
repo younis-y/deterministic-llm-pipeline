@@ -195,6 +195,13 @@ DESCRIPTIONS: dict[str, str] = {
         "Hard ceiling on model calls in one scan. Postings past it are deferred "
         "to the next run, not dropped. `0` allows no calls."
     ),
+    "llm.max_minutes": (
+        "Wall-clock budget for the model in one scan, in minutes, counted from "
+        "the first model call. Once it is spent no new call starts, calls "
+        "already running finish, and the postings not yet scored are deferred "
+        "to the next run, as the call ceiling defers them. `0` is no time "
+        "limit."
+    ),
     "llm.cascade": (
         "Score in two passes: a short call that settles the score, then the "
         "full verdict only for postings that clear `min_report_score`. Used "

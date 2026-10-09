@@ -97,6 +97,9 @@ class ScanResult:
     llm_breaker: bool = False
     """The scorer stopped calling the model after `BREAKER_AFTER` failures in
     a row and deferred the rest (2.5.8)."""
+    llm_max_minutes: float = 0.0
+    """`llm.max_minutes` for this run (2.7.0), so the digest can say which
+    budget was spent: "model time budget of 10 minutes spent". 0 is no limit."""
     llm_backend: str = ""
     """The backend scoring was configured to use, whether or not it ran.
 
@@ -1052,7 +1055,10 @@ async def run_scan(
     must do the same.
     """
     result = ScanResult(
-        dry_run=dry_run, llm_backend=cfg.llm.backend, llm_model=cfg.llm.model
+        dry_run=dry_run,
+        llm_backend=cfg.llm.backend,
+        llm_model=cfg.llm.model,
+        llm_max_minutes=cfg.llm.max_minutes,
     )
     window: int | None = None
     if check_llm:

@@ -2,6 +2,11 @@
 
 All notable changes to rolescan. Newest first.
 
+## 2.7.0 (2026-10-09)
+
+### Added
+- `llm.max_minutes` (a number of minutes, 0 or more; default `0`, no time limit): a wall-clock budget for the model in one scan, counted from the scan's first model call and measured with a monotonic clock. A call count says little about time on a local model, where one call takes 10 to 40 seconds. Once the budget is spent no new model call starts (an enricher's call included) and calls already running finish. Every posting not yet scored is deferred through the path the call ceiling already uses: marked `deferred`, kept out of `seen`, and scored on a later run. The posting's marker is `"llm_time"`. The stats line names the limit that stopped the run: "model time budget of 10 minutes spent; 12 postings deferred to the next run", against "N deferred to the next run (N over the LLM budget)" for the call count. When both limits are set the one reached first is the one named, and a run is only ever deferred for one of them. `FitScorer` takes a `clock` keyword (default `time.monotonic`) so a test can move time by hand, and `ScanResult.llm_max_minutes` carries the budget to the digest. No schema change: `llm_runs.deferred` already counts the postings, and a flag column for the time budget would raise the store's schema version, which 2.5.8 to 2.6.x refuse as written by a newer rolescan, for a figure nothing reads.
+
 ## 2.6.0 (2026-10-09)
 
 ### Added

@@ -380,6 +380,13 @@ class LLMConfig(BaseModel):
     max_concurrent: Annotated[int, Field(ge=1, le=32)] = 5
     max_calls_per_run: Annotated[int, Field(ge=0)] = 60
     """Hard ceiling. Stops a badly tuned prefilter turning into a big bill."""
+    max_minutes: Annotated[float, Field(ge=0)] = 0.0
+    """Wall-clock budget for the model in one scan, in minutes (2.7.0). A call
+    count says little about time on a local model, where one call takes 10 to
+    40 seconds. The clock starts at the run's first model call; once the
+    budget is spent no new call starts, calls already in flight finish, and
+    every posting not yet scored is deferred to the next run exactly as the
+    call ceiling defers it. 0 is no time limit."""
     cascade: bool = True
     """Score in two passes: a cheap one that only settles the score, then the
     full verdict only for postings that clear `min_report_score`. The digest

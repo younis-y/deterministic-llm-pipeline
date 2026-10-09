@@ -212,6 +212,11 @@ llm:
 
   max_concurrent: 5
   max_calls_per_run: 60      # hard spend ceiling
+  # Wall-clock budget for the model in one scan, in minutes, counted from its
+  # first call. A call count says little about time on a local model, where
+  # one call takes 10 to 40 seconds. When it is spent no new call starts and
+  # the postings not yet scored are deferred to the next run. 0 = no limit.
+  # max_minutes: 0
   description_chars: 6000
   cache_days: 30             # verdicts are cached on description text; 0 = never expire
 

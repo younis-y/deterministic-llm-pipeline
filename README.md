@@ -233,7 +233,9 @@ defaults:
 
 Since 2.5.7 the digest's stats line also reports a posting a run could not
 get to: "N deferred to the next run", with the reason (over the LLM budget,
-over the digest cap, or no description text yet). A deferred posting is not
+over the digest cap, or no description text yet), or, when `llm.max_minutes`
+ran out, "model time budget of N minutes spent; M postings deferred to the next
+run". A deferred posting is not
 recorded as seen, so it comes round again. A posting with no text is held back
 only `output.thin_unread_after` times (default 3): after that many runs without
 text it is listed once under "Unread (no text after N runs)", with its link,
@@ -428,6 +430,15 @@ What keeps a model's cost down:
   paid for twice.
 - `llm.max_calls_per_run` (60) is a hard ceiling per scan. Postings past it are
   deferred to the next run, not dropped.
+- `llm.max_minutes` (0, no limit) is a wall-clock budget for the model, counted
+  from the scan's first model call. On a local model one call takes 10 to 40
+  seconds, so a call count says little about how long a scan runs. When the
+  budget is spent no new call starts, calls already running finish, and the
+  postings not yet scored are deferred to the next run exactly as the call
+  ceiling defers them: kept out of `seen`, so they come round again. The stats
+  line says which limit stopped the run: "model time budget of 10 minutes
+  spent; 12 postings deferred to the next run", or "(N over the LLM budget)"
+  for the call count. Whichever was reached first is the one named.
 - A call sends the fixed instructions, your `profile.summary`, any worked
   examples, and one posting's title, company, location, date and the first
   `llm.description_chars` characters of its description (6,000 by default): a
