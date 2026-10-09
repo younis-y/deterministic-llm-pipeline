@@ -68,10 +68,13 @@ unjudged postings that could then never surface again.
   posting it finds already seen, so a gap means the board stopped listing it. The
   row takes a fresh `first_seen` when the posting is recorded again, and the digest
   says how long it was off the board. `seen` still never expires, and a title that
-  is not a programme still never returns. Two limits remain: a posting dropped
+  is not a programme still never returns. Three limits remain: a posting dropped
   before `filter_new` (too old for `profile.max_age_days`, or merged into a
   near-duplicate) is not touched, so it can read as off the board while a board
-  still lists it; and a programme title the pattern does not name, such as
+  still lists it; a `structured` source with `incremental: true` reads only the
+  pages its sitemap shows as changed, so an unchanged programme page it keeps
+  listing is not touched either and can return once with an "off the board" line
+  that is not true; and a programme title the pattern does not name, such as
   "Graduate Software Engineer", is still seen once.
 - `seen` does not record the facts or the basis of the decision, only the company,
   title, location, URL, source, score, verdict, reason and first and last seen. A

@@ -56,6 +56,10 @@ from rolescan.store import Store
         "Insight Day",
         "Insight Week",
         "Spring Insight Programme",
+        "Vacation Scheme",
+        "Summer Vacation Scheme 2027",
+        "Winter Vacation Programme",
+        "Summer Student",
     ],
 )
 def test_a_programme_title_matches(title: str) -> None:
@@ -79,6 +83,9 @@ def test_a_programme_title_matches(title: str) -> None:
         "Insight Analyst",
         "Senior Cycle Engineer",
         "Programme Manager",
+        "Placement Manager",
+        "Graduate Placement Officer",
+        "Placement Co-ordinator",
         "",
     ],
 )

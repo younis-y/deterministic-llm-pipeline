@@ -141,7 +141,8 @@ so a blocker matching the wrong thing shows up rather than as silence. That
 includes a posting the term's `blockers` weight took under the prefilter; one
 that would have failed the prefilter without the term is not listed, and an
 `excluded_locations` entry, which has no weight, never lists a prefiltered
-posting. It is listed once, on the run that first sees it.
+posting. It is listed once, on the run that first sees it (an annual
+programme can be listed again after a gap: `output.reopen_programme_days`).
 
 Hardness is deliberately not a weight threshold. A weight is retuned whenever
 you calibrate the prefilter; whether a clearance is a wall is a fact about you

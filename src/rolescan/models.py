@@ -76,10 +76,14 @@ def normalise_term(term: str) -> str:
 _PROGRAMME_TITLE = re.compile(
     r"""\b(?:
           interns? | internships?
-        | placements?
+        # A placement year, not the people who run placements (2.7.0 review).
+        | placements?(?![\s-]+(?:manager|officer|co-?ordinator|consultant
+                                 |lead|director|specialist|advis[eo]r)s?\b)
         | graduates?(?:[\s-]+[\w&]+){0,3}?[\s-]+(?:programmes?|programs?|schemes?
                                                   |trainees?)
-        | (?:summer|spring|winter)[\s-]+(?:analyst|associate|internship|week)s?
+        | (?:summer|spring|winter)[\s-]+(?:analyst|associate|internship|week
+                                          |student)s?
+        | vacation[\s-]+(?:schemes?|programmes?|programs?|internships?)
         | off[\s-]?cycle
         | insight[\s-]+(?:day|week|programme|program)s?
     )\b""",
@@ -90,7 +94,8 @@ _PROGRAMME_TITLE = re.compile(
 def is_programme_title(title: str) -> bool:
     """Whether a posting's TITLE names an annual programme: an internship, a
     placement, a graduate programme or scheme, a summer, spring or winter
-    analyst or week, an off-cycle role, an insight day or week (2.7.0).
+    analyst, student or week, a vacation scheme, an off-cycle role, an insight
+    day or week (2.7.0).
 
     What `Store.filter_new` reads to let such a posting come back after a gap
     (`output.reopen_programme_days`)."""
