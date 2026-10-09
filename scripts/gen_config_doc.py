@@ -281,6 +281,15 @@ DESCRIPTIONS: dict[str, str] = {
         "Runs a posting may arrive without text before it is listed once under "
         '"Unread" and recorded.'
     ),
+    "output.reopen_programme_days": (
+        "Days a programme posting must go unlisted before it counts as new "
+        'again. A posting whose title names a programme ("Summer Internship", '
+        '"Graduate Programme", an off-cycle role, an insight week) and that '
+        "no scan has found on a board for this long is scored and listed "
+        "again, with a line saying how long it was off the board. A posting a "
+        "board lists on every scan never comes back, and a title that is not a "
+        "programme is unchanged. `0` turns it off."
+    ),
     "output.retention_days": (
         "How many days each cache keeps a row. See `output.retention_days` below."
     ),

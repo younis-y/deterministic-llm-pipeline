@@ -383,7 +383,17 @@ point it back.
 
 **A hidden posting is listed once.** Everything a scan assesses is recorded as
 seen, hidden postings included, and is not reported again; a `--dry` run records
-nothing, so it lists them every time. Read the section on the day you scan: the
+nothing, so it lists them every time. The one exception is a yearly programme:
+a posting whose title names one ("Summer Internship", "Graduate Programme",
+"Off-Cycle Internship", "Insight Week") has the same identity every year, so a
+board that opens it again would never be heard from twice. Each scan refreshes
+`last_seen` on the postings it finds already seen, so a posting no scan has found
+for `output.reopen_programme_days` days (120; `0` turns this off) counts as new:
+it is scored and listed again, under "Returning: listed again after N days off
+the board", and its row takes a fresh `first_seen`. A posting a board lists on
+every scan never comes back, nor does one whose title is not a programme, and
+your shortlist, applied and dismissed marks are left as they were: a role you
+dismissed last year still returns under that line. Read the section on the day you scan: the
 digest is also saved under `digests/`, and `rolescan show` reprints the latest
 one. If a rule or term was wrong, fix it in `config.yaml`, then
 `rolescan unsee URL` (the URL as the digest prints it) so the next scan reports

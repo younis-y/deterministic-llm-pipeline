@@ -622,6 +622,20 @@ class OutputConfig(BaseModel):
     never sends text (a Workday board with `details: false`, a structured page
     with no body) would otherwise hold it back for ever, and a pile of such
     postings would crowd out the ones that can be judged."""
+    reopen_programme_days: Annotated[int, Field(ge=0)] = 120
+    """Days after which a programme posting that a scan has not found listed
+    counts as new again (2.7.0); 0 turns it off.
+
+    A posting's identity is company, title and location, and `seen` is never
+    trimmed, so a yearly scheme whose title names no year ("Summer
+    Internship", "Graduate Programme") was listed once and never again. A scan
+    refreshes `seen.last_seen` on every posting it finds already seen, so a
+    gap longer than this means the board stopped listing it. A posting whose
+    TITLE names a programme (`rolescan.models.is_programme_title`) and whose
+    `last_seen` is older than this is scored and listed again, with a line
+    saying how long it was off the board, and its row then takes a fresh
+    `first_seen`. A posting listed on every scan never comes back; a title
+    that is not a programme is unchanged."""
     retention_days: RetentionConfig = Field(default_factory=RetentionConfig)
     backup_keep: Annotated[int, Field(ge=0)] = 7
     """Daily copies of the store kept in `backups/` beside it (2.5.8).

@@ -32,6 +32,7 @@ __all__ = [
     "Level",
     "ScoredJob",
     "Verdict",
+    "is_programme_title",
     "normalise_term",
 ]
 
@@ -62,6 +63,38 @@ def normalise_term(term: str) -> str:
     so there is exactly one answer to what a term looks like.
     """
     return _norm(term).casefold()
+
+
+#: Titles of programmes a board opens again every year under the same words
+#: ("Summer Internship", "Graduate Programme"): the postings whose identity
+#: (`Job.uid`: company, title, location) says nothing about which year they are
+#: for. Word-bounded, so "International" and "Internal" match nothing, and run
+#: on the title alone: a body that says "graduate-level degree" is not a
+#: programme. Narrower than the level words in `rolescan.scoring.facts` on
+#: purpose: a "Trainee Accountant" or an "Entry-level Analyst" is a year-round
+#: role, and a role that comes back every year must have a title that says so.
+_PROGRAMME_TITLE = re.compile(
+    r"""\b(?:
+          interns? | internships?
+        | placements?
+        | graduates?(?:[\s-]+[\w&]+){0,3}?[\s-]+(?:programmes?|programs?|schemes?
+                                                  |trainees?)
+        | (?:summer|spring|winter)[\s-]+(?:analyst|associate|internship|week)s?
+        | off[\s-]?cycle
+        | insight[\s-]+(?:day|week|programme|program)s?
+    )\b""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def is_programme_title(title: str) -> bool:
+    """Whether a posting's TITLE names an annual programme: an internship, a
+    placement, a graduate programme or scheme, a summer, spring or winter
+    analyst or week, an off-cycle role, an insight day or week (2.7.0).
+
+    What `Store.filter_new` reads to let such a posting come back after a gap
+    (`output.reopen_programme_days`)."""
+    return _PROGRAMME_TITLE.search(title) is not None
 
 
 class Verdict(StrEnum):
@@ -366,6 +399,16 @@ class ScoredJob(BaseModel):
     all three were recorded with everything else and could never surface
     again (26 Sep: 382 of 982 candidates; 5-6 Oct: 15-17 reportable roles a
     day past the cap)."""
+    reopened_after_days: int = 0
+    """How many days this programme posting was off the board before a scan
+    listed it again, or 0 (2.7.0).
+
+    Set by `Store.filter_new` on a posting whose `seen` row is older than
+    `output.reopen_programme_days` and whose title names a programme
+    (`is_programme_title`). Read by `Store.record`, which then gives the row a
+    fresh `first_seen` so the posting cannot come back again until another
+    gap, and by the digest, which says "listed again after N days off the
+    board"."""
     hidden_as: str = ""
     """Which "Hidden by your rules" group a prefilter reject is listed under
     (2.5.7): `"blockers"` or `"gate"`, or "".

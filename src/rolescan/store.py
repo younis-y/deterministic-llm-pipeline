@@ -45,7 +45,7 @@ from uuid import uuid4
 import aiosqlite
 from pydantic import BaseModel, ValidationError
 
-from rolescan.models import FitVerdict, Job, ScoredJob
+from rolescan.models import FitVerdict, Job, ScoredJob, is_programme_title
 
 __all__ = [
     "LlmRun",
@@ -239,6 +239,32 @@ class PruneReport:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _days_off_the_board(
+    scored: list[ScoredJob], last_seen: Mapping[str, str], gap_days: int
+) -> dict[str, int]:
+    """The already-seen programme postings among `scored` that no scan has
+    listed for more than `gap_days` days, as uid to whole days since (2.7.0).
+
+    A `last_seen` that cannot be read as a date is left alone: a posting is
+    only brought back on evidence of a gap."""
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(days=gap_days)
+    away: dict[str, int] = {}
+    for s in scored:
+        uid = s.job.uid
+        if uid not in last_seen or uid in away or not is_programme_title(s.job.title):
+            continue
+        try:
+            then = datetime.fromisoformat(last_seen[uid])
+        except ValueError:
+            continue
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=UTC)
+        if then < cutoff:
+            away[uid] = (now - then).days
+    return away
 
 
 @dataclass(frozen=True, slots=True)
@@ -467,7 +493,11 @@ class Store:
         return await cur.fetchone() is None
 
     async def filter_new(
-        self, scored: list[ScoredJob], *, touch: bool = False
+        self,
+        scored: list[ScoredJob],
+        *,
+        touch: bool = False,
+        reopen_programme_days: int = 0,
     ) -> list[ScoredJob]:
         """The postings not yet in `seen`, looked up 500 uids per query.
 
@@ -486,6 +516,19 @@ class Store:
         so the call stays a pure read for any caller that does not ask; a scan
         passes `touch=not dry_run`.
 
+        `reopen_programme_days` (2.7.0; 0, the default, is off) brings back an
+        annual programme. `Job.uid` is company, title and location, so a
+        "Summer Internship" a board opens again every year was listed once and
+        never again. A posting whose TITLE names a programme
+        (`is_programme_title`) and whose `seen.last_seen` is more than that
+        many days old counts as new: it comes back as a copy with
+        `reopened_after_days` set, and is left out of the touch, so a scan
+        that defers it (a model ceiling, the digest cap) leaves the gap in
+        place for the next. `record` then gives its row a fresh `first_seen`.
+        Read the same way on a dry run, which writes nothing. A posting a
+        board lists on every scan keeps a fresh `last_seen` and never comes
+        back.
+
         The only thing interpolated into the SQL is a run of `?` placeholders,
         whose length comes from the chunk and nothing else. Every value is
         bound. Written down because bandit's S608 flags the shape on sight.
@@ -493,25 +536,45 @@ class Store:
         if not scored:
             return []
         uids = list(dict.fromkeys(s.job.uid for s in scored))
-        known: set[str] = set()
+        last_seen: dict[str, str] = {}
         for chunk in _chunks(uids):
             placeholders = ",".join("?" * len(chunk))
             rows = await self.db.execute_fetchall(
-                f"SELECT uid FROM seen WHERE uid IN ({placeholders})", chunk
+                f"SELECT uid, last_seen FROM seen WHERE uid IN ({placeholders})",
+                chunk,
             )
-            known.update(str(row[0]) for row in rows)
+            last_seen.update((str(row[0]), str(row[1])) for row in rows)
+        known = set(last_seen)
+        away = (
+            _days_off_the_board(scored, last_seen, reopen_programme_days)
+            if reopen_programme_days > 0
+            else {}
+        )
         if touch and known:
             now = datetime.now(UTC).isoformat(timespec="seconds")
-            for chunk in _chunks(sorted(known)):
+            for chunk in _chunks(sorted(known - away.keys())):
                 placeholders = ",".join("?" * len(chunk))
                 await self.db.execute(
                     f"UPDATE seen SET last_seen = ? WHERE uid IN ({placeholders})",
                     [now, *chunk],
                 )
             await self.db.commit()
-        return [s for s in scored if s.job.uid not in known]
+        return [
+            s.model_copy(update={"reopened_after_days": away[s.job.uid]})
+            if s.job.uid in away
+            else s
+            for s in scored
+            if s.job.uid not in known or s.job.uid in away
+        ]
 
     async def record(self, scored: ScoredJob, *, reason: str = "") -> None:
+        """Write one posting to `seen`.
+
+        A posting already there keeps its `first_seen`, unless it is one that
+        came back after a gap (`reopened_after_days`, 2.7.0): its row then
+        takes this scan's `first_seen`, url and source, so it reads as the
+        new listing it is and cannot come back again until another gap.
+        `applications` is never touched."""
         now = datetime.now(UTC).isoformat(timespec="seconds")
         job = scored.job
         await self.db.execute(
@@ -519,26 +582,32 @@ class Store:
             INSERT INTO seen
                 (uid, company, title, location, url, source, score, verdict,
                  first_seen, last_seen, reason)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (:uid, :company, :title, :location, :url, :source, :score,
+                    :verdict, :now, :now, :reason)
             ON CONFLICT(uid) DO UPDATE SET
+                first_seen=CASE WHEN :reopened THEN excluded.first_seen
+                                ELSE seen.first_seen END,
+                url=CASE WHEN :reopened THEN excluded.url ELSE seen.url END,
+                source=CASE WHEN :reopened THEN excluded.source
+                            ELSE seen.source END,
                 last_seen=excluded.last_seen,
                 score=excluded.score,
                 verdict=excluded.verdict,
                 reason=excluded.reason
             """,
-            (
-                job.uid,
-                job.company,
-                job.title,
-                job.location,
-                job.url,
-                job.source,
-                scored.score,
-                scored.verdict.value,
-                now,
-                now,
-                reason,
-            ),
+            {
+                "uid": job.uid,
+                "company": job.company,
+                "title": job.title,
+                "location": job.location,
+                "url": job.url,
+                "source": job.source,
+                "score": scored.score,
+                "verdict": scored.verdict.value,
+                "now": now,
+                "reason": reason,
+                "reopened": scored.reopened_after_days > 0,
+            },
         )
 
     async def record_all(

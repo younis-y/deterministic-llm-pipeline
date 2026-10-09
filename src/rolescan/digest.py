@@ -423,6 +423,18 @@ def render_hidden_list(result: ScanResult) -> str:
     return "\n".join(lines + _hidden_groups_md(view))
 
 
+def _returning(item: ScoredJob) -> str:
+    """What a programme that came back says about itself (2.7.0), or "".
+
+    The same posting was listed in an earlier year; the reader is told it is
+    back rather than left to wonder why a role they dealt with returned."""
+    if not item.reopened_after_days:
+        return ""
+    return (
+        f"listed again after {_plural(item.reopened_after_days, 'day')} off the board"
+    )
+
+
 def _role(item: ScoredJob) -> list[str]:
     job, fit = item.job, item.fit
     badge = _BADGE[item.verdict]
@@ -438,6 +450,9 @@ def _role(item: ScoredJob) -> list[str]:
         + (f" · {fit.confidence.value} confidence" if fit else " · keyword only")
     )
     lines.append("")
+    if returning := _returning(item):
+        lines.append(f"**Returning:** {returning}")
+        lines.append("")
 
     if fit is not None:
         lines.append(fit.reason)
@@ -1204,6 +1219,8 @@ def _role_html(item: ScoredJob) -> str:
         f'<div style="{_META}">{_esc(_meta_line(job))}</div>',
         f'<div style="{_BADGE_ROW}">{_badges_html(item)}</div>',
     ]
+    if returning := _returning(item):
+        out.append(_tags_html("Returning", [returning]))
     if (fit := item.fit) is not None:
         out += _fit_html(item, fit)
     else:

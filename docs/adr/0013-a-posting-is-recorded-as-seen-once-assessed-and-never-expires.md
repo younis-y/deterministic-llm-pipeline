@@ -1,7 +1,7 @@
 # ADR-0013: A posting is recorded as seen once it has been assessed, and `seen` never expires
 
 **Date**: 2026-09-01 (design), 2026-09-24 (the backend-broke gate)
-**Status**: accepted; the permanence is implied by the code more than argued in it
+**Status**: accepted; the permanence is implied by the code more than argued in it. Amended in 2.7.0: an annual programme comes back after a gap (see Consequences)
 **Deciders**: maintainers
 
 ## Context
@@ -37,7 +37,9 @@ unjudged postings that could then never surface again.
 ### Alternative 1: Expire `seen` after N days
 - **Pros**: recurring roles, such as an annual programme with a fixed title, return.
 - **Cons**: repeats in every digest.
-- **Why not**: never chosen, and no code path exists for it.
+- **Why not**: never chosen for `seen` as a whole. 2.7.0 applies a narrow form of it,
+  to programme titles only and measured from `last_seen`, not `first_seen`, so a
+  posting still on a board does not repeat.
 
 ### Alternative 2: Key on the URL
 - **Pros**: exact.
@@ -56,10 +58,21 @@ unjudged postings that could then never surface again.
   and a below-gate score are all recorded, and a rule or keyword fix does not
   resurrect them by itself. Fixing a resolver bug does not recover the roles it
   wrongly hid last week; `unsee` does, one posting at a time.
-- **Annual re-posts are invisible.** A programme re-opened with the same company,
-  title and location has the same `uid` and never resurfaces. Titles that carry the
-  year ("2027 Graduate Programme") are protected by accident. For a search that
-  targets recurring programmes this is the highest-value implied risk in the system.
+- **Annual re-posts were invisible, until 2.7.0.** A programme re-opened with the
+  same company, title and location has the same `uid` and never resurfaced. Titles
+  that carry the year ("2027 Graduate Programme") were protected by accident. Since
+  2.7.0 `Store.filter_new(reopen_programme_days=...)`, fed by
+  `output.reopen_programme_days` (120; `0` restores the old behaviour), counts a
+  posting as new when its title names a programme (`models.is_programme_title`) and
+  its `seen.last_seen` is older than that. A scan refreshes `last_seen` on every
+  posting it finds already seen, so a gap means the board stopped listing it. The
+  row takes a fresh `first_seen` when the posting is recorded again, and the digest
+  says how long it was off the board. `seen` still never expires, and a title that
+  is not a programme still never returns. Two limits remain: a posting dropped
+  before `filter_new` (too old for `profile.max_age_days`, or merged into a
+  near-duplicate) is not touched, so it can read as off the board while a board
+  still lists it; and a programme title the pattern does not name, such as
+  "Graduate Software Engineer", is still seen once.
 - `seen` does not record the facts or the basis of the decision, only the company,
   title, location, URL, source, score, verdict, reason and first and last seen. A
   hidden posting can only be re-examined if its advert is fetched again.
