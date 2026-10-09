@@ -19,7 +19,6 @@ import types
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
 
-import annotated_types
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
@@ -606,11 +605,14 @@ def _scalar(ann: Any) -> str:
 
 def _bounds(field: FieldInfo) -> str:
     low = high = None
+    # pydantic keeps `Field(ge=..., le=...)` as metadata objects with `ge` and
+    # `le` attributes; read the attributes rather than import annotated_types,
+    # which is pydantic's dependency, not this project's.
     for meta in field.metadata:
-        if isinstance(meta, annotated_types.Ge):
-            low = meta.ge
-        elif isinstance(meta, annotated_types.Le):
-            high = meta.le
+        if (ge := getattr(meta, "ge", None)) is not None:
+            low = ge
+        if (le := getattr(meta, "le", None)) is not None:
+            high = le
     if low is not None and high is not None:
         return f"{low} to {high}"
     if low is not None:
