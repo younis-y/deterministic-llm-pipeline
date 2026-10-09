@@ -226,9 +226,17 @@ output:
   email:
     enabled: false
     smtp_host: smtp.example.com
+    # 587 (the default) connects in plain text and upgrades with STARTTLS;
+    # 465 uses implicit TLS, encrypted from the first byte.
     smtp_port: 587
     username: you@example.com
     to: you@example.com
+    # Leave unset unless the mail never arrives. On a machine where a VPN blocks
+    # the mail ports (465, 587, 993) while HTTPS passes, the send times out and
+    # the digest stays on disk. Name the interface that reaches the internet
+    # directly (`en0` on a Mac's Wi-Fi, `eth0` or `wlan0` on Linux) and the mail
+    # socket binds to its IPv4 address, looked up at every send.
+    # bind_interface: en0
 
 # ---------------------------------------------------------------------------
 # Sources. Run `rolescan sources` for every registered kind and its slug format.

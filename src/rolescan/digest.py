@@ -5,19 +5,28 @@ from __future__ import annotations
 import html
 import logging
 import smtplib
+import ssl
 from collections import Counter
 from datetime import UTC, datetime
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Any
 
 from rolescan.config import EmailConfig
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
+from rolescan.netif import interface_ipv4
 from rolescan.pipeline import ScanResult, SourceReport
 from rolescan.scoring.judges import available_judges
 from rolescan.scoring.keyword import SYNTHETIC_PENALTIES
 from rolescan.scoring.rules import RULE_ORDER
 
-__all__ = ["render_html", "render_markdown", "send_email", "write_digest"]
+__all__ = [
+    "EmailError",
+    "render_html",
+    "render_markdown",
+    "send_email",
+    "write_digest",
+]
 
 log = logging.getLogger(__name__)
 
@@ -1311,6 +1320,77 @@ def _write_atomic(path: Path, text: str) -> None:
     tmp.replace(path)
 
 
+class EmailError(RuntimeError):
+    """The digest could not be sent for a reason the message explains."""
+
+
+#: Implicit TLS (SMTPS): the connection is encrypted from its first byte.
+#: Every other port starts in plain text and upgrades with STARTTLS.
+_IMPLICIT_TLS_PORT = 465
+
+_SMTP_TIMEOUT = 30
+
+
+def _no_answer(cfg: EmailConfig, cause: Exception) -> str:
+    """What to try when the mail port does not answer.
+
+    A VPN tunnel that drops mail ports while HTTPS passes looks, from here, like
+    a timeout: nothing says the port is blocked."""
+    where = f"mail port {cfg.smtp_port} on {cfg.smtp_host} did not answer"
+    if cfg.bind_interface:
+        where += f" from interface {cfg.bind_interface}"
+    return (
+        f"{where}; a VPN or firewall may block mail ports; set "
+        "email.bind_interface to the interface that reaches the internet "
+        f"directly (for example en0) ({type(cause).__name__}: {cause})"
+    )
+
+
+def _connect(cfg: EmailConfig, source: tuple[str, int] | None) -> smtplib.SMTP:
+    """An open, encrypted connection, before login.
+
+    Connect and the TLS handshake are the steps a blocked port stalls, so a
+    network error there (and only there) becomes an `EmailError` that says what
+    to try. That covers a connect that times out (`TimeoutError`, an `OSError`)
+    and a banner that never arrives, which smtplib reports as
+    `SMTPServerDisconnected`. Every other `smtplib.SMTPException` (also an
+    `OSError`) means the server answered and said no, and so does a certificate
+    that does not verify: neither is a blocked port, and each reaches the caller
+    as it is.
+    """
+    # Only name source_address when binding, so the unbound call is exactly the
+    # one the module has always made.
+    options: dict[str, Any] = {"timeout": _SMTP_TIMEOUT}
+    if source is not None:
+        options["source_address"] = source
+    client: smtplib.SMTP | None = None
+    try:
+        if cfg.smtp_port == _IMPLICIT_TLS_PORT:
+            # smtplib's own default context for SMTP_SSL does not verify the
+            # server's certificate; this one does.
+            client = smtplib.SMTP_SSL(
+                cfg.smtp_host,
+                cfg.smtp_port,
+                context=ssl.create_default_context(),
+                **options,
+            )
+        else:
+            client = smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, **options)
+            client.starttls()
+    except (smtplib.SMTPException, OSError) as e:
+        # close(), not a QUIT: the connection is not in a state to be talked to.
+        if client is not None:
+            client.close()
+        answered = isinstance(e, ssl.SSLCertVerificationError) or (
+            isinstance(e, smtplib.SMTPException)
+            and not isinstance(e, smtplib.SMTPServerDisconnected)
+        )
+        if answered:
+            raise
+        raise EmailError(_no_answer(cfg, e)) from e
+    return client
+
+
 def send_email(
     text: str,
     cfg: EmailConfig,
@@ -1321,9 +1401,20 @@ def send_email(
     """Send the digest. Named `html_body`, not `html`, because this module
     imports the stdlib `html` for escaping and a parameter of that name
     shadows it: the next person reaching for `html.escape()` in here would get
-    an AttributeError on a str."""
+    an AttributeError on a str.
+
+    A failure raises, and `cli._deliver` turns that into exit status 1 with the
+    digest still on disk. With `cfg.bind_interface` set, the interface's address
+    is looked up here, at every send, and the socket is bound to it."""
     if not cfg.enabled:
         return False
+    source: tuple[str, int] | None = None
+    if cfg.bind_interface:
+        try:
+            source = (interface_ipv4(cfg.bind_interface), 0)
+        except ValueError as e:
+            problem = f"email.bind_interface: {e}"
+            raise EmailError(problem) from e
     msg = EmailMessage()
     msg["Subject"] = subject or f"Job scan {datetime.now(UTC).strftime('%d %b')}"
     msg["From"] = cfg.username
@@ -1331,8 +1422,7 @@ def send_email(
     msg.set_content(text)
     if html_body is not None:
         msg.add_alternative(html_body, subtype="html")
-    with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=30) as s:
-        s.starttls()
+    with _connect(cfg, source) as s:
         s.login(cfg.username, cfg.password)
         s.send_message(msg)
     return True

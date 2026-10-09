@@ -368,6 +368,12 @@ holds the store's lock. The digest says why. The store gets a checked copy in
 `backups/` beside it once a day (`output.backup_keep`, default 7), and its
 caches are trimmed after each real scan (`output.retention_days`).
 
+If the digest is written but the email times out, a VPN may be blocking the mail
+ports: set `output.email.bind_interface` to the interface that reaches the
+internet directly (for example `en0`) and the mail socket binds to that
+interface's address, looked up at every send (port 465 uses implicit TLS, any
+other port STARTTLS).
+
 `discover` distinguishes five outcomes on purpose. `EMPTY` means a real board
 with no openings; `UNKNOWN` means an API that cannot tell an empty board from a
 wrong slug. Collapsing those into a single "OK" hides which of them actually returned postings.

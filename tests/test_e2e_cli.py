@@ -497,6 +497,31 @@ def test_an_smtp_failure_exits_non_zero_and_leaves_the_digest_on_disk(
     assert (tmp_path / "digests" / "latest.md").is_file()
 
 
+@respx.mock
+def test_a_blocked_mail_port_exits_one_and_says_how_to_route_around_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A VPN that drops mail ports while HTTPS passes made every send wait out
+    its timeout. The run still exits 1 with the digest on disk, but the message
+    now names the port and the setting that fixes it."""
+
+    def blocked(host: str, port: int, timeout: int = 30) -> None:
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("rolescan.digest.smtplib.SMTP", blocked)
+    cfg = _project(tmp_path, EMAIL_CONFIG)
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
+        return_value=httpx.Response(200, json=BOARD)
+    )
+    result = runner.invoke(app, ["scan", "-c", str(cfg)])
+    assert result.exit_code == 1, result.output
+    out = " ".join(plain(result.output).split())
+    assert "email failed" in out
+    assert "mail port 587 on smtp.example.test did not answer" in out
+    assert "email.bind_interface" in out
+    assert (tmp_path / "digests" / "latest.md").is_file()
+
+
 # --- the mark command --------------------------------------------------------
 
 

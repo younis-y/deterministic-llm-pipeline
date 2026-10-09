@@ -547,6 +547,12 @@ class EmailConfig(BaseModel):
     username: str = ""
     password: str = ""
     to: str = ""
+    bind_interface: str = ""
+    """The network interface whose IPv4 address the mail socket binds to, for
+    example `en0`, for a machine where a VPN blocks the mail ports while HTTPS
+    passes. The address is read at every send, so a changed network still works.
+    Empty, the default, leaves the choice to the default route. Port 465 uses
+    implicit TLS; any other port starts in plain text and upgrades with STARTTLS."""
 
     @model_validator(mode="after")
     def _resolve(self) -> Self:

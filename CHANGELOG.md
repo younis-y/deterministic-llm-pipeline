@@ -2,6 +2,13 @@
 
 All notable changes to rolescan. Newest first.
 
+## 2.5.10
+
+### Added
+- `output.email.bind_interface` (default empty): the network interface whose IPv4 address the mail socket binds to, for example `en0`. On a machine where a VPN tunnel blocks every mail port (465, 587, 993) while HTTPS passes, the send timed out and the digest stayed on disk; binding the socket to the interface that reaches the internet directly routes around the tunnel. The address is read at every send (the kernel's `SIOCGIFADDR` on Linux, `ifconfig` on macOS and the BSDs; `rolescan.netif.interface_ipv4`), never cached, so a changed network still works. An interface with no IPv4 address (down, or renamed) is an error that names it, and nothing is sent. Empty, the socket is unbound, as before.
+- `email.smtp_port: 465` now uses implicit TLS (`smtplib.SMTP_SSL`, with a context that verifies the server's certificate); every other port is unchanged (plain connect, then STARTTLS).
+- A mail port that does not answer (a connect that times out or is refused, or a banner that never arrives, in the connect or the TLS handshake) now fails with `rolescan.digest.EmailError`: "mail port 587 on smtp.example.com did not answer; a VPN or firewall may block mail ports; set email.bind_interface to the interface that reaches the internet directly (for example en0)", with the underlying error appended. The run still exits 1 with the digest on disk. A server that answers and refuses (a wrong password, no STARTTLS) raises its own `smtplib` error, as before.
+
 ## 2.5.9
 
 ### Fixed
