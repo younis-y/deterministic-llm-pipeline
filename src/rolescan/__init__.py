@@ -6,7 +6,7 @@ from rolescan.config import Config
 from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
 from rolescan.pipeline import ScanResult, record_scan, run_scan
 
-__version__ = "2.6.0"
+__version__ = "2.7.0"
 
 __all__ = [
     "Config",
