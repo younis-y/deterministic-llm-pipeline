@@ -257,6 +257,16 @@ DESCRIPTIONS: dict[str, str] = {
         "your own. A blank value is a config error."
     ),
     "http.user_agent": "Replaces the whole User-Agent header when set.",
+    "http.bind_interface": (
+        "The network interface whose IPv4 address the job-fetching connections "
+        "leave from (`en0`, `eth0`), for a machine where a VPN's exit address is "
+        "refused by a job site that answers the machine's own. Read once when a "
+        "scan or `discover` starts; an interface with no IPv4 address stops the "
+        "run before any request. The model backends are never bound. A "
+        "destination reachable over IPv6 only cannot be reached from an IPv4 "
+        "source address, and `HTTP_PROXY` and `HTTPS_PROXY` are not used while "
+        "it is set. Empty leaves it to the default route."
+    ),
     # output
     "output.dir": "Where digests are written, relative to this file.",
     "output.db_path": "The store (SQLite), relative to this file.",

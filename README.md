@@ -599,7 +599,8 @@ report it again.
 
 `rolescan scan` tells a scheduler how the run went. Exit status: 0 ok; 1
 email failed, the day's backup failed its check, or the store was written by
-a newer rolescan (takes precedence over 3); 2 config error; 3 LLM scoring
+a newer rolescan (takes precedence over 3); 2 config error, or
+http.bind_interface names an interface with no IPv4 address; 3 LLM scoring
 failed as a whole (after the digest was written and sent); 4 another run
 holds the store's lock. The digest says why. The store gets a checked copy in
 `backups/` beside it once a day (`output.backup_keep`, default 7), and its
@@ -610,6 +611,16 @@ ports: set `output.email.bind_interface` to the interface that reaches the
 internet directly (for example `en0`) and the mail socket binds to that
 interface's address, looked up at every send (port 465 uses implicit TLS, any
 other port STARTTLS).
+
+The same VPN's exit address can be the thing a job site refuses, while the site
+answers the same request from your own network. Set `http.bind_interface` to the
+interface that reaches the internet directly (for example `en0`) and the
+job-fetching connections leave from that interface's IPv4 address, read once
+when a scan or `discover` starts. An interface with no IPv4 address stops the
+run before any request, with exit status 2. The model backends are never bound,
+so a model on localhost still answers. A site reachable over IPv6 only cannot be
+reached from an IPv4 address, and `HTTP_PROXY` and `HTTPS_PROXY` are not used
+while the setting is on.
 
 `discover` distinguishes five outcomes on purpose. `EMPTY` means a real board
 with no openings; `UNKNOWN` means an API that cannot tell an empty board from a

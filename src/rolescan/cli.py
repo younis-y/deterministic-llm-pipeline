@@ -11,6 +11,7 @@ import typer
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.table import Table
 
 from rolescan.config import Config, SourceEntry
@@ -25,7 +26,7 @@ from rolescan.digest import (
     write_digest,
     write_hidden_list,
 )
-from rolescan.http import Fetcher
+from rolescan.http import BindError, Fetcher
 from rolescan.models import Verdict
 from rolescan.pipeline import ScanResult, record_scan, run_scan
 from rolescan.slugs import SlugIndex
@@ -102,6 +103,14 @@ def _load(path: Path) -> Config:
     except Exception as e:
         console.print(f"[red]Config error:[/] {e}")
         raise typer.Exit(2) from e
+
+
+def _refuse_a_dead_interface(e: BindError) -> typer.Exit:
+    """Exit 2, the config-error status, when `http.bind_interface` names an
+    interface with no IPv4 address (2.8.0). Raised before any request, so
+    nothing was fetched."""
+    console.print(f"[red]Config error:[/] {escape(str(e))}")
+    return typer.Exit(2)
 
 
 def _refuse_a_newer_store(db_path: Path) -> None:
@@ -215,8 +224,9 @@ def _deliver(
 _SCAN_EXIT_STATUS = (
     "Exit status: 0 ok; 1 email failed, the day's backup failed its check, or "
     "the store was written by a newer rolescan (takes precedence over 3); "
-    "2 config error; 3 LLM scoring failed as a whole (after the digest was "
-    "written and sent); 4 another run holds the store's lock."
+    "2 config error, or http.bind_interface names an interface with no IPv4 "
+    "address; 3 LLM scoring failed as a whole (after the digest was written "
+    "and sent); 4 another run holds the store's lock."
 )
 
 
@@ -276,7 +286,10 @@ def _scan(cfg: Config, config: Path, *, dry: bool, no_llm: bool, email: bool) ->
             shortlist_rows = await store.shortlist()
         return result, shortlist_rows
 
-    result, shortlist_rows = asyncio.run(_go())
+    try:
+        result, shortlist_rows = asyncio.run(_go())
+    except BindError as e:
+        raise _refuse_a_dead_interface(e) from e
     _warn_if_llm_did_not_run(result, cfg)
 
     # Both parts of the email are rendered from the same ScanResult. The HTML
@@ -406,7 +419,10 @@ def discover(
     """Probe every configured board and report which slugs actually work."""
     _setup_logging(verbose)
     cfg = _load(config)
-    rows = asyncio.run(_probe_all(cfg))
+    try:
+        rows = asyncio.run(_probe_all(cfg))
+    except BindError as e:
+        raise _refuse_a_dead_interface(e) from e
     statuses = {r.status for _, r in rows}
 
     console.print(_probe_table(rows))
