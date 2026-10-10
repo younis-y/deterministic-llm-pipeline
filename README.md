@@ -1,6 +1,6 @@
 # rolescan
 
-[![ci](https://github.com/younis-y/rolescan/actions/workflows/ci.yml/badge.svg)](https://github.com/younis-y/rolescan/actions/workflows/ci.yml)
+[![ci](https://github.com/younis-y/deterministic-llm-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/younis-y/deterministic-llm-pipeline/actions/workflows/ci.yml)
 
 A job scanner that reads employers' own career sites, scores postings against
 the profile you write, and writes a ranked digest, spending an LLM call only on
@@ -11,9 +11,20 @@ deterministic keyword rules before any model is invoked, so the expensive stage
 sees a small fraction of the traffic, and the cheap stage is reproducible and
 free to re-run. [Measured quality](#measured-quality) has one real run.
 
+**The model reports; code decides.** In the default facts mode the model only
+extracts facts from a posting, each backed by a quote that code checks against
+the advert, and fixed rules turn those facts into the verdict. The same facts
+always give the same answer, and every hidden role is listed with the rule that
+hid it.
+
+**Model spend has hard bounds.** A call ceiling and a wall-clock budget cap each
+run; postings past either are deferred to the next run, never dropped, and a
+cached verdict is never paid for twice. One measured run cost about USD 0.003 a
+posting ([Models, keys and cost](#models-keys-and-cost)).
+
 Both the sources and the scoring backends load through **entry points**, so
 adding an ATS adapter or swapping Claude for a local Ollama model is a plugin,
-not a fork. Over a thousand tests run offline against `respx`-mocked transport:
+not a fork. Over two thousand tests run offline against `respx`-mocked transport:
 the real HTTP clients and real parsers are exercised against recorded response
 shapes rather than stubbed out. `mypy` runs strict across `src` and `tests`.
 
@@ -61,7 +72,7 @@ employers you care about under `sources` (`rolescan slugs "Employer Name"` and
 `rolescan discover` help find the right board), and run `rolescan scan` without
 `--dry`. To score with a model, see [What you must supply](#what-you-must-supply).
 
-## The two decisions worth reading the code for
+## The three decisions worth reading the code for
 
 **A deterministic prefilter runs before anything expensive.** Scoring is two
 stages. The first is pure Python over the posting text: weighted keyword terms,
@@ -76,6 +87,13 @@ groups, declared in `pyproject.toml`. A third-party package can ship a new ATS
 adapter or a new model backend without touching pipeline code, and the pipeline
 holds no knowledge of either. Adding an employer on an already-supported
 platform is a line of config and no code at all.
+
+**The model never makes the decision.** In facts mode (the default) the model
+returns structured facts with quotes; a quote the advert does not contain is
+dropped, resolver passes settle the level, field and years required, and
+`decide` applies your `profile.rules` in plain code. A model that misreads one
+fact costs one fact, not a silent verdict, and a rule change re-runs on cached
+facts without paying for the model again.
 
 ## Why it exists
 
