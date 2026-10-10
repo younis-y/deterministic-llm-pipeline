@@ -9,6 +9,7 @@ takes: deferred, never written to `seen`, come round again next run.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 from pathlib import Path
@@ -135,6 +136,64 @@ async def test_the_call_that_passes_the_budget_scores_and_the_rest_are_deferred(
     assert record is not None
     assert record.calls == 3
     assert record.deferred == 3
+
+
+async def test_calls_in_flight_when_the_budget_runs_out_finish_and_are_scored() -> None:
+    """With several calls at once, the budget can run out while some are still
+    running. Those finish and are scored; nothing waiting behind them starts.
+
+    Two slots, four postings, a one-minute budget. The first two calls start
+    together and are held open; the clock moves two minutes while they run, so
+    the budget is spent with both in flight. Only then are they let go."""
+    clock = _Clock()
+    cfg = LLMConfig(enabled=True, backend="ollama", max_concurrent=2, max_minutes=1)
+    scorer = FitScorer(cfg, ProfileConfig(min_report_score=55), clock=clock)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    in_flight = 0
+    calls = 0
+
+    class _Held(Judge):
+        name = "held-test-judge"
+
+        def __init__(self) -> None:
+            super().__init__(LLMConfig())
+
+        async def verdict(self, system: str, user: str) -> FitVerdict:
+            raise NotImplementedError
+
+        async def facts(self, system: str, user: str) -> PostingFacts:
+            nonlocal in_flight, calls
+            calls += 1
+            in_flight += 1
+            if in_flight == 2:
+                started.set()
+            await release.wait()
+            in_flight -= 1
+            return PostingFacts.model_validate({"fit_score": 60, "reason": "fits"})
+
+    scorer._judge = _Held()
+
+    run = asyncio.ensure_future(scorer.score_all(_postings(4)))
+    await asyncio.wait_for(started.wait(), timeout=5)
+    assert calls == 2
+    clock.now += 2 * MINUTE  # the budget is spent while both calls are running
+    release.set()
+    out = await asyncio.wait_for(run, timeout=5)
+
+    assert calls == 2, "no call started once the budget was spent"
+    assert scorer.calls_made == 2
+    assert [s.job.company for s in out if s.fit is not None] == [
+        "Acme 0",
+        "Acme 1",
+    ]
+    assert all(s.fit.fit_score == 60 for s in out if s.fit is not None)
+    deferred = [s for s in out if s.deferred]
+    assert [s.job.company for s in deferred] == ["Acme 2", "Acme 3"]
+    assert {s.deferred for s in deferred} == {"llm_time"}
+    record = scorer.run_record()
+    assert record is not None
+    assert (record.calls, record.deferred) == (2, 2)
 
 
 async def test_a_zero_budget_never_defers_on_time() -> None:
