@@ -2,6 +2,11 @@
 
 All notable changes to rolescan. Newest first.
 
+## 2.8.1 (2026-10-10)
+
+### Fixed
+- The `structured` source's whole-number options (`max_age_days`, `max_sitemap_urls`) accept a numeric string such as `"30"`, and `incremental` accepts `"true"` or `"false"`. A plugin passes a source's options through from its own config, where every value is a string; the `workday` source has accepted `"1000"` for `max_rows` since 2.5.8, but the options added in 2.6.0 refused text, so a plugin could not set them. Anything else is still refused with the option's name.
+
 ## 2.8.0 (2026-10-10)
 
 ### Added

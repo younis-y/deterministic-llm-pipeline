@@ -310,6 +310,10 @@ class Structured(Source):
         raw = self.entry.options.get(name, default)
         if raw is None:
             return None
+        # A plugin passes options through from its own config, where every value
+        # is a string, as the workday source has allowed since 2.5.8 (2.8.1).
+        if isinstance(raw, str) and raw.strip().isdigit():
+            raw = int(raw.strip())
         if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
             msg = (
                 f"structured option {name} must be a whole number of at least 1, "
@@ -333,6 +337,9 @@ class Structured(Source):
     def incremental(self) -> bool:
         """Read only what the sitemap says changed since the last whole scan."""
         raw = self.entry.options.get("incremental", False)
+        # "true"/"false" from a plugin's string-valued config (2.8.1).
+        if isinstance(raw, str) and raw.strip().lower() in {"true", "false"}:
+            raw = raw.strip().lower() == "true"
         if not isinstance(raw, bool):
             msg = f"structured option incremental must be true or false, not {raw!r}"
             raise ValueError(msg)

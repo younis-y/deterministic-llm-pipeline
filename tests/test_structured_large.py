@@ -607,7 +607,8 @@ async def test_without_incremental_the_sitemap_order_and_every_url_are_kept() ->
     assert "2 of 3" in source.truncated
 
 
-@pytest.mark.parametrize("bad", ["true", "yes", 1, None])
+# "true" and "false" as text are read since 2.8.1 (a plugin's string config).
+@pytest.mark.parametrize("bad", ["yes", "1", 1, None])
 def test_incremental_must_be_true_or_false(bad: Any) -> None:
     with pytest.raises(ValueError, match="incremental"):
         _ = Structured(_entry(incremental=bad), None).incremental  # type: ignore[arg-type]
@@ -621,3 +622,53 @@ def test_a_mark_is_a_date_when_it_is_read_back() -> None:
     assert source._since_date() is None
     source.since = ""
     assert source._since_date() is None
+
+
+# --- options passed as text (2.8.1) ---------------------------------------------
+#
+# A plugin passes a source's options through from its own config, where every
+# value is a string (the workday source has accepted "1000" since 2.5.8). The
+# structured options added in 2.6.0 refused "30", so a plugin could not set them.
+
+
+def _with(**options: Any) -> Structured:
+    entry = SourceEntry(
+        kind="structured",
+        slug="acme",
+        label="Acme",
+        sitemap="https://jobs.example.test/sitemap.xml",
+        **options,
+    )
+    source = get_source(entry, Fetcher(HTTPConfig()))
+    assert isinstance(source, Structured)
+    return source
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "number"),
+    [("max_age_days", "30", 30), ("max_sitemap_urls", "60000", 60000)],
+)
+def test_a_whole_number_given_as_text_is_read(
+    name: str, text: str, number: int
+) -> None:
+    assert getattr(_with(**{name: text}), name) == number
+
+
+@pytest.mark.parametrize("text", ["0", "-3", "thirty", "2.5", ""])
+def test_text_that_is_not_a_whole_number_of_at_least_one_is_refused(
+    text: str,
+) -> None:
+    with pytest.raises(ValueError, match="max_age_days"):
+        _ = _with(max_age_days=text).max_age_days
+
+
+@pytest.mark.parametrize(
+    ("text", "value"), [("true", True), ("False", False), (" TRUE ", True)]
+)
+def test_incremental_given_as_text_is_read(text: str, value: bool) -> None:
+    assert _with(incremental=text).incremental is value
+
+
+def test_incremental_text_other_than_true_or_false_is_refused() -> None:
+    with pytest.raises(ValueError, match="incremental"):
+        _ = _with(incremental="yes").incremental
