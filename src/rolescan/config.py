@@ -537,6 +537,16 @@ class HTTPConfig(BaseModel):
     user_agent: str = ""
     """The User-Agent header. Empty, the default, means
     `rolescan/<version> (+<contact_url>)`; anything else is sent as it is."""
+    bind_interface: str = ""
+    """The network interface whose IPv4 address the job-fetching connections
+    leave from, for example `en0`, for a machine where a VPN's exit address is
+    refused by a job site that answers the machine's own address (2.8.0). The
+    address is read once, when a scan or `discover` starts; an interface with no
+    IPv4 address stops it before any request. Only job traffic is bound, never
+    the model backends. A destination reachable over IPv6 only cannot be reached
+    from an IPv4 source address, and `HTTP_PROXY` and `HTTPS_PROXY` are not used
+    while it is set. Empty, the default, leaves the choice to the default
+    route."""
 
     @model_validator(mode="after")
     def _default_user_agent(self) -> Self:

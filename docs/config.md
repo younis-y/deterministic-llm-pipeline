@@ -101,6 +101,7 @@ How requests are made.
 | `http.max_retries` | whole number, 0 to 10 | `3` | Retries per failed request. |
 | `http.contact_url` | text | the project's page | Shown in the User-Agent, `rolescan/<version> (+<contact_url>)`, so a site owner can see what is calling. Point it at your fork or a page of your own. A blank value is a config error. |
 | `http.user_agent` | text | `rolescan/<version> (+<contact_url>)` | Replaces the whole User-Agent header when set. |
+| `http.bind_interface` | text | empty | The network interface whose IPv4 address the job-fetching connections leave from (`en0`, `eth0`), for a machine where a VPN's exit address is refused by a job site that answers the machine's own. Read once when a scan or `discover` starts; an interface with no IPv4 address stops the run before any request. The model backends are never bound. A destination reachable over IPv6 only cannot be reached from an IPv4 source address, and `HTTP_PROXY` and `HTTPS_PROXY` are not used while it is set. Empty leaves it to the default route. |
 
 ## output
 

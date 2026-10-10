@@ -2,6 +2,17 @@
 
 All notable changes to rolescan. Newest first.
 
+## 2.8.0 (2026-10-10)
+
+### Added
+- `http.bind_interface` (default empty): the network interface whose IPv4 address the job-fetching connections leave from, for example `en0`. A VPN's exit address can be refused by a job site that answers the same request, with the same User-Agent, from the machine's own interface (a job board's sitemap returned 403 through the VPN and 200 from the Wi-Fi interface); this sends job traffic around the tunnel the way `output.email.bind_interface` does for mail. Set, the `Fetcher`'s client is given an `httpx.AsyncHTTPTransport(local_address=...)` that carries the same connection limits; http2, certificate checking, redirects, headers and timeouts are as they were. Empty, the client is built exactly as before. The address comes from `rolescan.netif.interface_ipv4` and is read once, when the `Fetcher` opens. An interface with no IPv4 address (down, or renamed) stops `rolescan scan` and `rolescan discover` before any request, exit status 2, with "http.bind_interface: interface 'en7' has no IPv4 address (is it up, and is that still its name?)"; library callers get `rolescan.http.BindError`. Only the job-fetching `Fetcher` binds: the model backends' clients are untouched, so a model on localhost still answers. **A destination reachable over IPv6 only cannot be reached from a bound IPv4 address**, and httpx, given its own transport, does not read `HTTP_PROXY` or `HTTPS_PROXY` while the setting is on.
+
+### Changed
+- `rolescan scan --help` and the README list `http.bind_interface` with exit status 2.
+
+### Tests
+- Calls already in flight when `llm.max_minutes` is spent finish and are scored, and no new call starts, with `llm.max_concurrent` above 1 (the 2.7.0 time budget had a test only for one call at a time).
+
 ## 2.7.0 (2026-10-09)
 
 ### Added

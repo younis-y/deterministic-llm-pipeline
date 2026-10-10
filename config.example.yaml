@@ -241,6 +241,13 @@ http:
   # Every request says "rolescan/<version> (+<contact_url>)", so a site owner
   # can see what is calling. Point it at your fork or a page of your own.
   # contact_url: https://example.org/about-my-job-scanner
+  # Leave unset unless a job site refuses the requests while its pages open
+  # from your own network: a VPN's exit address is sometimes what it refuses.
+  # Name the interface that reaches the internet directly (like
+  # output.email.bind_interface below) and the job-fetching connections leave
+  # from its IPv4 address, read once when a scan starts. Model backends are
+  # never bound. IPv6-only sites cannot be reached from an IPv4 address.
+  # bind_interface: en0
 
 output:
   dir: digests

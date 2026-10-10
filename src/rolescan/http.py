@@ -17,8 +17,16 @@ from urllib.parse import quote
 import httpx
 
 from rolescan.config import HTTPConfig
+from rolescan.netif import interface_ipv4
 
-__all__ = ["REDACTED", "FetchError", "Fetcher", "RedactSecrets", "hide_in_logs"]
+__all__ = [
+    "REDACTED",
+    "BindError",
+    "FetchError",
+    "Fetcher",
+    "RedactSecrets",
+    "hide_in_logs",
+]
 
 log = logging.getLogger(__name__)
 
@@ -84,11 +92,20 @@ class FetchError(RuntimeError):
         self.detail = detail
 
 
+class BindError(RuntimeError):
+    """`http.bind_interface` names an interface with no IPv4 address, so no
+    request was made. The message names the setting and the interface."""
+
+
 class Fetcher:
     """Async HTTP with bounded concurrency and sane retries.
 
     Used as an async context manager so the connection pool is always closed,
     including on the error paths.
+
+    With `cfg.bind_interface` set, every connection leaves from that
+    interface's IPv4 address, read once when the context opens (2.8.0). Only
+    this client binds: the model backends build their own.
     """
 
     def __init__(self, cfg: HTTPConfig | None = None) -> None:
@@ -97,14 +114,30 @@ class Fetcher:
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> Self:
+        limits = httpx.Limits(
+            max_connections=self.cfg.max_concurrent * 2,
+            max_keepalive_connections=self.cfg.max_concurrent,
+        )
+        options: dict[str, Any] = {}
+        if self.cfg.bind_interface:
+            # Read before any request, and only when an interface is named, so
+            # an unbound client is built exactly as it has always been. The
+            # transport carries the limits too: a client given its own
+            # transport does not apply its `limits` to it.
+            try:
+                address = interface_ipv4(self.cfg.bind_interface)
+            except ValueError as e:
+                problem = f"http.bind_interface: {e}"
+                raise BindError(problem) from e
+            options["transport"] = httpx.AsyncHTTPTransport(
+                local_address=address, limits=limits
+            )
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.cfg.timeout),
             headers={"User-Agent": self.cfg.user_agent, "Accept": "application/json"},
             follow_redirects=True,
-            limits=httpx.Limits(
-                max_connections=self.cfg.max_concurrent * 2,
-                max_keepalive_connections=self.cfg.max_concurrent,
-            ),
+            limits=limits,
+            **options,
         )
         return self
 
