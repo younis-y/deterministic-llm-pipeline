@@ -71,7 +71,11 @@ class _FakeBatches:
         outcomes: dict[int, str] | None = None,
         create_error: Exception | None = None,
         never_ends: bool = False,
+        retrieve_errors: int = 0,
+        results_errors: int = 0,
     ) -> None:
+        self.retrieve_errors = retrieve_errors
+        self.results_errors = results_errors
         self.created: list[list[dict[str, Any]]] = []
         self.retrieved = 0
         self.cancelled: list[str] = []
@@ -86,7 +90,15 @@ class _FakeBatches:
         self.created.append(list(requests))
         return SimpleNamespace(id="msgbatch_1", processing_status="in_progress")
 
-    async def retrieve(self, message_batch_id: str) -> SimpleNamespace:
+    async def retrieve(
+        self,
+        message_batch_id: str,
+        *,
+        timeout: Any = None,  # noqa: ASYNC109 - the SDK's signature
+    ) -> SimpleNamespace:
+        if self.retrieve_errors:
+            self.retrieve_errors -= 1
+            raise ConnectionError("Connection error.")
         self.retrieved += 1
         ended = self.cancelled or (not self.never_ends and self.retrieved > self.polls)
         return SimpleNamespace(
@@ -94,11 +106,19 @@ class _FakeBatches:
             processing_status="ended" if ended else "in_progress",
         )
 
-    async def cancel(self, message_batch_id: str) -> SimpleNamespace:
+    async def cancel(
+        self,
+        message_batch_id: str,
+        *,
+        timeout: Any = None,  # noqa: ASYNC109 - the SDK's signature
+    ) -> SimpleNamespace:
         self.cancelled.append(message_batch_id)
         return SimpleNamespace(id=message_batch_id, processing_status="canceling")
 
-    async def results(self, message_batch_id: str) -> Any:
+    async def results(self, message_batch_id: str, *, timeout: Any = None) -> Any:  # noqa: ASYNC109 - the SDK's signature
+        if self.results_errors:
+            self.results_errors -= 1
+            raise ConnectionError("Connection error.")
         requests = self.created[-1]
         outcomes = self.outcomes
         cancelled = bool(self.cancelled)
@@ -253,6 +273,24 @@ async def test_the_batch_is_polled_until_it_ends() -> None:
     out = await _ask(judge, 4)
     assert all(isinstance(f, PostingFacts) for f in out)
     assert batches.retrieved == 4
+
+
+async def test_a_network_drop_while_waiting_does_not_abandon_the_batch() -> None:
+    """The batch runs on the server whether or not the scan can reach it. A
+    check that fails is tried again, so answers already paid for are kept."""
+    batches = _FakeBatches(retrieve_errors=3, results_errors=2)
+    judge, _ = _judge(batches)
+    out = await _ask(judge, 5)
+    assert all(isinstance(f, PostingFacts) for f in out)
+    assert batches.cancelled == []
+
+
+async def test_results_that_can_never_be_read_fail_the_batch() -> None:
+    batches = _FakeBatches(results_errors=99)
+    judge, _ = _judge(batches)
+    out = await _ask(judge, 4)
+    assert isinstance(out[0], PostingFacts)
+    assert all(isinstance(e, ConnectionError) for e in out[1:])
 
 
 async def test_a_request_the_batch_failed_raises_for_that_posting_only() -> None:

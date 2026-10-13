@@ -2,6 +2,11 @@
 
 All notable changes to rolescan. Newest first.
 
+## 2.9.1 (2026-10-13)
+
+### Fixed
+- `llm.batch`: a check on a running batch that fails (the network dropped, the API was briefly unavailable) no longer abandons the batch. In 2.9.0 the first failed check raised out of the wait, so every posting in the batch became a scoring error while the batch went on running on the server and was billed: on its first real scan a connection stalled three minutes after a batch of 167 was sent, and all 167 answers were lost. A failed check now counts as "not ended yet", is logged, and the next one is made `llm.batch_poll_seconds` later, up to `llm.batch_max_minutes` as before. The results of an ended batch are read whole before any is used and asked for up to five times. Each request about a batch (a check, a cancel, the results) is given 60 seconds instead of the SDK's ten minutes, which a stalled connection used in full before the next check could start.
+
 ## 2.9.0 (2026-10-13)
 
 ### Added

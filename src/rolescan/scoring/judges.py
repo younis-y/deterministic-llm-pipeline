@@ -701,6 +701,40 @@ class AnthropicJudge(Judge):
         log.info("message batch %s: %d facts requests sent", batch.id, len(requests))
         return str(batch.id)
 
+    async def _batch_ended(self, batch_id: str) -> bool:
+        """Whether the batch has ended. A check that fails (the network
+        dropped, the API was briefly unavailable) is a check that said "not
+        yet": the batch runs on the server either way, and giving up on it
+        would throw away answers already paid for (2.9.1)."""
+        batches = self._get_client().messages.batches
+        try:
+            batch = await batches.retrieve(batch_id, timeout=BATCH_REQUEST_TIMEOUT)
+        except Exception as e:
+            log.warning(
+                "could not check message batch %s (%s); trying again", batch_id, e
+            )
+            return False
+        return bool(batch.processing_status == "ended")
+
+    async def _batch_rows(self, batch_id: str) -> list[Any]:
+        """Every result row of an ended batch, read whole before any is used
+        and tried `BATCH_RESULT_ATTEMPTS` times (2.9.1)."""
+        batches = self._get_client().messages.batches
+        for attempt in range(1, BATCH_RESULT_ATTEMPTS + 1):
+            try:
+                stream = await batches.results(batch_id, timeout=BATCH_REQUEST_TIMEOUT)
+                return [row async for row in stream]
+            except Exception as e:
+                if attempt == BATCH_RESULT_ATTEMPTS:
+                    raise
+                log.warning(
+                    "could not read the results of message batch %s (%s); trying again",
+                    batch_id,
+                    e,
+                )
+                await self._sleep(self.cfg.batch_poll_seconds)
+        return []  # pragma: no cover - the loop returns or raises
+
     async def _collect(
         self,
         batch_id: str,
@@ -715,7 +749,7 @@ class AnthropicJudge(Judge):
         try:
             for _ in range(polls):
                 await self._sleep(self.cfg.batch_poll_seconds)
-                if (await batches.retrieve(batch_id)).processing_status == "ended":
+                if await self._batch_ended(batch_id):
                     ended = True
                     break
         except asyncio.CancelledError:
@@ -733,10 +767,11 @@ class AnthropicJudge(Judge):
                 batch_id,
                 self.cfg.batch_max_minutes,
             )
-            await batches.cancel(batch_id)
+            with contextlib.suppress(Exception):
+                await batches.cancel(batch_id, timeout=BATCH_REQUEST_TIMEOUT)
             for _ in range(BATCH_CANCEL_POLLS):
                 await self._sleep(self.cfg.batch_poll_seconds)
-                if (await batches.retrieve(batch_id)).processing_status == "ended":
+                if await self._batch_ended(batch_id):
                     ended = True
                     break
         if not ended:
@@ -745,7 +780,7 @@ class AnthropicJudge(Judge):
 
         waiting = {f"facts-{i}": future for i, (_, _, future) in enumerate(items)}
         usage = _BatchUsage()
-        async for row in await batches.results(batch_id):
+        for row in await self._batch_rows(batch_id):
             future = waiting.pop(row.custom_id, None)
             if future is None:
                 continue
@@ -804,6 +839,12 @@ BATCH_CACHE_TTL = "1h"
 #: Direct calls on the batch path that may fail in a row before the rest are
 #: failed without a call.
 BATCH_DIRECT_FAILURES = 3
+#: Seconds one request about a batch (a check, a cancel, the results) may
+#: take. The SDK's default is ten minutes, which a stalled connection uses in
+#: full before the next check can start.
+BATCH_REQUEST_TIMEOUT = 60.0
+#: Times the results of an ended batch are asked for before giving up.
+BATCH_RESULT_ATTEMPTS = 5
 #: Polls a cancelled batch is given to report that it has ended.
 BATCH_CANCEL_POLLS = 20
 
