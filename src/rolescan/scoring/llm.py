@@ -534,6 +534,11 @@ class FitScorer:
         #: and re-scores - a whole cache lost to a schema that was never wrong.
         self.verdict_model: type[FitVerdict] = FitVerdict
         self._sem = asyncio.Semaphore(cfg.max_concurrent)
+        #: The gate facts calls pass when they are batched (`llm.batch`,
+        #: 2.9.0), built on first use: wide enough for every call the ceiling
+        #: allows, because a batch holds only the calls waiting on it at once.
+        #: Enrichment stays behind `_sem`.
+        self._batch_gate: asyncio.Semaphore | None = None
         #: The monotonic clock the time budget (`llm.max_minutes`) reads, in
         #: seconds. A parameter so a test moves time by hand instead of waiting.
         self._clock = clock
@@ -694,6 +699,23 @@ class FitScorer:
             if self.context_window is not None:
                 self._judge.context_window = self.context_window
         return self._judge
+
+    def _batching(self) -> bool:
+        """Whether this run's facts calls are collected into a batch: asked
+        for, in facts mode, on a backend that can."""
+        return (
+            self.cfg.batch
+            and self.cfg.mode == "facts"
+            and self._get_judge().batches_facts
+        )
+
+    def _facts_gate(self) -> asyncio.Semaphore:
+        """What limits how many facts calls run at once."""
+        if not self._batching():
+            return self._sem
+        if self._batch_gate is None:
+            self._batch_gate = asyncio.Semaphore(max(1, self.cfg.max_calls_per_run))
+        return self._batch_gate
 
     def _get_enricher(self) -> Enricher | None:
         """The configured enricher, built at most once per scorer.
@@ -911,7 +933,7 @@ class FitScorer:
                 await self.store.put_verdict(final_key(job), verdict)
                 return scored.model_copy(update={"fit": verdict, "llm_cached": True})
 
-        async with self._sem:
+        async with self._facts_gate():
             if stop := self._stop_reason():
                 log.info("%s: deferring %r to the next run", stop, job.title)
                 self._deferred += 1
