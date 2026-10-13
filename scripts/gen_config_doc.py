@@ -202,6 +202,21 @@ DESCRIPTIONS: dict[str, str] = {
         "to the next run, as the call ceiling defers them. `0` is no time "
         "limit."
     ),
+    "llm.batch": (
+        "Send facts-mode calls through the Message Batches API, at half the "
+        "standard price for every token. The scan waits for the batch to end, "
+        "usually within the hour. One direct call goes first and writes the "
+        "shared prompt to a one-hour cache entry that the batch reads. Only "
+        "the `anthropic` backend in `mode: facts` batches; judge mode, an "
+        "enricher's calls and other backends are called directly. Fewer than "
+        "three uncached postings are scored directly."
+    ),
+    "llm.batch_poll_seconds": ("Seconds between checks on a running batch."),
+    "llm.batch_max_minutes": (
+        "Minutes a scan waits for a batch. After that the batch is cancelled: "
+        "the answers it already gave are kept, and the remaining postings "
+        "count as scoring errors and are scored on the next run."
+    ),
     "llm.cascade": (
         "Score in two passes: a short call that settles the score, then the "
         "full verdict only for postings that clear `min_report_score`. Used "

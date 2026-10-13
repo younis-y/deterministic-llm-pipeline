@@ -18,10 +18,12 @@ ship one from another package under the `rolescan.judges` entry-point group.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib.util
 import json
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 from typing import Annotated, Any, ClassVar
@@ -227,6 +229,12 @@ class Judge(ABC):
     #: leaves it False - the default `triage` is a full call, so cascading on
     #: one would buy nothing and bill twice.
     cheap_triage: ClassVar[bool] = False
+
+    #: True when `facts` collects concurrent calls into one batch request
+    #: while `llm.batch` is on (2.9.0). FitScorer then lets every facts call
+    #: start at once instead of `llm.max_concurrent` at a time, because a
+    #: batch can only be as large as the calls waiting on it.
+    batches_facts: ClassVar[bool] = False
 
     @abstractmethod
     async def verdict(self, system: str, user: str) -> FitVerdict:
@@ -439,6 +447,7 @@ class AnthropicJudge(Judge):
     requires_module = "anthropic"
     description = "Claude API. Best quality. Needs ANTHROPIC_API_KEY."
     cheap_triage = True
+    batches_facts = True
 
     def __init__(self, cfg: LLMConfig) -> None:
         super().__init__(cfg)
@@ -446,6 +455,14 @@ class AnthropicJudge(Judge):
         #: Cleared the first time the API refuses `temperature` for this
         #: model (see `_parse`); from then on it is not sent.
         self._send_temperature = True
+        #: Facts calls waiting for the next batch (`llm.batch`, 2.9.0): the
+        #: system prompt, the user prompt and the future its caller awaits.
+        self._pending: list[tuple[str, str, asyncio.Future[PostingFacts]]] = []
+        #: The task that sends `_pending` once calls stop arriving, or None.
+        self._flusher: asyncio.Task[None] | None = None
+        #: The wait between polls and before a flush. An attribute so a test
+        #: moves time by hand instead of waiting.
+        self._sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
     def _get_client(self) -> Any:
         """Built lazily so importing rolescan never costs an SDK import, and so
@@ -457,7 +474,7 @@ class AnthropicJudge(Judge):
         return self._client
 
     @staticmethod
-    def _cached_system(system: str) -> list[dict[str, Any]]:
+    def _cached_system(system: str, ttl: str = "") -> list[dict[str, Any]]:
         """Wrap the system prompt as one cached block.
 
         Every Anthropic call - verdict, triage, facts - reads the same
@@ -466,13 +483,21 @@ class AnthropicJudge(Judge):
         and silently ignores smaller ones, so a short prompt (facts mode's)
         is expected not to cache - this is still correct to send, and the
         eval reports whether it actually does.
+
+        `ttl` is "" for the default five-minute entry, which direct calls a
+        few seconds apart keep alive, or "1h" for the batch path (2.9.0).
         """
-        return [
-            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
-        ]
+        control = {"type": "ephemeral", "ttl": ttl} if ttl else {"type": "ephemeral"}
+        return [{"type": "text", "text": system, "cache_control": control}]
 
     async def _parse(
-        self, system: str, user: str, output_format: Any, max_tokens: int
+        self,
+        system: str,
+        user: str,
+        output_format: Any,
+        max_tokens: int,
+        *,
+        cache_ttl: str = "",
     ) -> Any:
         """One structured call, sampling at `llm.temperature`.
 
@@ -492,7 +517,7 @@ class AnthropicJudge(Judge):
         request: dict[str, Any] = {
             "model": self.cfg.model,
             "max_tokens": max_tokens,
-            "system": self._cached_system(system),
+            "system": self._cached_system(system, cache_ttl),
             "messages": [{"role": "user", "content": user}],
             "output_format": output_format,
         }
@@ -526,7 +551,17 @@ class AnthropicJudge(Judge):
         return _without_rule(parsed)
 
     async def facts(self, system: str, user: str) -> PostingFacts:
-        response = await self._parse(system, user, PostingFacts, self.cfg.max_tokens)
+        if self.cfg.batch:
+            return await self._queued_facts(system, user)
+        return await self._facts_now(system, user)
+
+    async def _facts_now(
+        self, system: str, user: str, *, cache_ttl: str = ""
+    ) -> PostingFacts:
+        """One direct facts call."""
+        response = await self._parse(
+            system, user, PostingFacts, self.cfg.max_tokens, cache_ttl=cache_ttl
+        )
         parsed = response.parsed_output
         if parsed is None:
             stop = getattr(response, "stop_reason", None)
@@ -536,6 +571,205 @@ class AnthropicJudge(Judge):
             msg = f"model returned {type(parsed).__name__}, expected PostingFacts"
             raise RuntimeError(msg)
         return parsed
+
+    # --- llm.batch: facts calls through the Message Batches API (2.9.0) ----
+
+    async def _queued_facts(self, system: str, user: str) -> PostingFacts:
+        """Wait for this call's answer from the next batch.
+
+        The call joins `_pending`; a single task sends everything waiting
+        once no new call has arrived for `BATCH_SETTLE_SECONDS`. Nothing
+        depends on that pause being long enough: a call that arrives after a
+        batch has left simply starts the next one.
+        """
+        future: asyncio.Future[PostingFacts] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._pending.append((system, user, future))
+        if self._flusher is None:
+            self._flusher = asyncio.create_task(self._flush_when_quiet())
+        return await future
+
+    async def _flush_when_quiet(self) -> None:
+        waiting = -1
+        while waiting != len(self._pending):
+            waiting = len(self._pending)
+            await self._sleep(BATCH_SETTLE_SECONDS)
+        items, self._pending = self._pending, []
+        self._flusher = None
+        try:
+            await self._send(items)
+        except BaseException as e:
+            # Whatever went wrong, no caller is left waiting on a future
+            # nothing will ever resolve.
+            for _, _, future in items:
+                _settle(
+                    future, e if isinstance(e, Exception) else RuntimeError(repr(e))
+                )
+            if not isinstance(e, Exception):
+                raise
+
+    async def _send(
+        self, items: list[tuple[str, str, asyncio.Future[PostingFacts]]]
+    ) -> None:
+        """Answer every waiting call: one direct, the rest in a batch.
+
+        The direct call goes first because a batch's requests run side by
+        side: with nothing in the cache each would write the shared prompt
+        instead of reading it, and a write costs more than the batch price
+        saves. The one-hour entry it leaves covers a batch that starts late.
+        """
+        if len(items) < BATCH_MIN_REQUESTS:
+            await self._directly(items)
+            return
+        first, rest = items[0], items[1:]
+        await self._directly([first])
+        if first[2].cancelled() or first[2].exception() is not None:
+            # The API is not answering. A batch would fail the same way,
+            # later; `_directly` gives up after a few failures in a row.
+            await self._directly(rest)
+            return
+        try:
+            batch_id = await self._create_batch(rest)
+        except Exception as e:
+            log.warning(
+                "could not create a message batch (%s); scoring %d postings "
+                "with direct calls at the standard price",
+                e,
+                len(rest),
+            )
+            await self._directly(rest)
+            return
+        await self._collect(batch_id, rest)
+
+    async def _directly(
+        self, items: list[tuple[str, str, asyncio.Future[PostingFacts]]]
+    ) -> None:
+        """Direct calls, one after another so each reads the cached prompt.
+
+        After `BATCH_DIRECT_FAILURES` failures in a row the rest fail with
+        the same error and no call: these calls were all admitted at once, so
+        the scorer's own breaker cannot stop them one by one.
+        """
+        failures = 0
+        last: Exception | None = None
+        for system, user, future in items:
+            if last is not None and failures >= BATCH_DIRECT_FAILURES:
+                _settle(future, last)
+                continue
+            try:
+                facts = await self._facts_now(system, user, cache_ttl=BATCH_CACHE_TTL)
+            except Exception as e:
+                failures += 1
+                last = e
+                _settle(future, e)
+            else:
+                failures = 0
+                _settle(future, facts)
+
+    def _batch_params(self, system: str, user: str) -> dict[str, Any]:
+        """The request `messages.parse` would send for a facts call, as a
+        batch entry's `params`: the same cached system block, the same
+        schema through the SDK's own `transform_schema`, so the batch reads
+        the cache entry the direct call wrote."""
+        from anthropic import transform_schema
+
+        params: dict[str, Any] = {
+            "model": self.cfg.model,
+            "max_tokens": self.cfg.max_tokens,
+            "system": self._cached_system(system, BATCH_CACHE_TTL),
+            "messages": [{"role": "user", "content": user}],
+            "output_config": {
+                "format": {
+                    "type": "json_schema",
+                    "schema": transform_schema(PostingFacts),
+                }
+            },
+        }
+        if self._send_temperature:
+            params["temperature"] = self.cfg.temperature
+        return params
+
+    async def _create_batch(
+        self, items: list[tuple[str, str, asyncio.Future[PostingFacts]]]
+    ) -> str:
+        requests = [
+            {"custom_id": f"facts-{i}", "params": self._batch_params(system, user)}
+            for i, (system, user, _) in enumerate(items)
+        ]
+        batch = await self._get_client().messages.batches.create(requests=requests)
+        log.info("message batch %s: %d facts requests sent", batch.id, len(requests))
+        return str(batch.id)
+
+    async def _collect(
+        self,
+        batch_id: str,
+        items: list[tuple[str, str, asyncio.Future[PostingFacts]]],
+    ) -> None:
+        """Wait for the batch to end, then hand each caller its answer."""
+        batches = self._get_client().messages.batches
+        polls = max(
+            1, round(self.cfg.batch_max_minutes * 60 / self.cfg.batch_poll_seconds)
+        )
+        ended = False
+        try:
+            for _ in range(polls):
+                await self._sleep(self.cfg.batch_poll_seconds)
+                if (await batches.retrieve(batch_id)).processing_status == "ended":
+                    ended = True
+                    break
+        except asyncio.CancelledError:
+            # The scan was stopped. Nothing will read this batch's answers,
+            # so ask for it to stop too rather than pay for the rest of it.
+            log.warning("scan stopped; cancelling message batch %s", batch_id)
+            with contextlib.suppress(Exception):
+                await asyncio.shield(batches.cancel(batch_id))
+            raise
+        if not ended:
+            log.warning(
+                "message batch %s had not ended after %g minutes "
+                "(llm.batch_max_minutes); cancelling it and keeping what it "
+                "answered",
+                batch_id,
+                self.cfg.batch_max_minutes,
+            )
+            await batches.cancel(batch_id)
+            for _ in range(BATCH_CANCEL_POLLS):
+                await self._sleep(self.cfg.batch_poll_seconds)
+                if (await batches.retrieve(batch_id)).processing_status == "ended":
+                    ended = True
+                    break
+        if not ended:
+            msg = f"message batch {batch_id} did not end after it was cancelled"
+            raise RuntimeError(msg)
+
+        waiting = {f"facts-{i}": future for i, (_, _, future) in enumerate(items)}
+        usage = _BatchUsage()
+        async for row in await batches.results(batch_id):
+            future = waiting.pop(row.custom_id, None)
+            if future is None:
+                continue
+            try:
+                _settle(future, _batch_facts(row.result, usage))
+            except Exception as e:
+                usage.failed += 1
+                _settle(future, e)
+        for future in waiting.values():
+            usage.failed += 1
+            _settle(
+                future, RuntimeError(f"message batch {batch_id} returned no result")
+            )
+        log.info(
+            "message batch %s: %d answered, %d failed; tokens: %d input, "
+            "%d read from cache, %d written to cache, %d output",
+            batch_id,
+            usage.answered,
+            usage.failed,
+            usage.input,
+            usage.cache_read,
+            usage.cache_write,
+            usage.output,
+        )
 
     async def triage(self, system: str, user: str) -> FitVerdict:
         """Score and route without paying for prose the digest will not print.
@@ -556,6 +790,84 @@ class AnthropicJudge(Judge):
             confidence=parsed.confidence,
             reason=TRIAGE_REASON,
         )
+
+
+#: The fewest waiting facts calls worth a batch. Below it they are made
+#: directly: one goes first to warm the cache either way, and a batch of one
+#: would trade a wait of minutes for a fraction of a cent.
+BATCH_MIN_REQUESTS = 3
+#: How long no new facts call must arrive before the waiting ones are sent.
+BATCH_SETTLE_SECONDS = 2.0
+#: The cache entry the batch path writes and reads. A batch can start more
+#: than five minutes after the direct call that warmed the cache.
+BATCH_CACHE_TTL = "1h"
+#: Direct calls on the batch path that may fail in a row before the rest are
+#: failed without a call.
+BATCH_DIRECT_FAILURES = 3
+#: Polls a cancelled batch is given to report that it has ended.
+BATCH_CANCEL_POLLS = 20
+
+
+@dataclass
+class _BatchUsage:
+    """Token counts across one batch's answers, for the log line."""
+
+    answered: int = 0
+    failed: int = 0
+    input: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+    output: int = 0
+
+
+def _settle(
+    future: asyncio.Future[PostingFacts], outcome: PostingFacts | Exception
+) -> None:
+    """Give a waiting call its answer or its error, unless the caller has
+    already gone (a scan that was stopped cancels the calls it was awaiting)."""
+    if future.done():
+        return
+    if isinstance(outcome, Exception):
+        future.set_exception(outcome)
+    else:
+        future.set_result(outcome)
+
+
+def _batch_facts(result: Any, usage: _BatchUsage) -> PostingFacts:
+    """One batch result as `PostingFacts`, or `RuntimeError` saying why not.
+
+    A request the batch did not answer (errored, canceled, expired) and an
+    answer cut at `max_tokens` both raise, as a direct call's failure does:
+    the scorer counts it and the posting is scored on a later run.
+    """
+    if result.type != "succeeded":
+        detail = ""
+        if result.type == "errored":
+            error = getattr(getattr(result, "error", None), "error", None)
+            kind = getattr(error, "type", "")
+            text = getattr(error, "message", "")
+            detail = f": {kind}: {text}" if kind or text else ""
+        msg = f"batch request {result.type}{detail}"
+        raise RuntimeError(msg)
+    message = result.message
+    counts = getattr(message, "usage", None)
+    if counts is not None:
+        usage.input += getattr(counts, "input_tokens", 0) or 0
+        usage.cache_read += getattr(counts, "cache_read_input_tokens", 0) or 0
+        usage.cache_write += getattr(counts, "cache_creation_input_tokens", 0) or 0
+        usage.output += getattr(counts, "output_tokens", 0) or 0
+    text = next((b.text for b in message.content if b.type == "text"), "")
+    stop = getattr(message, "stop_reason", None)
+    if stop != "end_turn" or not text:
+        msg = f"claude returned no posting facts (stop_reason={stop!r})"
+        raise RuntimeError(msg)
+    try:
+        facts = PostingFacts.model_validate_json(text)
+    except ValidationError as e:
+        msg = f"claude returned posting facts that do not fit the schema: {e}"
+        raise RuntimeError(msg) from e
+    usage.answered += 1
+    return facts
 
 
 def _rejects_temperature(error: Exception) -> bool:

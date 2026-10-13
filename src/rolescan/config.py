@@ -387,6 +387,21 @@ class LLMConfig(BaseModel):
     budget is spent no new call starts, calls already in flight finish, and
     every posting not yet scored is deferred to the next run exactly as the
     call ceiling defers it. 0 is no time limit."""
+    batch: bool = False
+    """Send facts-mode calls through the Message Batches API (2.9.0), which
+    bills every token at half the standard price. For a scan nobody is
+    waiting on: the answers arrive when the batch ends, usually within the
+    hour, and the scan waits for them. One direct call goes first and writes
+    the shared prompt to a one-hour cache entry, so the batch reads it. Only
+    the `anthropic` backend in `mode: facts` batches; judge mode, an
+    enricher's calls and every other backend are called directly as before.
+    Fewer than three uncached postings are scored directly too."""
+    batch_poll_seconds: Annotated[float, Field(gt=0)] = 30.0
+    """How often a running batch is asked whether it has ended."""
+    batch_max_minutes: Annotated[float, Field(gt=0)] = 120.0
+    """How long a scan waits for a batch. After that the batch is cancelled:
+    the requests it already answered are kept and paid for, and the rest
+    count as scoring errors, so those postings are scored on the next run."""
     cascade: bool = True
     """Score in two passes: a cheap one that only settles the score, then the
     full verdict only for postings that clear `min_report_score`. The digest

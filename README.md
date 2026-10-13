@@ -468,6 +468,14 @@ What keeps a model's cost down:
   line says which limit stopped the run: "model time budget of 10 minutes
   spent; 12 postings deferred to the next run", or "(N over the LLM budget)"
   for the call count. Whichever was reached first is the one named.
+- `llm.batch` (off) sends facts-mode calls on the `anthropic` backend through
+  the Message Batches API, which bills every token at half the standard price.
+  The scan waits for the batch to end, usually within the hour, so it suits a
+  scan nobody is watching. One direct call goes first and writes the shared
+  prompt to a one-hour cache entry, so the batch reads it instead of writing
+  it. If the batch has not ended after `llm.batch_max_minutes` (120) it is
+  cancelled: what it answered is kept, and the rest are scored on the next
+  run.
 - A call sends the fixed instructions, your `profile.summary`, any worked
   examples, and one posting's title, company, location, date and the first
   `llm.description_chars` characters of its description (6,000 by default): a
