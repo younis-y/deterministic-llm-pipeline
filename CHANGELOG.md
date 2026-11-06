@@ -2,6 +2,14 @@
 
 All notable changes to rolescan. Newest first.
 
+## 3.0.0 (2026-11-06)
+
+### Removed
+- **Judge mode.** `llm.mode: judge`, the single call in which the model gave the score, verdict and blockers itself, is gone with everything only it used: the judge-mode prompt (`SYSTEM`, `USER`), the two-pass cascade (`llm.cascade`, `Judge.triage`, `Judge.cheap_triage`, `TRIAGE_REASON`, `triage_schema`), `Judge.verdict`, the content-hash-only cache key, and `FitScorer.verdict_model` with `Enricher.verdict_model`, which existed only to read judge-mode rows back. Facts mode, already the default, is now the only mode: `Judge.facts` is the one abstract method a backend implements. `llm.mode: facts` still loads; `llm.mode: judge` or `llm.cascade` in a config is a validation error naming the key. `cache_key` drops its `mode` argument (`cache_key(job, cfg, ...)`), and `FitScorer` drops `extra_prompt`: an enricher reads `llm.extra_prompt` from the config, as it already did. Cached facts are untouched: the facts key is unchanged. **A third-party judge that implements only `verdict` must implement `facts`** (a subclass of a built-in backend inherits it). Net: 504 source lines deleted, 79 added.
+
+### Added
+- `evals/`: 26 synthetic adverts (`cases.json`), each built around a trap that hides a good role or lets a bad one through, with what the finished facts and the fired rule must be. `tests/test_eval_cases.py` runs them in CI through the quote check, resolvers and rules, with each case's own model answer (often a wrong one) standing in for the model: 19 pass; the 7 open defects are marked `open_defect` on their case and run as strict expected failures, so a fix fails CI until the mark is removed. `python -m evals.harness --backend anthropic --model claude-haiku-5-5 --runs 3` runs the same cases through a live model via `FitScorer` and writes pass@1, pass^k, time and token counts to `evals/results/`. Recorded on 2026-11-06 with `claude-haiku-5-5`: 25 of 26 in every run (pass@1 96%, pass^3 96%), 50 seconds, 39,858 output tokens; the miss is the open `pub-lvl-04` defect. The README's "Measured quality" now reports these in place of the September judge-mode figures, which described a mode that no longer exists.
+
 ## 2.9.1 (2026-10-13)
 
 ### Fixed

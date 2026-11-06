@@ -5,9 +5,9 @@ import logging
 import pytest
 from pydantic import ValidationError
 
-from rolescan.config import LLMConfig, ProfileConfig
+from rolescan.config import ProfileConfig
 from rolescan.models import Job, Verdict
-from rolescan.scoring import FitScorer, score_keywords
+from rolescan.scoring import score_keywords
 from rolescan.scoring.keyword import TITLE_MULTIPLIER
 
 TEX = r"""
@@ -415,31 +415,12 @@ def test_a_hard_blocker_absent_from_blockers_is_allowed() -> None:
     assert profile.hard_blockers == ["uae national"]
 
 
-def test_extra_prompt_is_appended_verbatim_and_empty_by_default() -> None:
-    """The seam for context this library has no business knowing about.
-
-    A private caller adds its own vocabulary - documents to choose between, a
-    house style - without the public prompt learning what any of it means.
-    """
-    plain = FitScorer(LLMConfig(), ProfileConfig(summary="A candidate."))
-    assert "{extra}" not in plain._system()
-
-    private = FitScorer(
-        LLMConfig(),
-        ProfileConfig(summary="A candidate."),
-        extra_prompt="Pick one of: alpha, beta.",
-    )
-    assert "Pick one of: alpha, beta." in private._system()
-    assert len(private._system()) > len(plain._system())
-
-
 def test_the_public_prompt_names_no_documents() -> None:
     """The judgement is score, verdict, confidence, one sentence and the bars.
     Which CV to send and what to change in it is private, and this asserts the
     public half stays that way."""
-    from rolescan.scoring.llm import SYSTEM, SYSTEM_FACTS
+    from rolescan.scoring.llm import SYSTEM_FACTS
 
-    for prompt in (SYSTEM, SYSTEM_FACTS.format(summary="A candidate.")):
-        lowered = prompt.lower()
-        for word in ("cv", "resume", "tailor", "variant"):
-            assert word not in lowered, f"{word!r} leaked back into the public prompt"
+    lowered = SYSTEM_FACTS.format(summary="A candidate.").lower()
+    for word in ("cv", "resume", "tailor", "variant"):
+        assert word not in lowered, f"{word!r} leaked back into the public prompt"

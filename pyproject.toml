@@ -1,6 +1,6 @@
 [project]
 name = "rolescan"
-version = "2.9.1"
+version = "3.0.0"
 description = "Typed, async, plugin-based job scanner with LLM fit scoring"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -121,7 +121,7 @@ max-complexity = 12
 "tests/*" = ["ANN", "E501", "ARG", "C90", "EM"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["rolescan"]
+known-first-party = ["rolescan", "evals"]
 
 # ---------------------------------------------------------------------------
 # mypy: strict. ty is the emerging Astral checker but is still preview in 2026,
@@ -132,7 +132,7 @@ python_version = "3.11"
 strict = true
 warn_unreachable = true
 disallow_any_generics = true
-files = ["src", "tests"]
+files = ["src", "tests", "evals"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]
@@ -173,4 +173,5 @@ DEP002 = ["pytest", "pytest-asyncio", "respx", "ruff", "mypy", "types-PyYAML"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "--strict-markers"

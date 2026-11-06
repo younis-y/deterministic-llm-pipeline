@@ -460,12 +460,6 @@ async def test_enrichment_stays_one_at_a_time_when_the_facts_were_batched() -> N
         _ENRICHERS.pop("batch-tracking", None)
 
 
-async def test_judge_mode_is_not_batched() -> None:
-    cfg = LLMConfig(backend="anthropic", api_key="k", mode="judge", batch=True)
-    scorer = FitScorer(cfg, ProfileConfig(summary="s", min_report_score=50))
-    assert scorer._batching() is False
-
-
 @pytest.mark.parametrize("field", ["batch_poll_seconds", "batch_max_minutes"])
 def test_batch_timings_must_be_positive(field: str) -> None:
     with pytest.raises(ValueError, match=field):

@@ -19,7 +19,7 @@ import pytest
 import rolescan.store as store_module
 from rolescan.config import LLMConfig, ProfileConfig
 from rolescan.health import HealthFlag, model_health
-from rolescan.models import BarKind, FitVerdict, Job, JobField, Level, ScoredJob
+from rolescan.models import BarKind, Job, JobField, Level, ScoredJob
 from rolescan.scoring import FitScorer
 from rolescan.scoring.facts import (
     FieldFact,
@@ -414,8 +414,6 @@ class _Canned(Judge):
         self.fail = fail
         self.calls = 0
 
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        raise NotImplementedError
 
     async def facts(self, system: str, user: str) -> PostingFacts:
         self.calls += 1
@@ -514,26 +512,6 @@ async def test_failed_calls_and_a_tripped_breaker_are_recorded() -> None:
     assert run.breaker is True
     assert run.deferred == 3
     assert run.postings == 0
-
-
-async def test_a_judge_mode_run_records_calls_and_no_facts() -> None:
-    class _Verdicts(Judge):
-        name = "verdict-test-judge"
-
-        async def verdict(self, system: str, user: str) -> FitVerdict:
-            return FitVerdict(
-                fit_score=50, verdict="consider", confidence="low", reason="ok"
-            )
-
-    config = LLMConfig(enabled=True, backend="ollama", mode="judge", cascade=False)
-    scorer = FitScorer(config, ProfileConfig())
-    scorer._judge = _Verdicts(config)
-
-    await scorer.score_all(_postings(["Receptionist", "Receptionist"]))
-
-    run = scorer.run_record()
-    assert run is not None
-    assert (run.calls, run.postings, run.level_overridden) == (2, 0, 0)
 
 
 # --- the health check ---------------------------------------------------------

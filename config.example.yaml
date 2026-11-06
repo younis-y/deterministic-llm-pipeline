@@ -173,17 +173,14 @@ llm:
   backend: anthropic
   model: claude-sonnet-5
 
-  # How the model is used.
-  #   facts  (default) The model extracts quoted facts - level, years,
+  # How the model is used. facts is the only mode since 3.0.0.
+  #   facts  The model extracts quoted facts - level, years,
   #          student-only, field, hard bars - plus a skills/domain fit score.
   #          Code then applies profile.rules. A level word in the title
   #          (senior, lead, graduate, intern...) decides the level outright.
   #          Only nationality and clearance bars block; any other stated
   #          requirement is a skip with its quote, and a work-authorisation
   #          bar is ignored (put visa wording in hard_blockers).
-  #   judge  One call per posting: the model gives the score, verdict and
-  #          blockers itself. A supported mode. profile.rules do not apply,
-  #          and llm.extra_prompt is used. See the README, "Judge mode".
   # mode: facts
 
   # Name of a registered enricher (entry-point group `rolescan.enrichers`)
@@ -197,14 +194,12 @@ llm:
   # the cached prefix. Relative to this file; validated at load. Default none.
   # facts_examples_file: facts_examples.yaml
 
-  # Appended verbatim to the judge-mode system prompt. In facts mode it is NOT
-  # sent to the scoring call (only an enricher may use it), and rolescan logs
-  # a note at startup if it is set with no enricher to receive it.
+  # Context for an enricher. Never sent to the scoring call; rolescan logs a
+  # note at startup if it is set with no enricher to receive it.
   # extra_prompt: ""
 
   # api_key: ""            # leave blank: read from ANTHROPIC_API_KEY
   # max_tokens: 1500       # the longest answer asked of the model
-  # cascade: true          # two passes where the backend's short call is cheaper
   # temperature: 0.0       # 0 suits classification against a fixed rubric
 
   # base_url: http://localhost:11434   # ollama only

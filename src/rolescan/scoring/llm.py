@@ -1,14 +1,15 @@
 """Stage two: LLM fit scoring.
 
-Backend-agnostic: whichever judge is configured returns `FitVerdict` as a
-validated pydantic object rather than JSON coaxed out of prose. Both built-in
-backends constrain sampling to the schema - the Anthropic one through
+Backend-agnostic: whichever judge is configured returns `PostingFacts` as a
+validated pydantic object rather than JSON coaxed out of prose, and
+`rules.decide` turns them into the verdict. Both built-in backends constrain
+sampling to the schema - the Anthropic one through
 structured outputs, the Ollama one through `format` - so there is no
 parse-retry loop and no defensive JSON repair on either path.
 
 Three things keep this cheap:
   * the keyword prefilter, so only plausible roles get here at all
-  * a persistent verdict cache keyed on the description text
+  * a persistent facts cache keyed on the description text
   * a hard per-run call ceiling, and an optional wall-clock budget (2.7.0)
 """
 
@@ -36,7 +37,7 @@ from rolescan.scoring.facts import (
     resolve_years,
     verify_facts,
 )
-from rolescan.scoring.judges import TRIAGE_REASON, Judge, get_judge
+from rolescan.scoring.judges import Judge, get_judge
 from rolescan.scoring.rules import decide
 from rolescan.store import LlmRun
 
@@ -72,70 +73,6 @@ _T = TypeVar("_T")
 #: finish with every posting errored. Five in a row is not a bad posting.
 BREAKER_AFTER = 5
 
-# Three things about this prompt that are easy to "tidy" into a defect.
-#
-# It is the only instruction BOTH backends read. Ollama takes
-# FitVerdict.model_json_schema() as a grammar and ignores the field
-# descriptions entirely, so a rule that lives only in a description reaches
-# the hosted backend alone. Anything the model must know belongs here.
-#
-# "Wrong seniority is skip, not blocked" is stated twice on purpose: once
-# where seniority is discussed, once where `blocked` is defined. A 14b local
-# model does not reliably carry a constraint across four paragraphs, and a wrong
-# `blocked` costs the reader the role outright - dropped from the digest and
-# recorded as seen. Repetition is cheap; one of these going missing is not.
-#
-# The band-to-verdict mechanism measured 0% score/verdict violations over the
-# 25-posting benchmark. Do not rework it.
-SYSTEM = """\
-You screen job postings for one specific candidate. You are blunt and useful, \
-not encouraging. A generous score wastes their week.
-
-<candidate>
-{summary}
-</candidate>
-{extra}
-Scoring guidance:
-- 85-100: strong match, apply today. Verdict: apply.
-- 65-84: worth applying, some gaps. Verdict: apply or consider.
-- 40-64: stretch or partial match, only if the pipeline is thin. Verdict: \
-consider or skip.
-- 0-39: not a good use of their time. Verdict: skip, or blocked but only for \
-the hard bars below. A low score by itself is never a reason to use "blocked".
-
-The bands overlap deliberately: "consider" is correct anywhere from 40 to 84.
-
-If your score and verdict disagree with that table, change the score to fit \
-the verdict, not the other way round. The verdict is the judgement call.
-
-Be strict about seniority. A role wanting eight years is not a 70 for someone \
-with one internship and a master's, however well the keywords line up. Score \
-it on its own merits. The verdict is "skip", not "blocked": wrong seniority \
-is not a structural bar.
-
-Set verdict to "blocked" ONLY for hard structural bars the candidate cannot \
-clear by being a better applicant: a nationality requirement such as an \
-Emiratisation "UAE National" or "National Talent programme" posting, a \
-security clearance, or a work authorisation they do not hold. A blocked role \
-should also get a low fit_score. Being underqualified or overqualified is \
-"skip", not "blocked".
-
-Write "reason" as ONE sentence under 220 characters: the single fact that \
-decides this match, not a summary of the posting. Twelve of these are read on \
-a phone before work, so a second sentence costs more than it adds."""
-
-USER = """\
-<posting>
-Title: {title}
-Company: {company}
-Location: {location}
-Posted: {posted}
-
-{description}
-</posting>
-
-Score this posting for the candidate."""
-
 # Facts mode's user template. Ends by telling the model where its quotes come
 # from, because a small model asked for "the exact text" will otherwise quote
 # back a field label from this template itself (e.g. "Title:") rather than
@@ -158,11 +95,10 @@ as "Title:"."""
 # that mode, on both backends: Ollama takes PostingFacts.model_json_schema()
 # as a grammar and enforces only the shape, ignoring every field description,
 # so a rule that lives only in the schema reaches the hosted backend alone.
-# Anything the model must know belongs here - see SYSTEM's comment above for
-# the history behind that split. That is also why every enum value gets its
+# Anything the model must know belongs here. That is also why every enum value gets its
 # own line below rather than relying on the schema's description strings.
 #
-# No extra_prompt and no document vocabulary: unlike SYSTEM, this prompt has no seam
+# No extra_prompt and no document vocabulary: this prompt has no seam
 # for free-text private context. The judgement it makes is skills and domain
 # fit only; level, years, student status, graduation year and eligibility are
 # decided afterwards by `rolescan.scoring.rules.decide`, from the quoted facts
@@ -371,105 +307,34 @@ def finish_facts(
 
 def cache_key(
     job: Job,
-    mode: str,
     cfg: LLMConfig,
     *,
     fingerprint: str = "",
     examples_digest: str = "",
 ) -> str:
-    """The verdict-cache key for this posting under this scoring mode.
+    """The facts-cache key for this posting.
 
-    Facts mode and judge mode ask a different question of the same posting
-    and can reach different answers, so a cached judge-mode verdict must
-    never be handed back as a facts-mode result (or vice versa) just because
-    the description hash matches. `facts-v2` is the scorer version: bumping
-    it invalidates every facts-mode cache entry whenever the extraction
-    prompt, schema, or cached PAYLOAD SHAPE changes in a way that would
-    change the answer - v2 itself is the move from caching the post-rules
-    FitVerdict to caching the verified PostingFacts underneath it, so a v1
-    row (a FitVerdict) is never misread as the v2 shape (a PostingFacts).
-    v3 adds the deterministic level pass (`resolve_level`), the 200-char quote
-    cap and the narrower `other` bar prompt, so a v2 row would replay facts
-    the current extraction would not produce. v4 (2.4.2) changes the title
-    level table (no "manager"; "lead"/"staff" only before a role word; junior
-    beats senior) and the work_auth prompt wording; cached facts hold the
-    post-`resolve_level` level, so a v3 row would replay the old table.
-    v5 (2.4.3) adds the deterministic field pass (`resolve_field`): cached
-    facts hold the post-`resolve_field` field, so a v4 row would replay the
-    model's (usually null) field.
-    v6 (2.4.4) widens `_FIELD_WORDS` to match the natural inflections of the
-    ai_llm/data_engineering/data_science role words ("Data Engineering",
-    "AI Engineering", "Data Platforms", "AI Software Engineer"); a v5 row may
-    hold a field the widened table would now resolve differently, so it must
-    not be replayed.
-    v7 (2.5.0) adds the `graduation_year` fact to the schema and prompt, and
-    `LevelFact.source` (set by `resolve_level`) to the cached payload; a v6
-    row has neither, so `max_graduation_year` and `level_from_title_only`
-    could not judge it.
-    v8 (2.5.1) changes three things the cached facts already hold:
-    `resolve_level` sets `source="title"` only for a level keyword in the
-    title (a model level quoting the title is now `text`), `_LEVEL_WORDS`
-    gains a mid row ("mid-level", "intermediate"; "mid-senior" is senior),
-    and `verify_facts` drops a graduation year its quote does not state. A
-    v7 row could replay a title-sourced level, a missed mid title or an
-    invented year.
-    v9 (2.5.2) changes three more: `resolve_student` clears a `student_only`
-    the advert contradicts by accepting recent graduates, `verify_facts`
-    drops a nationality or clearance bar whose quote does not name its kind,
-    and `JobField` gains quant, product and consulting (in `_FIELD_WORDS` and
-    the prompt). A v8 row could replay a student flag, a spurious block or an
-    `other` field the current code would not produce.
-    v10 (2.5.3): `_LEVEL_WORDS` reads staff, tech/team lead and trailing-lead
-    titles; `resolve_student` can now SET `student_only` from enrolment
-    wording ("penultimate year", "currently pursuing"); and `JobField` gains
-    finance (in `_FIELD_WORDS` and the prompt). A v9 row could replay a
-    missed staff level, a students-only internship left open, or an `other`
-    field the current code would not produce.
-
-    `examples_digest` names the worked examples the prompt carried (see
-    `FitScorer._facts_cache_key`): they change what the model extracts, and
-    the user edits them, which no version string here can track. Empty -
-    no examples - leaves the key exactly as it was.
-
-    The facts key also names `cfg.backend` and `cfg.model`: facts extracted by
-    one model must not be served (re-decided and enriched) for `cache_days`
-    after the user switches to another, which is exactly the switch an
-    evaluation of the two exists to inform. The judge-mode key is unchanged.
-    v11 (2.5.5) adds the deterministic years pass (`resolve_years`): a null
-    `years_required` is filled from the advert's own "N+ years of experience"
-    wording. A v10 row could replay a null the user's years rule never sees.
-    v12 (2.5.6) adds the deterministic bar pass (`resolve_hard_bars`): a
-    nationality or clearance bar the model left out is added from the
-    advert's own eligibility wording ("UAE Nationals only", "Emirati Talent"
-    in the title, "active eDV clearance"). A v11 row could replay an APPLY for
-    a role the user cannot hold.
-    v13 (2.5.7): student alternative routes, range low end, graduation word,
-    field rows, nationalities. A v12 row could replay a resolver verdict the
-    corrected passes would no longer give.
-    v14 (2.5.8) changes what a row is: the model's RAW facts, before
-    `verify_facts` and the resolvers, which now run on every read
-    (`finish_facts`). So a resolver change needs no bump any more, and the
-    key ends in `fingerprint` (`prompt_fingerprint`: prompt, summary,
-    examples, schema, model digest, `num_ctx`, `description_chars`,
-    `temperature`), so a prompt edit moves the key by itself. A v13 row holds
-    resolved facts and must not be resolved twice. The fingerprint covers
-    the worked examples, so `FitScorer` passes only the fingerprint;
-    `examples_digest` keeps its `:ex-<digest>` suffix for a caller that
-    builds a key with no fingerprint, and is ignored when one is given.
+    A row holds the model's RAW facts; `finish_facts` verifies and resolves
+    them on every read, so a resolver change needs no new key. The key names
+    the content hash, `FACTS_KEY_VERSION` (bumped by hand only when what a
+    row holds changes meaning; the history is in the changelog), the backend
+    and the model, so facts one model made are never served for another.
+    It ends in `fingerprint` (`prompt_fingerprint`), so editing the prompt,
+    summary, examples or sampling settings moves the key by itself.
+    `examples_digest` is the `:ex-<digest>` suffix for a caller that builds
+    a key with no fingerprint; it is ignored when one is given.
     """
-    if mode == "facts":
-        key = f"{job.content_hash}:{FACTS_KEY_VERSION}:{cfg.backend}:{cfg.model}"
-        if fingerprint:
-            return f"{key}:{fingerprint}"
-        return f"{key}:ex-{examples_digest}" if examples_digest else key
-    return job.content_hash
+    key = f"{job.content_hash}:{FACTS_KEY_VERSION}:{cfg.backend}:{cfg.model}"
+    if fingerprint:
+        return f"{key}:{fingerprint}"
+    return f"{key}:ex-{examples_digest}" if examples_digest else key
 
 
 def final_key(job: Job) -> str:
     """The cache key for the FINISHED verdict: after `decide`, and after any
     enricher.
 
-    `cache_key` in facts mode deliberately holds the model's raw
+    `cache_key` deliberately holds the model's raw
     `PostingFacts` (verified and resolved on every read, `finish_facts`),
     not a verdict, so that a `rules` or `min_report_score` change is applied
     to every cached posting for free on the next run rather than replaying a
@@ -479,7 +344,7 @@ def final_key(job: Job) -> str:
     application prep, or anything else that wants "what should be done about
     this posting" - which wants the decision itself, enriched subclass and
     all, not the facts it was made from. `final_key` is that separate row: a
-    plain, mode-independent key written whenever a store exists, including on
+    plain key written whenever a store exists, including on
     a cache hit, so it always reflects the most recently decided (and
     enriched) verdict regardless of whether the model was called this run.
     """
@@ -498,7 +363,6 @@ class FitScorer:
         profile: ProfileConfig,
         store: Store | None = None,
         *,
-        extra_prompt: str = "",
         model_digest: str = "",
         facts_cache: bool = True,
         context_window: int | None = None,
@@ -524,15 +388,6 @@ class FitScorer:
         #: them against the window the server really runs (2.5.8).
         self.context_window = context_window
         self._fingerprint: str | None = None
-        #: Appended to SYSTEM verbatim. The seam for anything this library has
-        #: no business knowing about - a caller with private context to add
-        #: supplies it here rather than teaching the public prompt its
-        #: vocabulary. Empty by default, and an empty extra changes nothing.
-        self.extra_prompt = extra_prompt
-        #: The model the cache is read back with. A judge returning a subclass
-        #: writes a payload FitVerdict refuses, and refusing it deletes the row
-        #: and re-scores - a whole cache lost to a schema that was never wrong.
-        self.verdict_model: type[FitVerdict] = FitVerdict
         self._sem = asyncio.Semaphore(cfg.max_concurrent)
         #: The gate facts calls pass when they are batched (`llm.batch`,
         #: 2.9.0), built on first use: wide enough for every call the ceiling
@@ -559,26 +414,25 @@ class FitScorer:
         #: must not cost a plugin import, and `None` alone cannot distinguish
         #: "not built yet" from "no enricher configured".
         self._enricher_built = False
-        #: The facts extracted for each posting scored in facts mode, keyed
-        #: by job.url. Empty in judge mode. Kept for the evaluation, which
+        #: The facts extracted for each posting scored, keyed by job.url.
+        #: Kept for the evaluation, which
         #: reports per-field extraction accuracy against an answer key - a
         #: question `FitVerdict` alone cannot answer once `decide` has turned
         #: the facts into a verdict.
         self.last_facts: dict[str, PostingFacts] = {}
         #: What `verify_facts` and the resolvers changed across every posting
         #: this scorer finished, whether the facts came from a call or from
-        #: the cache (2.6.0). All zero in judge mode, which has no facts.
+        #: the cache (2.6.0).
         self.facts_counter = FactsCounter()
         #: The rendered worked examples (`cfg.facts_examples_file`), loaded on
         #: first use and kept for the scorer's life, so every posting in a run
         #: is scored - and cache-keyed - against the same examples even if the
         #: file is edited mid-run. None until loaded; "" when none configured.
         self._examples_block: str | None = None
-        if extra_prompt and cfg.mode == "facts" and not cfg.enricher:
+        if cfg.extra_prompt and not cfg.enricher:
             log.info(
-                "llm.extra_prompt is set but not used: facts mode does not send "
-                "it to the scoring call, and no llm.enricher is configured to "
-                "receive it"
+                "llm.extra_prompt is set but not used: the scoring call never "
+                "sends it, and no llm.enricher is configured to receive it"
             )
 
     @property
@@ -702,12 +556,8 @@ class FitScorer:
 
     def _batching(self) -> bool:
         """Whether this run's facts calls are collected into a batch: asked
-        for, in facts mode, on a backend that can."""
-        return (
-            self.cfg.batch
-            and self.cfg.mode == "facts"
-            and self._get_judge().batches_facts
-        )
+        for, on a backend that can."""
+        return self.cfg.batch and self._get_judge().batches_facts
 
     def _facts_gate(self) -> asyncio.Semaphore:
         """What limits how many facts calls run at once."""
@@ -719,11 +569,6 @@ class FitScorer:
 
     def _get_enricher(self) -> Enricher | None:
         """The configured enricher, built at most once per scorer.
-
-        Sets `self.verdict_model` to the enricher's `verdict_model` the
-        moment one is configured, so a cache read of the FINAL verdict (see
-        `final_key`) validates as the enriched subclass rather than refusing
-        its extra fields.
 
         `get_enricher` raises for an unknown `cfg.enricher` name - the right
         thing for `_preflight` to fail fast on before a scan starts (see
@@ -745,15 +590,13 @@ class FitScorer:
                     e,
                 )
                 self._enricher = None
-            if self._enricher is not None:
-                self.verdict_model = self._enricher.verdict_model
         return self._enricher
 
     async def _maybe_enrich(self, job: Job, verdict: FitVerdict) -> FitVerdict:
         """Run the configured enricher, if any, for a verdict worth it.
 
         Guarded by the same semaphore and call ceiling as every other LLM
-        call (`_call_judge`, `_call_facts`): an enricher is, by construction,
+        call (`_call_facts`): an enricher is, by construction,
         a second model call, and letting it run outside `self._sem` would let
         a `max_concurrent=1` config still fire N enrichments at once, and
         skipping the `max_calls_per_run` check would let a run that hit its
@@ -814,7 +657,7 @@ class FitScorer:
         return self._examples_block
 
     def facts_system_prompt(self) -> str:
-        """The facts-mode system prompt exactly as `_call_facts` sends it.
+        """The system prompt exactly as `_call_facts` sends it.
 
         `SYSTEM_FACTS` with the candidate summary, then the worked examples
         when `cfg.facts_examples_file` is set. Public so a caller measuring
@@ -829,20 +672,14 @@ class FitScorer:
         return f"{system}\n\n{examples}" if examples else system
 
     def _facts_cache_key(self, job: Job) -> str:
-        """`cache_key` for facts mode, ending in this scorer's
+        """`cache_key` ending in this scorer's
         `prompt_fingerprint` (computed once: the prompt is fixed for the
         scorer's life, as the examples are)."""
         if self._fingerprint is None:
             self._fingerprint = prompt_fingerprint(
                 self.facts_system_prompt(), self.cfg, model_digest=self.model_digest
             )
-        return cache_key(job, "facts", self.cfg, fingerprint=self._fingerprint)
-
-    def _system(self) -> str:
-        return SYSTEM.format(
-            summary=self.profile.summary or "(no summary configured)",
-            extra=f"\n{self.extra_prompt}\n" if self.extra_prompt else "",
-        )
+        return cache_key(job, self.cfg, fingerprint=self._fingerprint)
 
     async def score_all(self, jobs: list[ScoredJob]) -> list[ScoredJob]:
         """Score every job, in ranked order so the budget buys the best ones.
@@ -869,36 +706,7 @@ class FitScorer:
         return out
 
     async def _score_one(self, scored: ScoredJob) -> ScoredJob:
-        if self.cfg.mode == "facts":
-            return await self._score_one_facts(scored)
-        return await self._score_one_judge(scored)
-
-    async def _score_one_judge(self, scored: ScoredJob) -> ScoredJob:
-        job = scored.job
-        key = cache_key(job, self.cfg.mode, self.cfg)
-
-        if self.store is not None:
-            cached = await self.store.get_verdict(
-                key, self.cfg.cache_days, self.verdict_model
-            )
-            if cached is not None and not self._stale_triage(cached):
-                self._cached += 1
-                return scored.model_copy(update={"fit": cached, "llm_cached": True})
-
-        async with self._sem:
-            if stop := self._stop_reason():
-                log.info("%s: deferring %r to the next run", stop, job.title)
-                self._deferred += 1
-                return scored.model_copy(update={"deferred": stop})
-            self._begin_call()
-            verdict = await self._counted(self._call_judge(scored))
-
-        if self.store is not None:
-            await self.store.put_verdict(key, verdict)
-        return scored.model_copy(update={"fit": verdict})
-
-    async def _score_one_facts(self, scored: ScoredJob) -> ScoredJob:
-        """Facts mode's cache holds the model's RAW `PostingFacts`, not the
+        """The cache holds the model's RAW `PostingFacts`, not the
         post-rules `FitVerdict` `decide()` makes from them.
 
         `finish_facts` (verification and the resolvers) and `decide` run on
@@ -973,41 +781,5 @@ class FitScorer:
         )
         system = self.facts_system_prompt()
         judge = self._get_judge()
-        # One call, always: Call 1 is already short, so the cascade - built to
-        # skip generating prose for a role that will not clear the gate - buys
-        # nothing here, and facts mode never runs it. Returns the model's raw
-        # facts; `finish_facts` verifies and resolves them (2.5.8).
+        # The model's raw facts; `finish_facts` verifies and resolves them (2.5.8).
         return await judge.facts(system, user)
-
-    async def _call_judge(self, scored: ScoredJob) -> FitVerdict:
-        job = scored.job
-        user = USER.format(
-            title=job.title,
-            company=job.company,
-            location=job.location or "not stated",
-            posted=job.posted.isoformat() if job.posted else "not stated",
-            description=(
-                job.description[: self.cfg.description_chars]
-                or "(no description provided by the source)"
-            ),
-        )
-        judge = self._get_judge()
-        system = self._system()
-        if self.cfg.cascade and judge.cheap_triage:
-            first = await judge.triage(system, user)
-            if first.fit_score < self.profile.min_report_score:
-                return first
-        return await judge.verdict(system, user)
-
-    def _stale_triage(self, verdict: FitVerdict) -> bool:
-        """Whether a cached triage stub has been brought into scope.
-
-        A stub is only ever valid while it still scores below the gate. Lower
-        `min_report_score` between runs and the stubs that now clear it have no
-        reason and no blockers - so the digest would print a role
-        with an empty justification and look broken. Cheaper to re-ask.
-        """
-        return (
-            verdict.reason == TRIAGE_REASON
-            and verdict.fit_score >= self.profile.min_report_score
-        )

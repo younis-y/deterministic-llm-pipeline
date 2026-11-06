@@ -16,9 +16,9 @@ import httpx
 import pytest
 import respx
 
-from conftest import mock_ollama_show, plain
+from conftest import mock_ollama_show
 from rolescan.config import LLMConfig, ProfileConfig
-from rolescan.models import FitVerdict, Job, ScoredJob
+from rolescan.models import Job, ScoredJob
 from rolescan.scoring import FitScorer
 from rolescan.scoring.facts import (
     FieldFact,
@@ -28,23 +28,20 @@ from rolescan.scoring.facts import (
     YearsFact,
 )
 from rolescan.scoring.judges import (
-    TRIAGE_MAX_TOKENS,
-    TRIAGE_REASON,
     AnthropicJudge,
-    Judge,
-    _TriageOutput,
     available_judges,
     get_judge,
-    triage_schema,
     unusable_backend_reason,
 )
 
-VERDICT_JSON = {
+FACTS_JSON = {
+    "level": {"value": "junior", "quote": ""},
+    "years_required": {"value": None, "quote": ""},
+    "student_only": {"value": None, "quote": ""},
+    "hard_bars": [],
+    "field": {"value": None, "quote": ""},
     "fit_score": 72,
-    "verdict": "consider",
-    "confidence": "medium",
-    "reason": "Strong power-market overlap, but the role wants five years.",
-    "blockers": [],
+    "reason": "Strong power-market overlap.",
     "keywords_missing": ["Kubernetes"],
 }
 
@@ -105,26 +102,6 @@ def test_default_backend_is_anthropic() -> None:
 
 
 @respx.mock
-async def test_ollama_judge_returns_a_validated_verdict() -> None:
-    route = respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(
-            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
-        )
-    )
-    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
-    judge = get_judge("ollama", cfg)
-    verdict = await judge.verdict("system text", "user text")
-    assert isinstance(verdict, FitVerdict)
-    assert verdict.fit_score == 72
-    assert route.called
-    body = __import__("json").loads(route.calls[0].request.content)
-    assert body["model"] == "qwen2.5:7b"
-    assert body["stream"] is False
-    assert body["format"]["type"] == "object", "schema-constrained, not free JSON"
-    assert "fit_score" in body["format"]["properties"]
-
-
-@respx.mock
 async def test_ollama_connection_refused_is_a_useful_message() -> None:
     """The most likely failure is that ollama simply is not running."""
     route = respx.post("http://localhost:11434/api/chat").mock(
@@ -132,7 +109,7 @@ async def test_ollama_connection_refused_is_a_useful_message() -> None:
     )
     judge = get_judge("ollama", LLMConfig(enabled=True, backend="ollama"))
     with pytest.raises(RuntimeError) as e:
-        await judge.verdict("s", "u")
+        await judge.facts("s", "u")
     assert "ollama" in str(e.value).casefold()
     assert "11434" in str(e.value)
     assert route.call_count == 1, "a server that is not running is not retried"
@@ -142,11 +119,11 @@ async def test_ollama_connection_refused_is_a_useful_message() -> None:
 async def test_ollama_base_url_is_configurable() -> None:
     respx.post("http://box.local:11434/api/chat").mock(
         return_value=httpx.Response(
-            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
+            200, json={"message": {"content": __import__("json").dumps(FACTS_JSON)}}
         )
     )
     cfg = LLMConfig(enabled=True, backend="ollama", base_url="http://box.local:11434")
-    assert (await get_judge("ollama", cfg).verdict("s", "u")).fit_score == 72
+    assert (await get_judge("ollama", cfg).facts("s", "u")).fit_score == 72
 
 
 @respx.mock
@@ -163,13 +140,13 @@ async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
     def capture(request: httpx.Request) -> httpx.Response:
         seen.update(__import__("json").loads(request.content))
         return httpx.Response(
-            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
+            200, json={"message": {"content": __import__("json").dumps(FACTS_JSON)}}
         )
 
     respx.post("http://localhost:11434/api/chat").mock(side_effect=capture)
 
     cfg = LLMConfig(enabled=True, backend="ollama")
-    await get_judge("ollama", cfg).verdict("s", "u")
+    await get_judge("ollama", cfg).facts("s", "u")
     assert seen["options"] == {
         "num_ctx": 12288,
         "num_predict": cfg.max_tokens,
@@ -178,7 +155,7 @@ async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
 
     seen.clear()
     cfg = LLMConfig(enabled=True, backend="ollama", temperature=0.7)
-    await get_judge("ollama", cfg).verdict("s", "u")
+    await get_judge("ollama", cfg).facts("s", "u")
     assert seen["options"]["temperature"] == 0.7
 
 
@@ -189,10 +166,10 @@ async def test_ollama_scores_deterministically_unless_told_otherwise() -> None:
 async def test_fit_scorer_routes_through_the_configured_backend() -> None:
     respx.post("http://localhost:11434/api/chat").mock(
         return_value=httpx.Response(
-            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
+            200, json={"message": {"content": __import__("json").dumps(FACTS_JSON)}}
         )
     )
-    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b", mode="judge")
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
     scorer = FitScorer(cfg, ProfileConfig(), None)
     scored = await scorer.score_all([_job()])
     assert scored[0].fit is not None
@@ -211,10 +188,10 @@ async def test_scorer_is_enabled_for_a_local_backend_with_no_key_anywhere(
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     respx.post("http://localhost:11434/api/chat").mock(
         return_value=httpx.Response(
-            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
+            200, json={"message": {"content": __import__("json").dumps(FACTS_JSON)}}
         )
     )
-    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b", mode="judge")
+    cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
     assert cfg.api_key == "", "no key on this machine"
     scorer = FitScorer(cfg, ProfileConfig(), None)
     assert scorer.enabled is True, "a local backend needs no key"
@@ -231,33 +208,6 @@ def test_backends_command_lists_both_and_flags_which_need_a_key() -> None:
     assert result.exit_code == 0, result.output
     assert "anthropic" in result.output and "ollama" in result.output
     assert "ANTHROPIC_API_KEY" in result.output
-
-
-def test_the_ollama_backend_reports_what_was_measured_not_a_disclaimer() -> None:
-    """The backend has now been run against a live server, so "NOT YET
-    VERIFIED" is simply false — and this README's credibility rests on saying
-    exactly what is and is not verified, which makes a stale claim worse here
-    than in an average repo.
-
-    The numbers are the honest version and they belong where someone picks a
-    backend, which is the description `rolescan backends` prints. 50% blocker
-    recall is in it on purpose: it is the weakest measurement and the reason
-    `hard_blockers` exists.
-    """
-    from typer.testing import CliRunner
-
-    from rolescan.cli import app
-
-    description = available_judges()["ollama"].description.casefold()
-    assert "not yet verified" not in description
-    assert "72% verdict accuracy" in description
-    assert "50% blocker recall" in description
-    assert "judge mode" in description, "the figures are for the older mode"
-
-    # And it has to be where a backend is chosen, not only in the source.
-    out = plain(CliRunner().invoke(app, ["backends"]).output).casefold()
-    assert "not yet verified" not in out
-    assert "72%" in out
 
 
 # --- a judge that cannot run must say so, loudly, before the scan ----------
@@ -303,7 +253,7 @@ async def test_a_backend_whose_sdk_is_absent_is_reported() -> None:
         requires_module = "a_package_that_is_not_installed_anywhere"
         description = "test only"
 
-        async def verdict(self, system: str, user: str) -> FitVerdict:
+        async def facts(self, system: str, user: str) -> PostingFacts:
             raise NotImplementedError
 
     try:
@@ -339,7 +289,7 @@ async def test_a_deliberate_keyword_only_run_is_not_nagged(
 
 
 @respx.mock
-async def test_ollama_verdict_survives_a_message_that_is_not_an_object() -> None:
+async def test_ollama_facts_survive_a_message_that_is_not_an_object() -> None:
     """The outer layer was guarded and the inner one was not, so a body of
     {"message": "hello"} - JSON, and a dict - raised AttributeError on .get.
     That is precisely the raw exception in the digest those guards exist to
@@ -350,19 +300,19 @@ async def test_ollama_verdict_survives_a_message_that_is_not_an_object() -> None
     )
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
     with pytest.raises(RuntimeError) as e:
-        await get_judge("ollama", cfg).verdict("system", "user")
-    assert "usable verdict" in str(e.value)
+        await get_judge("ollama", cfg).facts("system", "user")
+    assert "usable posting facts" in str(e.value)
 
 
 @respx.mock
-async def test_ollama_verdict_survives_a_body_that_is_not_an_object() -> None:
+async def test_ollama_facts_survive_a_body_that_is_not_an_object() -> None:
     respx.post("http://localhost:11434/api/chat").mock(
         return_value=httpx.Response(200, json=["not", "an", "object"])
     )
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:7b")
     with pytest.raises(RuntimeError) as e:
-        await get_judge("ollama", cfg).verdict("system", "user")
-    assert "usable verdict" in str(e.value)
+        await get_judge("ollama", cfg).facts("system", "user")
+    assert "usable posting facts" in str(e.value)
 
 
 # --- ollama preflight: a reachable server is not the same as a usable one --
@@ -445,7 +395,7 @@ async def test_a_backend_with_no_preflight_override_is_unaffected() -> None:
         needs_api_key = False
         description = "test only"
 
-        async def verdict(self, system: str, user: str) -> FitVerdict:
+        async def facts(self, system: str, user: str) -> PostingFacts:
             raise NotImplementedError
 
     try:
@@ -558,7 +508,7 @@ async def test_a_judge_whose_constructor_raises_does_not_kill_the_scan() -> None
             msg = "no config for you"
             raise RuntimeError(msg)
 
-        async def verdict(self, system: str, user: str) -> FitVerdict:
+        async def facts(self, system: str, user: str) -> PostingFacts:
             raise NotImplementedError
 
     try:
@@ -592,7 +542,7 @@ async def test_a_third_party_judge_key_is_read_from_its_own_env_var(
         api_key_env = "OTHER_PROVIDER_KEY"
         description = "test only"
 
-        async def verdict(self, system: str, user: str) -> FitVerdict:
+        async def facts(self, system: str, user: str) -> PostingFacts:
             raise NotImplementedError
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -618,7 +568,7 @@ async def test_a_third_party_judge_without_its_key_still_self_disables(
         api_key_env = "OTHER_PROVIDER_KEY_2"
         description = "test only"
 
-        async def verdict(self, system: str, user: str) -> FitVerdict:
+        async def facts(self, system: str, user: str) -> PostingFacts:
             raise NotImplementedError
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-for-this-backend")
@@ -632,152 +582,7 @@ async def test_a_third_party_judge_without_its_key_still_self_disables(
         _unregister("otherhosted2")
 
 
-# --- the two-pass cascade ------------------------------------------------
-
-
-def test_triage_asks_only_for_what_the_gate_needs() -> None:
-    schema = triage_schema()
-    assert set(schema["properties"]) == {
-        "fit_score",
-        "verdict",
-        "confidence",
-    }
-    # the three generated fields are the whole point of not asking
-    for generated in ("reason", "tailoring", "blockers", "keywords_missing"):
-        assert generated not in schema["properties"]
-
-
-def _cascade_scorer(store: object | None = None, min_report: int = 50) -> FitScorer:
-    return FitScorer(
-        LLMConfig(enabled=True, backend="ollama", mode="judge"),
-        ProfileConfig(min_report_score=min_report),
-        store,  # type: ignore[arg-type]
-    )
-
-
-@respx.mock
-async def test_a_posting_below_the_gate_costs_one_call_not_two() -> None:
-    """The whole point: no second call for a role the digest will never print."""
-    schemas: list[object] = []
-
-    def capture(request: httpx.Request) -> httpx.Response:
-        body = __import__("json").loads(request.content)
-        schemas.append(sorted(body["format"]["properties"]))
-        return httpx.Response(
-            200,
-            json={
-                "message": {
-                    "content": __import__("json").dumps(
-                        {**VERDICT_JSON, "fit_score": 20}
-                    )
-                }
-            },
-        )
-
-    respx.post("http://localhost:11434/api/chat").mock(side_effect=capture)
-    scored = await _cascade_scorer().score_all([_job()])
-
-    assert len(schemas) == 1, "a below-threshold posting must not be asked twice"
-    assert schemas[0] == ["confidence", "fit_score", "verdict"]
-    assert scored[0].fit is not None
-    assert scored[0].fit.fit_score == 20
-    assert scored[0].fit.reason == TRIAGE_REASON
-
-
-@respx.mock
-async def test_a_posting_above_the_gate_gets_its_full_verdict() -> None:
-    schemas: list[list[str]] = []
-
-    def capture(request: httpx.Request) -> httpx.Response:
-        body = __import__("json").loads(request.content)
-        schemas.append(sorted(body["format"]["properties"]))
-        return httpx.Response(
-            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
-        )
-
-    respx.post("http://localhost:11434/api/chat").mock(side_effect=capture)
-    scored = await _cascade_scorer().score_all([_job()])
-
-    assert len(schemas) == 2, "triage, then the full verdict"
-    assert "reason" in schemas[1]
-    assert scored[0].fit is not None
-    assert scored[0].fit.reason != TRIAGE_REASON
-
-
-@respx.mock
-async def test_cascade_is_skipped_when_triage_is_not_actually_cheaper() -> None:
-    """A backend whose triage IS the full call must not be made to pay twice.
-
-    `Judge.triage` defaults to `verdict`, so cascading against a hosted backend
-    would double the bill and buy nothing. `cheap_triage` is what stops it.
-    """
-    calls = 0
-
-    def capture(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(
-            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
-        )
-
-    respx.post("http://localhost:11434/api/chat").mock(side_effect=capture)
-    scorer = _cascade_scorer()
-    monkey = scorer._get_judge()
-    type(monkey).cheap_triage = False
-    try:
-        await scorer.score_all([_job()])
-    finally:
-        type(monkey).cheap_triage = True
-    assert calls == 1
-
-
-@respx.mock
-async def test_a_cached_triage_stub_is_refetched_once_the_gate_drops() -> None:
-    """Lowering min_report_score brings stubs into scope, and a stub has no reason.
-
-    Without this the digest prints a role whose justification is a sentinel
-    string - which reads as a broken tool rather than a stale cache.
-    """
-    stub = FitVerdict(
-        fit_score=60,
-        verdict="consider",
-        confidence="low",
-        reason=TRIAGE_REASON,
-    )
-
-    class _Store:
-        def __init__(self) -> None:
-            self.written: list[FitVerdict] = []
-
-        async def get_verdict(
-            self, content_hash: str, days: int, model: object = None
-        ) -> FitVerdict:
-            return stub
-
-        async def put_verdict(self, content_hash: str, verdict: FitVerdict) -> None:
-            self.written.append(verdict)
-
-    respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(
-            200, json={"message": {"content": __import__("json").dumps(VERDICT_JSON)}}
-        )
-    )
-
-    # gate above the stub's score: still out of scope, cache stands
-    store = _Store()
-    scored = await _cascade_scorer(store, min_report=70).score_all([_job()])
-    assert scored[0].llm_cached is True
-    assert store.written == []
-
-    # gate below it: the stub now qualifies, so its detail must be fetched
-    store = _Store()
-    scored = await _cascade_scorer(store, min_report=50).score_all([_job()])
-    assert scored[0].llm_cached is False
-    assert scored[0].fit is not None
-    assert scored[0].fit.reason != TRIAGE_REASON
-
-
-# --- anthropic triage --------------------------------------------------------
+# --- the anthropic backend -------------------------------------------------
 
 
 def _fake_facts() -> PostingFacts:
@@ -804,9 +609,8 @@ class _FakeMessages:
     through `extra_body`.
     """
 
-    def __init__(self, score: int = 30, *, empty: bool = False) -> None:
+    def __init__(self, *, empty: bool = False) -> None:
         self.calls: list[dict[str, Any]] = []
-        self.score = score
         self.empty = empty
 
     async def parse(
@@ -836,20 +640,7 @@ class _FakeMessages:
     def _answer(self, fmt: Any) -> SimpleNamespace:
         if self.empty:
             return SimpleNamespace(parsed_output=None, stop_reason="max_tokens")
-        if fmt is FitVerdict:
-            return SimpleNamespace(parsed_output=FitVerdict(**VERDICT_JSON))
-        if fmt is PostingFacts:
-            return SimpleNamespace(parsed_output=_fake_facts())
-        return SimpleNamespace(
-            parsed_output=fmt(fit_score=self.score, verdict="skip", confidence="high")
-        )
-
-
-class _EchoingMessages(_FakeMessages):
-    """A model that fills in `rule` anyway, as if the schema had offered it."""
-
-    def _answer(self, fmt: Any) -> SimpleNamespace:
-        return SimpleNamespace(parsed_output=FitVerdict(**VERDICT_JSON, rule="years"))
+        return SimpleNamespace(parsed_output=_fake_facts())
 
 
 def _anthropic(fake: _FakeMessages, **llm: Any) -> AnthropicJudge:
@@ -858,67 +649,11 @@ def _anthropic(fake: _FakeMessages, **llm: Any) -> AnthropicJudge:
     return judge
 
 
-async def test_anthropic_triage_asks_only_for_the_gate_fields() -> None:
-    fake = _FakeMessages()
-    v = await _anthropic(fake).triage("sys", "user")
-    call = fake.calls[0]
-    assert call["max_tokens"] == TRIAGE_MAX_TOKENS
-    schema = call["output_format"].model_json_schema()
-    assert set(schema["properties"]) == {"fit_score", "verdict", "confidence"}
-    assert schema["properties"]["fit_score"]["maximum"] == 100
-    assert v.reason == TRIAGE_REASON and v.fit_score == 30
-
-
-def test_anthropic_declares_a_cheap_triage() -> None:
-    assert AnthropicJudge.cheap_triage is True
-
-
-async def test_anthropic_triage_with_no_output_raises_runtime_error() -> None:
-    with pytest.raises(RuntimeError, match="no triage verdict"):
-        await _anthropic(_FakeMessages(empty=True)).triage("s", "u")
-
-
-async def test_cascade_now_runs_for_anthropic() -> None:
-    fake = _FakeMessages(score=30)
-    scorer = FitScorer(
-        LLMConfig(backend="anthropic", api_key="k", mode="judge"),
-        ProfileConfig(min_report_score=55),
-    )
-    scorer._judge = _anthropic(fake)
-    [out] = await scorer.score_all([_job()])
-    assert len(fake.calls) == 1, "below the gate: triage only, no full verdict"
-    assert out.fit is not None and out.fit.reason == TRIAGE_REASON
-
-
-async def test_cascade_still_fetches_the_full_verdict_above_the_gate() -> None:
-    fake = _FakeMessages(score=80)
-    scorer = FitScorer(
-        LLMConfig(backend="anthropic", api_key="k", mode="judge"),
-        ProfileConfig(min_report_score=55),
-    )
-    scorer._judge = _anthropic(fake)
-    [out] = await scorer.score_all([_job()])
-    assert [c["output_format"] is FitVerdict for c in fake.calls] == [False, True]
-    assert out.fit is not None and out.fit.reason == VERDICT_JSON["reason"]
-
-
 # --- prompt caching: every anthropic call sends one cached system block ----
 
 
 def _cached(system: str) -> list[dict[str, Any]]:
     return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
-
-
-async def test_anthropic_verdict_sends_a_cached_system_block() -> None:
-    fake = _FakeMessages()
-    await _anthropic(fake).verdict("sys", "user")
-    assert fake.calls[0]["system"] == _cached("sys")
-
-
-async def test_anthropic_triage_sends_a_cached_system_block() -> None:
-    fake = _FakeMessages()
-    await _anthropic(fake).triage("sys", "user")
-    assert fake.calls[0]["system"] == _cached("sys")
 
 
 async def test_anthropic_facts_sends_a_cached_system_block() -> None:
@@ -965,23 +700,10 @@ async def test_anthropic_facts_sends_the_configured_temperature() -> None:
     assert fake.calls[0]["extra_body"] == {"temperature": 0.0}
 
 
-async def test_anthropic_verdict_sends_the_configured_temperature() -> None:
-    fake = _FakeMessages()
-    await _anthropic(fake).verdict("sys", "user")
-    assert fake.calls[0]["extra_body"] == {"temperature": 0.0}
-
-
-async def test_anthropic_triage_sends_the_configured_temperature() -> None:
-    fake = _FakeMessages()
-    await _anthropic(fake).triage("sys", "user")
-    assert fake.calls[0]["extra_body"] == {"temperature": 0.0}
-
-
-@pytest.mark.parametrize("method", ["facts", "verdict", "triage"])
-async def test_anthropic_passes_a_changed_temperature_through(method: str) -> None:
+async def test_anthropic_passes_a_changed_temperature_through() -> None:
     fake = _FakeMessages()
     judge = _anthropic(fake, temperature=0.3)
-    await getattr(judge, method)("sys", "user")
+    await judge.facts("sys", "user")
     assert fake.calls[0]["extra_body"]["temperature"] == 0.3
 
 
@@ -989,13 +711,12 @@ async def test_anthropic_still_sends_the_rest_of_the_request_with_it() -> None:
     """Moving to a helper must not drop what each call already sent."""
     fake = _FakeMessages()
     judge = _anthropic(fake, model="claude-haiku-4-5-20251001", max_tokens=777)
-    await judge.verdict("sys", "user")
-    await judge.triage("sys", "user")
-    verdict, triage = fake.calls
-    assert verdict["model"] == triage["model"] == "claude-haiku-4-5-20251001"
-    assert verdict["max_tokens"] == 777 and triage["max_tokens"] == TRIAGE_MAX_TOKENS
-    assert verdict["messages"] == [{"role": "user", "content": "user"}]
-    assert verdict["system"] == _cached("sys")
+    await judge.facts("sys", "user")
+    [call] = fake.calls
+    assert call["model"] == "claude-haiku-4-5-20251001"
+    assert call["max_tokens"] == 777
+    assert call["messages"] == [{"role": "user", "content": "user"}]
+    assert call["system"] == _cached("sys")
 
 
 def _rejecting_400(message: str) -> Exception:
@@ -1041,10 +762,8 @@ async def test_a_model_that_rejects_temperature_is_called_without_it(
     fake = _RejectsTemperature()
     judge = _anthropic(fake)
     with caplog.at_level(logging.WARNING, logger="rolescan.scoring.judges"):
-        first = await judge.triage("sys", "user")
-        await judge.facts("sys", "user")
-        await judge.verdict("sys", "user")
-    assert first.reason == TRIAGE_REASON
+        for _ in range(3):
+            await judge.facts("sys", "user")
     assert [c["extra_body"] for c in fake.calls] == [None, None, None]
     assert fake.attempts == 4, "one rejected attempt, then no more probing"
     warned = [r for r in caplog.records if "temperature" in r.getMessage()]
@@ -1062,12 +781,12 @@ async def test_concurrent_first_calls_warn_once_and_later_ones_omit_it(
     fake = _RejectsTemperature()
     judge = _anthropic(fake)
     with caplog.at_level(logging.WARNING, logger="rolescan.scoring.judges"):
-        results = await asyncio.gather(*(judge.triage("sys", "user") for _ in range(5)))
+        results = await asyncio.gather(*(judge.facts("sys", "user") for _ in range(5)))
         warned = [r for r in caplog.records if "temperature" in r.getMessage()]
         assert len(warned) == 1, [r.getMessage()[:60] for r in warned]
         before = fake.attempts
-        await judge.triage("sys", "user")
-    assert all(r.reason == TRIAGE_REASON for r in results)
+        await judge.facts("sys", "user")
+    assert all(isinstance(r, PostingFacts) for r in results)
     assert fake.attempts == before + 1, "a later call is sent once, without it"
     assert [c["extra_body"] for c in fake.calls] == [None] * 6
     assert len([r for r in caplog.records if "temperature" in r.getMessage()]) == 1
@@ -1076,14 +795,14 @@ async def test_concurrent_first_calls_warn_once_and_later_ones_omit_it(
 async def test_a_400_about_something_else_is_not_swallowed() -> None:
     fake = _RejectsTemperature(_rejecting_400("max_tokens: too large"))
     with pytest.raises(Exception, match="max_tokens"):
-        await _anthropic(fake).triage("sys", "user")
+        await _anthropic(fake).facts("sys", "user")
     assert fake.attempts == 1
 
 
 async def test_an_error_that_is_not_a_400_is_not_retried() -> None:
     fake = _RejectsTemperature(RuntimeError("temperature, but a server fault"))
     with pytest.raises(RuntimeError, match="server fault"):
-        await _anthropic(fake).triage("sys", "user")
+        await _anthropic(fake).facts("sys", "user")
     assert fake.attempts == 1
 
 
@@ -1099,7 +818,7 @@ async def test_temperature_reaches_the_request_body_through_the_real_sdk() -> No
 
     def answer(request: httpx2.Request) -> httpx2.Response:
         bodies.append(json.loads(request.content))
-        text = json.dumps({"fit_score": 30, "verdict": "skip", "confidence": "high"})
+        text = json.dumps(FACTS_JSON)
         return httpx2.Response(
             200,
             json={
@@ -1120,27 +839,9 @@ async def test_temperature_reaches_the_request_body_through_the_real_sdk() -> No
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(answer)),
         max_retries=0,
     )
-    verdict = await judge.triage("sys", "user")
-    assert verdict.fit_score == 30
+    facts = await judge.facts("sys", "user")
+    assert facts.fit_score == 72
     assert [b["temperature"] for b in bodies] == [0.3]
-
-
-def test_base_judge_facts_is_not_implemented() -> None:
-    """A backend that does not implement facts mode explains itself rather
-    than failing with an AttributeError deep inside the scorer."""
-
-    class _BareJudge(Judge):
-        name = "bare"
-        description = "test only"
-
-        async def verdict(self, system: str, user: str) -> FitVerdict:
-            raise NotImplementedError
-
-    import asyncio
-
-    judge = _BareJudge(LLMConfig())
-    with pytest.raises(NotImplementedError, match="facts"):
-        asyncio.run(judge.facts("s", "u"))
 
 
 @respx.mock
@@ -1180,25 +881,3 @@ async def test_ollama_facts_survives_a_body_that_is_not_usable() -> None:
         await get_judge("ollama", cfg).facts("system text", "user text")
 
 
-def test_triage_fit_score_bounds_match_fitverdict() -> None:
-    """The triage model copies FitVerdict's fit_score bounds by hand; pin them
-    together so a change to one cannot silently leave the other behind."""
-    triage = _TriageOutput.model_json_schema()["properties"]["fit_score"]
-    full = FitVerdict.model_json_schema()["properties"]["fit_score"]
-    assert triage["minimum"] == full["minimum"]
-    assert triage["maximum"] == full["maximum"]
-
-
-@respx.mock
-async def test_a_model_cannot_name_the_rule_that_hid_a_posting() -> None:
-    """Only `decide` names a rule. A judge-mode model echoing `rule` would
-    otherwise mark the posting rule-hidden in the digest on its own say-so."""
-    echoed = {**VERDICT_JSON, "rule": "years"}
-    respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(
-            200, json={"message": {"content": __import__("json").dumps(echoed)}}
-        )
-    )
-    ollama = get_judge("ollama", LLMConfig(enabled=True, backend="ollama", model="m"))
-    assert (await ollama.verdict("s", "u")).rule is None
-    assert (await _anthropic(_EchoingMessages()).verdict("s", "u")).rule is None

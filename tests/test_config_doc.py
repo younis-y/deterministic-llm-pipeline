@@ -76,7 +76,6 @@ def test_the_keys_once_missing_from_the_docs_are_there() -> None:
         "profile.max_age_days",
         "llm.api_key",
         "llm.max_tokens",
-        "llm.cascade",
         "llm.temperature",
         "http.user_agent",
         "output.email.password",

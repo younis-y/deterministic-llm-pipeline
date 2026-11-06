@@ -393,8 +393,8 @@ class LLMConfig(BaseModel):
     waiting on: the answers arrive when the batch ends, usually within the
     hour, and the scan waits for them. One direct call goes first and writes
     the shared prompt to a one-hour cache entry, so the batch reads it. Only
-    the `anthropic` backend in `mode: facts` batches; judge mode, an
-    enricher's calls and every other backend are called directly as before.
+    the `anthropic` backend batches; an enricher's calls and every other
+    backend are called directly as before.
     Fewer than three uncached postings are scored directly too."""
     batch_poll_seconds: Annotated[float, Field(gt=0)] = 30.0
     """How often a running batch is asked whether it has ended."""
@@ -402,16 +402,9 @@ class LLMConfig(BaseModel):
     """How long a scan waits for a batch. After that the batch is cancelled:
     the requests it already answered are kept and paid for, and the rest
     count as scoring errors, so those postings are scored on the next run."""
-    cascade: bool = True
-    """Score in two passes: a cheap one that only settles the score, then the
-    full verdict only for postings that clear `min_report_score`. The digest
-    never prints reason or blockers for anything below that line,
-    and generating them is ~85% of a local call. Measured at roughly half the
-    scoring time on a real 531-posting run. Ignored by backends whose triage
-    is not actually cheaper - see `Judge.cheap_triage`."""
     extra_prompt: str = ""
-    """Appended to the system prompt verbatim, for context this library has no
-    business knowing about.
+    """Context for an enricher (`llm.enricher`), which reads it from here; the
+    scoring call never sends it.
 
     The seam exists so a private caller can add its own vocabulary - a set of
     documents to choose between, a house style, a client's constraints -
@@ -444,12 +437,12 @@ class LLMConfig(BaseModel):
     uncached part, every call would look cut: set this to false, which keeps
     recording the counts but never judges them."""
     cache_days: Annotated[int, Field(ge=0)] = 30
-    mode: Literal["facts", "judge"] = Field(
+    mode: Literal["facts"] = Field(
         default="facts",
         description=(
-            "Scoring mode. facts: the model extracts quoted facts and code "
-            "applies profile.rules. judge: one call, the model decides the "
-            "verdict itself and profile.rules do not apply. Both are supported."
+            "Scoring mode. facts, the only one since 3.0.0: the model extracts "
+            "quoted facts and code applies profile.rules. Kept so a config "
+            "that names it still loads."
         ),
     )
     enricher: str = Field(

@@ -583,7 +583,7 @@ def test_the_digest_prints_a_mark_command_that_works_from_anywhere(
 
 OLLAMA_CONFIG = CONFIG.replace(
     "llm:\n  enabled: false",
-    f"llm:\n  enabled: true\n  backend: ollama\n  model: {OLLAMA_MODEL}\n  mode: judge",
+    f"llm:\n  enabled: true\n  backend: ollama\n  model: {OLLAMA_MODEL}",
 )
 
 
@@ -617,8 +617,8 @@ def test_a_failed_preflight_does_not_claim_nothing_was_scored(tmp_path: Path) ->
 
 
 ENRICHER_CONFIG = OLLAMA_CONFIG.replace(
-    f"model: {OLLAMA_MODEL}\n  mode: judge",
-    f"model: {OLLAMA_MODEL}\n  mode: judge\n  enricher: not-a-real-enricher",
+    f"model: {OLLAMA_MODEL}",
+    f"model: {OLLAMA_MODEL}\n  enricher: not-a-real-enricher",
 )
 
 

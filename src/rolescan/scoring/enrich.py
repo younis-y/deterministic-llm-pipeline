@@ -50,17 +50,14 @@ class Enricher(ABC):
     """Runs extra work for one posting, after it has already passed the gate."""
 
     name: ClassVar[str] = ""
-    #: The shape `enrich` returns. A plain `FitVerdict` by default; a subclass
-    #: that adds fields overrides this so the verdict cache is read back as
-    #: that subclass rather than refusing the extra keys and re-scoring.
-    verdict_model: ClassVar[type[FitVerdict]] = FitVerdict
 
     def __init__(self, cfg: LLMConfig) -> None:
         self.cfg = cfg
 
     @abstractmethod
     async def enrich(self, job: Job, verdict: FitVerdict) -> FitVerdict:
-        """Return `verdict` unchanged, or a `verdict_model` built from it.
+        """Return `verdict` unchanged, or a `FitVerdict` (or subclass) built
+        from it.
 
         Raise on failure. The caller (`FitScorer`) logs it and keeps the
         plain verdict rather than dropping the posting - enrichment is

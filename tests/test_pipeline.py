@@ -656,7 +656,7 @@ async def test_a_healthy_run_still_records_what_it_judged(tmp_path: Path) -> Non
     )
     cfg = _cfg(
         tmp_path,
-        {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"},
+        {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL},
     )
     result = await scan_and_record(cfg)
     assert len(result.reportable) == 1
@@ -690,7 +690,6 @@ async def test_a_healthy_run_with_an_unknown_enricher_scores_normally(
             "enabled": True,
             "backend": "ollama",
             "model": OLLAMA_MODEL,
-            "mode": "judge",
             "enricher": "not-a-real-enricher",
         },
     )
@@ -718,7 +717,7 @@ async def test_a_hard_blocker_overrides_a_high_llm_score(tmp_path: Path) -> None
     clears the keyword prefilter and that the LLM scores well above
     min_report_score must still be excluded once it hits one - the LLM's
     opinion does not get to outvote a structural bar the user configured."""
-    mock_ollama()  # canned verdict: fit_score=72, verdict="consider" - not blocked
+    mock_ollama()  # canned facts: fit_score=72, no bars - not blocked
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200,
@@ -767,14 +766,16 @@ async def test_a_blocked_and_hidden_posting_is_counted(tmp_path: Path) -> None:
     number the reader cannot tell a blocker matching the wrong thing from a
     market with nothing in it - and the blocker fires on a substring in a
     config file, over the model's own verdict."""
-    mock_ollama()  # canned verdict: fit_score=72, verdict="consider" - not blocked
+    # Canned facts: fit_score=72, no bars. The term is one no resolver reads
+    # as a bar, so only the configured hard blocker can block the posting.
+    mock_ollama()
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200,
             json=_payload(
                 "Graduate Energy Data Scientist",
                 "Python, trading, energy, day-ahead forecasting. "
-                "Active security clearance required.",
+                "Rotating night shifts required.",
             ),
         )
     )
@@ -789,7 +790,7 @@ async def test_a_blocked_and_hidden_posting_is_counted(tmp_path: Path) -> None:
                         "python": 15,
                         "trading": 15,
                     },
-                    "hard_blockers": ["security clearance"],
+                    "hard_blockers": ["night shifts"],
                     "min_keyword_score": 18,
                     "min_report_score": 55,
                 },
@@ -826,7 +827,7 @@ async def test_a_weighted_term_alone_does_not_override_the_llm(
     structural bar (matlab: 15 in the real config - "capable, but does not
     want to use it again"). It must cost its weight in keyword_score but must
     not force `blocked`: the LLM's own verdict stands."""
-    mock_ollama()  # canned verdict: fit_score=72, verdict="consider"
+    mock_ollama()  # canned facts: fit_score=72, so `decide` says apply
     respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
         return_value=httpx.Response(
             200,
@@ -848,7 +849,6 @@ async def test_a_weighted_term_alone_does_not_override_the_llm(
                 "enabled": True,
                 "backend": "ollama",
                 "model": OLLAMA_MODEL,
-                "mode": "judge",
             },
             "output": {
                 "dir": str(tmp_path),
@@ -861,7 +861,7 @@ async def test_a_weighted_term_alone_does_not_override_the_llm(
     result = await run_scan(cfg)
     assert result.prefiltered == 0, "the posting must have reached the LLM"
     assert len(result.reportable) == 1, "a soft blocker must not bury the posting"
-    assert result.reportable[0].verdict is Verdict.CONSIDER, "the LLM verdict stands"
+    assert result.reportable[0].verdict is Verdict.APPLY, "the scored verdict stands"
 
 
 @respx.mock
@@ -908,7 +908,7 @@ async def test_a_dismissed_url_does_not_reappear(tmp_path: Path) -> None:
     )
     cfg = _cfg(
         tmp_path,
-        {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"},
+        {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL},
     )
     first = await run_scan(cfg, dry_run=True)
     assert len(first.reportable) == 1
@@ -1259,9 +1259,7 @@ async def test_default_facts_mode_applies_profile_rules(tmp_path: Path) -> None:
     )
 
     async with Store(tmp_path / "seen.db") as store:
-        scorer = FitScorer(
-            cfg.llm, cfg.profile, store, extra_prompt=cfg.llm.extra_prompt
-        )
+        scorer = FitScorer(cfg.llm, cfg.profile, store)
         scored = await scorer.score_all([over_years, no_years])
 
     assert scorer.errors == 0
@@ -1640,55 +1638,3 @@ async def test_rule_hidden_carries_a_posting_a_term_pushed_under_the_prefilter(
     assert again.rule_hidden == []
 
 
-@respx.mock
-async def test_a_judge_mode_model_block_is_listed_under_hard_bar(
-    tmp_path: Path,
-) -> None:
-    """In judge mode the model blocks a posting itself: `decide` never runs,
-    so `fit.rule` is None, and with `show_blocked: false` the posting would
-    leave the digest untraced. It is listed under the hard-bar group with the
-    model's own reason."""
-    verdict = {
-        "fit_score": 70,
-        "verdict": "blocked",
-        "confidence": "high",
-        "reason": "The advert is open to UAE nationals only.",
-        "blockers": ["UAE nationals only"],
-        "keywords_missing": [],
-    }
-    respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(
-            200, json={"message": {"content": json.dumps(verdict)}}
-        )
-    )
-    respx.get("http://localhost:11434/api/tags").mock(
-        return_value=httpx.Response(200, json={"models": [{"name": OLLAMA_MODEL}]})
-    )
-    mock_ollama_show()
-    respx.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").mock(
-        return_value=httpx.Response(
-            200,
-            json=_payload(
-                "Graduate Energy Data Scientist",
-                "Python, trading, energy, day-ahead forecasting. UAE nationals only.",
-            ),
-        )
-    )
-    cfg = _cfg(
-        tmp_path,
-        {"enabled": True, "backend": "ollama", "model": OLLAMA_MODEL, "mode": "judge"},
-    )
-    cfg.output.show_blocked = False
-
-    result = await run_scan(cfg, dry_run=True)
-
-    assert result.reportable == [] and result.hidden_blocked == 1
-    [hidden] = result.rule_hidden
-    assert hidden.fit is not None and hidden.fit.rule is None
-    text = render_markdown(result)
-    group = text[text.index("**Nationality, clearance or other hard bar**") :]
-    assert (
-        "[Graduate Energy Data Scientist](https://boards.greenhouse.io/acme/jobs/1)"
-        " · London, UK: The advert is open to UAE nationals only."
-    ) in group
-    assert "1 hidden by your rules (listed below)" in text

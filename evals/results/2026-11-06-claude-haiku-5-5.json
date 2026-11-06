@@ -1,0 +1,235 @@
+{
+  "date": "2026-11-06T19:10:04+00:00",
+  "backend": "anthropic",
+  "model": "claude-haiku-5-5",
+  "runs": 3,
+  "pass_at_1": 0.962,
+  "pass_hat_3": 0.962,
+  "seconds": 50,
+  "tokens": {
+    "input": 7455,
+    "output": 39858,
+    "cache_read": 307632,
+    "cache_write": 0
+  },
+  "cases": [
+    {
+      "id": "pub-years-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-years-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-years-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-years-04",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": false,
+      "open_defect": "a stated cap ('up to N years') is accepted as a minimum",
+      "failures": []
+    },
+    {
+      "id": "pub-years-05",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-years-06",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": false,
+      "open_defect": "an age limit is accepted as years of experience",
+      "failures": []
+    },
+    {
+      "id": "pub-stu-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-stu-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-stu-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": false,
+      "open_defect": "student_only accepted from a quote that names who the role serves",
+      "failures": []
+    },
+    {
+      "id": "pub-gy-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-gy-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-gy-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-gy-04",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": false,
+      "open_defect": "an equal-opportunity 'national origin' quote is accepted as a nationality bar",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-04",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-05",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": false,
+      "open_defect": "a benefit quote is accepted as an 'other' bar",
+      "failures": []
+    },
+    {
+      "id": "pub-lvl-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-lvl-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-lvl-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-lvl-04",
+      "passed": 0,
+      "runs": 3,
+      "offline_passes": false,
+      "open_defect": "the title reader misses 'Lead <words> Engineer'",
+      "failures": [
+        [
+          "rule=None"
+        ],
+        [
+          "rule=None"
+        ],
+        [
+          "rule=None"
+        ]
+      ]
+    },
+    {
+      "id": "pub-fld-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-fld-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-fld-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-fld-04",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": false,
+      "open_defect": "a model 'other' field on a data title is kept when the title names no field",
+      "failures": []
+    }
+  ]
+}

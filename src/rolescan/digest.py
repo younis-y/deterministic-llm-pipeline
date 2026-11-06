@@ -150,10 +150,10 @@ def _hidden_group(item: ScoredJob, gate: int) -> tuple[str, str] | None:
 
     The rule `decide` fired wins over a `hard_blockers` term, so a posting
     both caught is listed once, under the rule: its reason quotes the advert,
-    which is what a reader checks a skip against. A judge-mode model block
-    has no rule (`decide` never ran) and goes under `hard_bar` with the
-    model's reason, ahead of any term it also matched. A term-only posting's
-    reason is the term(s) that matched, as configured.
+    which is what a reader checks a skip against. A block with no rule (a
+    verdict from before 3.0.0, when judge mode let the model block) goes
+    under `hard_bar` with its reason, ahead of any term it also matched. A
+    term-only posting's reason is the term(s) that matched, as configured.
 
     2.5.7: a prefilter reject `_rule_hidden` listed carries `hidden_as`, which
     decides the group after the branches above: `blockers` quotes the

@@ -348,9 +348,7 @@ async def test_the_model_backends_clients_are_not_bound(
             "llm": {
                 "enabled": True,
                 "backend": "ollama",
-                "mode": "judge",
                 "model": OLLAMA_MODEL,
-                "cascade": False,
             },
             "http": {"bind_interface": "en0"},
             "output": {"dir": str(tmp_path), "db_path": str(tmp_path / "seen.db")},

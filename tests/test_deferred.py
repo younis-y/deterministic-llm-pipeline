@@ -29,7 +29,6 @@ def _cfg(tmp_path: Path, max_calls: int) -> Config:
             "llm": {
                 "enabled": True,
                 "backend": "ollama",
-                "mode": "judge",
                 "model": OLLAMA_MODEL,
                 "max_calls_per_run": max_calls,
             },
@@ -237,7 +236,6 @@ async def test_deferred_posting_with_a_term_is_listed_not_recorded(
         tmp_path,
         enabled=True,
         backend="ollama",
-        mode="judge",
         model=OLLAMA_MODEL,
         max_calls_per_run=1,
     )

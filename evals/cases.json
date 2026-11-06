@@ -1,0 +1,410 @@
+{
+  "_about": "Synthetic adverts, each with what the finished facts and the rule decide() fires must be. model_facts, where given, is a realistic model answer (right or wrong) for the offline run; open_defect marks a case that fails today. See evals/harness.py.",
+  "rules": {
+    "max_years_required": 2,
+    "max_graduation_year": 2027,
+    "student_only": "skip",
+    "level_from_title_only": true,
+    "allowed_levels": [
+      "graduate_entry",
+      "junior",
+      "not_stated"
+    ],
+    "allowed_fields": [
+      "data_engineering",
+      "ai_llm",
+      "data_science",
+      "analytics_bi",
+      "quant",
+      "product",
+      "consulting",
+      "finance"
+    ]
+  },
+  "cases": [
+    {
+      "id": "pub-years-01",
+      "set": "years",
+      "title": "Data Engineer",
+      "description": "Requirements: 3+ years of experience in data engineering with Python and SQL.",
+      "expect": {
+        "fact": "years_required",
+        "value": 3,
+        "rule": "years"
+      }
+    },
+    {
+      "id": "pub-years-02",
+      "set": "years",
+      "title": "Machine Learning Engineer",
+      "description": "Experience: 0-2 years of experience (including internships or academic projects).",
+      "model_facts": {
+        "years_required": {
+          "value": 2,
+          "quote": "0-2 years of experience"
+        }
+      },
+      "expect": {
+        "fact": "years_required",
+        "value_max": 2,
+        "rule_not": "years"
+      },
+      "note": "range from 0: the model reported the upper bound"
+    },
+    {
+      "id": "pub-years-03",
+      "set": "years",
+      "title": "Machine Learning Engineer",
+      "description": "Experience: 0-3 years of experience (including internships or academic projects).",
+      "model_facts": {
+        "years_required": {
+          "value": 3,
+          "quote": "0-3 years of experience"
+        }
+      },
+      "expect": {
+        "fact": "years_required",
+        "value_max": 2,
+        "rule_not": "years"
+      },
+      "note": "same shape above the cap: must not hide"
+    },
+    {
+      "id": "pub-years-04",
+      "set": "years",
+      "title": "Graduate Analyst",
+      "description": "Recent graduate with up to 3 years of professional experience.",
+      "model_facts": {
+        "years_required": {
+          "value": 3,
+          "quote": "up to 3 years of professional experience"
+        }
+      },
+      "expect": {
+        "rule_not": "years"
+      },
+      "note": "a cap read as a minimum",
+      "open_defect": "a stated cap ('up to N years') is accepted as a minimum"
+    },
+    {
+      "id": "pub-years-05",
+      "set": "years",
+      "title": "Data Analyst",
+      "description": "With over 50 years of history, we serve customers worldwide. 25 days holiday, rising to 28 after 3 years' service.",
+      "expect": {
+        "fact": "years_required",
+        "value": null,
+        "rule_not": "years"
+      }
+    },
+    {
+      "id": "pub-years-06",
+      "set": "years",
+      "title": "Graduate Programme",
+      "description": "Applicants must be 27 years old or below at the start date.",
+      "model_facts": {
+        "years_required": {
+          "value": 27,
+          "quote": "27 years old"
+        }
+      },
+      "expect": {
+        "rule_not": "years"
+      },
+      "note": "an age limit is not an experience requirement",
+      "open_defect": "an age limit is accepted as years of experience"
+    },
+    {
+      "id": "pub-stu-01",
+      "set": "student_only",
+      "title": "Summer Intern",
+      "description": "Open only to currently enrolled undergraduate students.",
+      "expect": {
+        "fact": "student_only",
+        "value": true,
+        "rule": "student_only"
+      }
+    },
+    {
+      "id": "pub-stu-02",
+      "set": "student_only",
+      "title": "Analyst Intern",
+      "description": "Final-year students or recent graduates are welcome to apply.",
+      "model_facts": {
+        "student_only": {
+          "value": true,
+          "quote": "Final-year students"
+        }
+      },
+      "expect": {
+        "rule_not": "student_only"
+      }
+    },
+    {
+      "id": "pub-stu-03",
+      "set": "student_only",
+      "title": "Data Analyst",
+      "description": "You will join our student success team and build dashboards for course leaders.",
+      "model_facts": {
+        "student_only": {
+          "value": true,
+          "quote": "student success team"
+        }
+      },
+      "expect": {
+        "rule_not": "student_only"
+      },
+      "note": "'student' names who the role serves",
+      "open_defect": "student_only accepted from a quote that names who the role serves"
+    },
+    {
+      "id": "pub-gy-01",
+      "set": "graduation_year",
+      "title": "Summer Analyst",
+      "description": "You must be graduating in 2028.",
+      "model_facts": {
+        "graduation_year": {
+          "value": 2028,
+          "quote": "You must be graduating in 2028"
+        }
+      },
+      "expect": {
+        "fact": "graduation_year",
+        "value": 2028,
+        "rule": "graduation_year"
+      }
+    },
+    {
+      "id": "pub-gy-02",
+      "set": "graduation_year",
+      "title": "2027 Summer Internship, Machine Learning",
+      "description": "Currently enrolled in a Master's or PhD programme in Computer Science.",
+      "model_facts": {
+        "graduation_year": {
+          "value": 2027,
+          "quote": "2027 Summer Internship"
+        },
+        "student_only": {
+          "value": true,
+          "quote": "Currently enrolled in a Master's or PhD programme"
+        }
+      },
+      "expect": {
+        "rule": "student_only"
+      },
+      "note": "programme year read as graduation year switches student_only off (audit F12)"
+    },
+    {
+      "id": "pub-gy-03",
+      "set": "graduation_year",
+      "title": "Graduate Data Analyst",
+      "description": "Open to graduates of 2025, 2026 or 2027.",
+      "model_facts": {
+        "graduation_year": {
+          "value": 2025,
+          "quote": "graduates of 2025"
+        }
+      },
+      "expect": {
+        "rule_not": "graduation_year"
+      }
+    },
+    {
+      "id": "pub-gy-04",
+      "set": "graduation_year",
+      "title": "Industrial Placement (2027-2028)",
+      "description": "A twelve-month placement for engineering undergraduates.",
+      "model_facts": {
+        "graduation_year": {
+          "value": 2028,
+          "quote": "Industrial Placement (2027-2028)"
+        }
+      },
+      "expect": {
+        "rule_not": "graduation_year"
+      },
+      "note": "programme span is not a graduation year (student_only should decide this one)"
+    },
+    {
+      "id": "pub-bar-01",
+      "set": "hard_bars",
+      "title": "Business Analyst",
+      "description": "This role is open to UAE Nationals only.",
+      "expect": {
+        "fact": "hard_bars",
+        "value_in": [
+          "nationality"
+        ],
+        "rule": "hard_bar"
+      }
+    },
+    {
+      "id": "pub-bar-02",
+      "set": "hard_bars",
+      "title": "Data Engineer",
+      "description": "Candidates must be eligible to obtain SC clearance.",
+      "expect": {
+        "fact": "hard_bars",
+        "value_in": [
+          "clearance"
+        ],
+        "rule": "hard_bar"
+      }
+    },
+    {
+      "id": "pub-bar-03",
+      "set": "hard_bars",
+      "title": "Data Scientist",
+      "description": "We consider all applicants without regard to race, religion or national origin.",
+      "model_facts": {
+        "hard_bars": [
+          {
+            "kind": "nationality",
+            "quote": "national origin"
+          }
+        ]
+      },
+      "expect": {
+        "rule_not": "hard_bar"
+      },
+      "note": "an equal-opportunity statement",
+      "open_defect": "an equal-opportunity 'national origin' quote is accepted as a nationality bar"
+    },
+    {
+      "id": "pub-bar-04",
+      "set": "hard_bars",
+      "title": "Data Scientist",
+      "description": "Visa sponsorship is not available for this role.",
+      "model_facts": {
+        "hard_bars": [
+          {
+            "kind": "work_auth",
+            "quote": "Visa sponsorship is not available"
+          }
+        ]
+      },
+      "expect": {
+        "rule_not": "hard_bar"
+      },
+      "note": "work_auth is ignored by decide()"
+    },
+    {
+      "id": "pub-bar-05",
+      "set": "hard_bars",
+      "title": "Data Scientist",
+      "description": "Benefits include individual visa sponsorship and private healthcare.",
+      "model_facts": {
+        "hard_bars": [
+          {
+            "kind": "other",
+            "quote": "individual visa sponsorship"
+          }
+        ]
+      },
+      "expect": {
+        "rule_not": "hard_bar"
+      },
+      "note": "a benefit, filed by the model as an 'other' bar",
+      "open_defect": "a benefit quote is accepted as an 'other' bar"
+    },
+    {
+      "id": "pub-lvl-01",
+      "set": "level",
+      "title": "Senior Data Engineer",
+      "description": "Build pipelines.",
+      "expect": {
+        "fact": "level",
+        "value": "senior",
+        "rule": "level"
+      }
+    },
+    {
+      "id": "pub-lvl-02",
+      "set": "level",
+      "title": "Data Analyst",
+      "description": "You will report to a Senior Manager in the analytics team.",
+      "model_facts": {
+        "level": {
+          "value": "senior",
+          "quote": "Senior Manager"
+        }
+      },
+      "expect": {
+        "rule_not": "level"
+      },
+      "note": "body-only level with level_from_title_only"
+    },
+    {
+      "id": "pub-lvl-03",
+      "set": "level",
+      "title": "Off-Cycle Internship, Infrastructure Principal",
+      "description": "An internship in our principal investments team.",
+      "expect": {
+        "rule_not": "level"
+      }
+    },
+    {
+      "id": "pub-lvl-04",
+      "set": "level",
+      "title": "Lead Cloud Data Engineer",
+      "description": "Own the platform.",
+      "expect": {
+        "fact": "level",
+        "value": "lead_principal",
+        "rule": "level"
+      },
+      "note": "code reader returned None for this title on 2.5.6",
+      "open_defect": "the title reader misses 'Lead <words> Engineer'"
+    },
+    {
+      "id": "pub-fld-01",
+      "set": "field",
+      "title": "Software Engineer - Intern",
+      "description": "Build web applications.",
+      "expect": {
+        "fact": "field",
+        "value": "software",
+        "rule": "field"
+      }
+    },
+    {
+      "id": "pub-fld-02",
+      "set": "field",
+      "title": "Software Engineer - Data Engineering",
+      "description": "Build data pipelines.",
+      "expect": {
+        "fact": "field",
+        "value": "data_engineering",
+        "rule_not": "field"
+      }
+    },
+    {
+      "id": "pub-fld-03",
+      "set": "field",
+      "title": "Private Equity Analyst Programme",
+      "description": "Two-year programme for early-career professionals.",
+      "expect": {
+        "fact": "field",
+        "value": "finance",
+        "rule_not": "field"
+      }
+    },
+    {
+      "id": "pub-fld-04",
+      "set": "field",
+      "title": "Marketing Science Analyst",
+      "description": "Build econometric models of marketing effectiveness.",
+      "model_facts": {
+        "field": {
+          "value": "other",
+          "quote": "Marketing Science Analyst"
+        }
+      },
+      "expect": {
+        "rule_not": "field"
+      },
+      "note": "a data role the model filed as other (seen in the owner's eval)",
+      "open_defect": "a model 'other' field on a data title is kept when the title names no field"
+    }
+  ]
+}
