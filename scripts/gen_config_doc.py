@@ -207,9 +207,9 @@ DESCRIPTIONS: dict[str, str] = {
         "standard price for every token. The scan waits for the batch to end, "
         "usually within the hour. One direct call goes first and writes the "
         "shared prompt to a one-hour cache entry that the batch reads. Only "
-        "the `anthropic` backend in `mode: facts` batches; judge mode, an "
-        "enricher's calls and other backends are called directly. Fewer than "
-        "three uncached postings are scored directly."
+        "the `anthropic` backend batches; an enricher's calls and other "
+        "backends are called directly. Fewer than three uncached postings are "
+        "scored directly."
     ),
     "llm.batch_poll_seconds": ("Seconds between checks on a running batch."),
     "llm.batch_max_minutes": (
@@ -217,14 +217,9 @@ DESCRIPTIONS: dict[str, str] = {
         "the answers it already gave are kept, and the remaining postings "
         "count as scoring errors and are scored on the next run."
     ),
-    "llm.cascade": (
-        "Score in two passes: a short call that settles the score, then the "
-        "full verdict only for postings that clear `min_report_score`. Used "
-        "only by a backend whose short call is cheaper."
-    ),
     "llm.extra_prompt": (
-        "Text appended to the judge-mode prompt. Not sent in facts mode, where "
-        "only an enricher may use it."
+        "Context for an enricher (`llm.enricher`). Never sent to the scoring "
+        "call."
     ),
     "llm.temperature": (
         "Sampling temperature. `0` suits classification against a fixed rubric. "
@@ -246,11 +241,9 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "llm.cache_days": "Days a cached model answer stays valid. `0` never expires.",
     "llm.mode": (
-        "`facts` (default): the model extracts quoted facts and code applies "
-        "`profile.rules`. `judge`: one call per posting, the model gives the "
-        "score, verdict and blockers itself, `profile.rules` do not apply and "
-        '`llm.extra_prompt` is used. A supported mode: see the README, "Judge '
-        'mode".'
+        "`facts`, the only mode since 3.0.0: the model extracts quoted facts "
+        "and code applies `profile.rules`. Kept so a config that names it "
+        "still loads."
     ),
     "llm.enricher": (
         "Name of a registered enricher (entry-point group `rolescan.enrichers`) "

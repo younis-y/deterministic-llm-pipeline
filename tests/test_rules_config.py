@@ -31,9 +31,13 @@ def test_unknown_rule_key_or_value_is_refused() -> None:
         RulesConfig.model_validate({"student_only": "maybe"})
 
 
-def test_llm_mode_defaults_to_facts_and_accepts_judge() -> None:
+def test_llm_mode_is_facts_and_judge_is_refused() -> None:
+    """3.0.0 removed judge mode; a config that still names it fails to load
+    rather than scoring some other way than it asked."""
     assert LLMConfig().mode == "facts"
-    assert LLMConfig(mode="judge").mode == "judge"
+    assert LLMConfig(mode="facts").mode == "facts"
+    with pytest.raises(ValidationError, match="facts"):
+        LLMConfig(mode="judge")
     assert LLMConfig().enricher == ""
 
 

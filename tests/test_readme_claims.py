@@ -33,12 +33,19 @@ def test_the_prefilter_run_is_stated_once_with_the_right_ratio() -> None:
     assert "one in fifteen" in README
 
 
-def test_the_ollama_figures_are_stated_once_and_scoped() -> None:
-    assert README.count("72%") == 1
-    assert README.count("50%") == 1
-    paragraph = next(p for p in README.split("\n\n") if "72%" in p)
-    assert "judge mode" in paragraph, "the figures belong to the older mode"
-    assert "September 2026" in paragraph, "an undated measurement ages badly"
+def test_the_eval_figures_match_the_cases_and_the_recorded_run() -> None:
+    """The README quotes the eval; the figures must be the ones it produced."""
+    import json
+
+    from evals.harness import CASES
+
+    passing = sum("open_defect" not in c for c in CASES)
+    assert f"| {passing} of {len(CASES)} |" in README, "offline figure"
+    latest = max((ROOT / "evals" / "results").glob("*.json"))
+    run = json.loads(latest.read_text())
+    assert f"`{run['model']}`, {run['runs']} runs" in README
+    assert f"pass@1 {run['pass_at_1']:.0%}" in README
+    assert f"{run['tokens']['output']:,} output tokens" in README
 
 
 def test_the_readme_claims_no_unrecorded_model_run() -> None:
@@ -78,9 +85,9 @@ def test_every_command_the_readme_shows_exists() -> None:
         assert result.exit_code == 0, f"README shows `rolescan {command}`"
 
 
-def test_judge_mode_is_documented_as_supported_everywhere() -> None:
-    """It was announced as "kept for one release, then removed" and then kept:
-    an evaluation depends on it. No file may still promise its removal."""
+def test_no_doc_still_offers_judge_mode() -> None:
+    """3.0.0 removed judge mode; a doc that still offers it sends a reader to
+    a config that no longer loads."""
     from rolescan.config import LLMConfig
 
     sources = {
@@ -91,10 +98,8 @@ def test_judge_mode_is_documented_as_supported_everywhere() -> None:
     }
     for name, text in sources.items():
         flat = " ".join(text.split()).lower()
-        assert "one release" not in flat, name
-        assert "then removed" not in flat, name
-    assert "\n**Judge mode.**" in README
-    assert "llm.mode: judge" in README
+        assert "mode: judge" not in flat, name
+        assert "judge mode" not in flat, name
 
 
 def test_the_hidden_table_names_the_stats_clause_for_the_final_gate() -> None:

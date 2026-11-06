@@ -57,12 +57,12 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-#: `get_verdict`/`put_verdict` hold whatever a caller's scoring mode decided
-#: to cache - a `FitVerdict` in judge mode, a `PostingFacts` in facts mode
-#: (see `rolescan.scoring.llm.cache_key`, which keeps the two out of each
-#: other's rows). Bound to `BaseModel` rather than `FitVerdict` because the
-#: row is opaque JSON to this module either way: it is validated back into
-#: whatever type the caller asks for, never inspected here.
+#: `get_verdict`/`put_verdict` hold whatever a caller decided to cache - the
+#: model's `PostingFacts` under `rolescan.scoring.llm.cache_key`, the final
+#: `FitVerdict` under `final_key`. Bound to `BaseModel` rather than
+#: `FitVerdict` because the row is opaque JSON to this module either way:
+#: it is validated back into whatever type the caller asks for, never
+#: inspected here.
 #:
 #: No default on this TypeVar (PEP 696 needs `typing_extensions` on this
 #: Python floor, and core takes no new runtime dependency for it) - the two
@@ -708,8 +708,8 @@ class Store:
     ) -> BaseModel | None:
         """The cached payload for this key, validated as `model`, or None.
 
-        `model` is how a caller reads back its OWN cached shape - a
-        `FitVerdict` in judge mode, a `PostingFacts` in facts mode. A model
+        `model` is how a caller reads back its OWN cached shape - the raw
+        `PostingFacts`, or a final `FitVerdict`. A model
         that forbids extra keys writes a payload an unrelated schema refuses,
         and refusing it here silently deletes the row and re-scores - a whole
         cache lost to a schema that was never wrong. A caller passes back

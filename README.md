@@ -9,7 +9,8 @@ the small minority that survive a deterministic prefilter.
 **That prefilter is the design point.** Most postings are discarded on
 deterministic keyword rules before any model is invoked, so the expensive stage
 sees a small fraction of the traffic, and the cheap stage is reproducible and
-free to re-run. [Measured quality](#measured-quality) has one real run.
+free to re-run. [Measured quality](#measured-quality) has one real run and an
+eval that runs in CI.
 
 **The model reports; code decides.** In the default facts mode the model only
 extracts facts from a posting, each backed by a quote that code checks against
@@ -262,9 +263,8 @@ and recorded, so a source that never sends descriptions cannot hold it back for
 ever. To bring back a posting a wrong rule or term hid, run `rolescan unsee
 URL` (or its uid); the next scan reports it again. Four keys tune what gets
 hidden. On `profile`: `nationalities` (the demonyms and countries you hold, so
-a nationality bar that names one is not a bar for you; it acts in facts mode,
-through the rules, and does nothing in judge mode or against a `hard_blockers`
-term), `title_only_blockers` (`blockers` terms such as
+a nationality bar that names one is not a bar for you; it acts through the
+rules, and does nothing against a `hard_blockers` term), `title_only_blockers` (`blockers` terms such as
 `head of`, `director` or `military` whose weight counts only in the job title,
 not in boilerplate in the body) and `hidden_gate_margin` (how far under
 `min_keyword_score` a reject may fall and still be listed under "Hidden by
@@ -314,30 +314,11 @@ and your rules run on every read, so a rules or resolver change applies to
 cached postings at no model cost, and a prompt or model change asks the
 model again.
 
-**Judge mode.** `llm.mode: judge` is the other supported mode, and it is not
-going away. It makes one call per posting and lets the model give the score,
-the verdict and the blockers itself, so there is no quote check and no
-resolver. Use it to compare against facts mode, or when you want the model's
-own reading of a posting. What differs from facts mode:
-
-- `profile.rules` do not apply: they act on facts, and judge mode extracts none.
-  `hard_blockers` still force `blocked`, as in every mode.
-- The model may block on a bar it names, a work-authorisation bar included.
-  Facts mode ignores work authorisation and blocks only on a nationality or
-  clearance bar that passes the quote check.
-- `llm.extra_prompt` is added to the prompt, which facts mode does not send.
-- Nothing names a rule, so "Hidden by your rules" lists hard-term hits under
-  "Your blocking terms" and the model's own blocks under "Nationality,
-  clearance or other hard bar".
-- Verdicts are cached on the posting's content hash alone for `llm.cache_days`.
-  A cached judge verdict is never served as facts, or facts as a verdict.
-
 `llm.enricher` names a plugin registered under the `rolescan.enrichers`
 entry-point group that does extra work only for postings that clear
 `min_report_score`; a failing enricher keeps the plain verdict.
-`llm.extra_prompt` is appended to the judge-mode prompt only. In facts mode it
-is not sent to the scoring call (an enricher may use it), and rolescan logs a
-note at startup when it is set with no enricher configured.
+`llm.extra_prompt` is never sent to the scoring call (an enricher may use it),
+and rolescan logs a note at startup when it is set with no enricher configured.
 
 With `llm.enabled: false`, or with no key and no local model, you get stage one
 alone. If a configured backend fails, the digest says so rather than quietly
@@ -546,7 +527,7 @@ nothing.
 
 ## Measured quality
 
-Two measurements are recorded, each stated here once. Neither is a benchmark.
+Two measurements are recorded, each stated here once.
 
 **The prefilter, 25 August 2026.** One run against a private config covering the
 same employers as `examples/energy-trading.yaml`:
@@ -565,16 +546,29 @@ The ranked postings are not: a digest records one person's job search, and that
 is not something to publish. The discard rate is a function of how tightly you
 write your keywords.
 
-**The local backend, recorded 24 September 2026, in judge mode.** A 25-posting
-benchmark against hand-labelled expectations, plus one live 34-posting scan, in
-the older `llm.mode: judge`, before facts mode existed: **verdict accuracy 72%**,
-no score/verdict disagreements, and **model-level blocker recall 50%**, so the
-model named half the structural bars in the benchmark set. The record does not
-name the model or the hardware, and the labelled set is private. Treat blocker
-recall as the number to design around: it is why `hard_blockers` exist.
+**The facts pipeline, 6 November 2026.** `evals/cases.json` holds 26 synthetic
+adverts, each written around a trap that hides a good role or lets a bad one
+through: a range from zero ("0-2 years"), a cap ("up to 3 years"), an age
+limit, "student" naming who the role serves, a programme year read as a
+graduation year, an equal-opportunity "national origin", visa sponsorship as a
+benefit, level words that are not levels. Each case states what the finished
+facts and the rule that fires must be.
 
-Nothing is recorded here for the default facts mode, or for the Anthropic
-backend, which is exercised by mocked tests only and has not been benchmarked.
+| Run | What answers | Passed |
+|---|---|---|
+| Offline, in CI (`tests/test_eval_cases.py`) | each case's own model answer, often a wrong one, through the quote check, resolvers and rules | 19 of 26 |
+| Live, `claude-haiku-5-5`, 3 runs (`python -m evals.harness`) | the model, through the same `FitScorer` a scan uses | 25 of 26 in every run: pass@1 96%, pass^3 96% |
+
+The offline run is the stricter one: it feeds the code the wrong answers a
+model has been seen to give and checks that the code corrects them. Its seven
+failures are open defects, each named in its case's `open_defect`; they run as
+strict expected failures, so fixing one fails CI until the case is updated.
+The live miss is the same defect both times: "Lead Cloud Data Engineer" is not
+read as a lead title, so the level rule never sees it. The 78 live calls took
+50 seconds and 39,858 output tokens, about USD 0.02 of output; the run's full
+record is in `evals/results/`. 26 short adverts is a regression set, not a
+benchmark: it says which traps the pipeline handles, not how often real
+postings contain them.
 
 ## Commands
 
@@ -651,9 +645,10 @@ confirms or refutes it.
 
 What this does not claim:
 
-- **A local model can miss structural bars.** The one recorded measurement is
-  under [Measured quality](#measured-quality). Configured `hard_blockers` do not
-  depend on the model, so put anything you cannot apply your way past there.
+- **A model can miss structural bars.** The eval under
+  [Measured quality](#measured-quality) covers 26 synthetic adverts, not your
+  market. Configured `hard_blockers` do not depend on the model, so put anything
+  you cannot apply your way past there.
 - **Public endpoints only.** Nothing behind a login, no session cookies, no
   captcha solving, no scraping of anything a careers page does not serve to an
   anonymous browser.

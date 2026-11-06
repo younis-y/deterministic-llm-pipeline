@@ -1,8 +1,6 @@
 """The enrichment hook: extra work only for postings that already pass.
 
-All fakes, no network. `_FakeFactsJudge` only implements `facts` - the same
-convention as `tests/test_facts_mode.py` - so a stray call into judge mode
-would raise rather than pass silently.
+All fakes, no network.
 """
 
 from __future__ import annotations
@@ -64,22 +62,15 @@ def _facts(fit_score: int = 70, **kw: object) -> PostingFacts:
 
 
 class _FakeFactsJudge(Judge):
-    """Only implements `facts`. `verdict`/`triage` raise if ever reached."""
+    """Returns the facts it was given and counts the calls."""
 
     name = "fake-facts-enrich"
     description = "test only"
-    cheap_triage = True
 
     def __init__(self, cfg: LLMConfig, facts: PostingFacts) -> None:
         super().__init__(cfg)
         self.facts_calls = 0
         self._facts = facts
-
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        raise AssertionError("facts mode must not call verdict")
-
-    async def triage(self, system: str, user: str) -> FitVerdict:
-        raise AssertionError("facts mode must not call triage")
 
     async def facts(self, system: str, user: str) -> PostingFacts:
         self.facts_calls += 1
@@ -94,7 +85,6 @@ class _ExtraVerdict(FitVerdict):
 
 class _FakeEnricher(Enricher):
     name = "fake-enricher"
-    verdict_model = _ExtraVerdict
 
     def __init__(self, cfg: LLMConfig) -> None:
         super().__init__(cfg)
@@ -267,30 +257,6 @@ async def test_a_raising_enricher_keeps_the_plain_verdict_and_the_posting(
     assert scorer.errors == 0, (
         "an enrichment failure must never count as a scoring error"
     )
-
-
-# --- verdict_model follows the enricher -----------------------------------
-
-
-async def test_verdict_model_follows_the_configured_enricher(
-    clean_registry: None,
-) -> None:
-    register_enricher(_FakeEnricher)
-    facts = _facts(fit_score=80)
-    scorer, _judge = _facts_scorer(facts, enricher_name="fake-enricher")
-
-    assert scorer.verdict_model is FitVerdict, "unresolved until the enricher is built"
-    await scorer.score_all([_job()])
-    assert scorer.verdict_model is _ExtraVerdict
-
-
-async def test_verdict_model_stays_fitverdict_with_no_enricher_configured() -> None:
-    facts = _facts(fit_score=80)
-    scorer, _judge = _facts_scorer(facts, enricher_name="")
-
-    await scorer.score_all([_job()])
-
-    assert scorer.verdict_model is FitVerdict
 
 
 # --- the final verdict cache row ------------------------------------------

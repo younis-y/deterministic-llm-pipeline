@@ -40,12 +40,14 @@ sources:
 # run has to be expressible in a test, without a key and without a network
 # call. Ollama is the backend that needs no key; `mock_ollama` answers for it
 # in-process.
-LLM_VERDICT = {
+LLM_FACTS = {
+    "level": {"value": "not_stated", "quote": ""},
+    "years_required": {"value": None, "quote": ""},
+    "student_only": {"value": None, "quote": ""},
+    "hard_bars": [],
+    "field": {"value": None, "quote": ""},
     "fit_score": 72,
-    "verdict": "consider",
-    "confidence": "medium",
-    "reason": "Strong power-market overlap, but the role wants five years.",
-    "blockers": [],
+    "reason": "Strong power-market overlap.",
     "keywords_missing": ["Kubernetes"],
 }
 
@@ -59,7 +61,7 @@ mocks ollama sets `llm.model` to this and mocks a server holding it."""
 def mock_ollama(
     base_url: str = "http://localhost:11434", model: str = OLLAMA_MODEL
 ) -> None:
-    """Route the ollama backend at a canned verdict, and its preflight at a
+    """Route the ollama backend at canned facts, and its preflight at a
     server that is up and has `model` pulled. Call inside @respx.mock.
 
     Configs under test must set `llm.model` to the same tag, or preflight
@@ -67,7 +69,7 @@ def mock_ollama(
     """
     respx.post(f"{base_url}/api/chat").mock(
         return_value=httpx.Response(
-            200, json={"message": {"content": json.dumps(LLM_VERDICT)}}
+            200, json={"message": {"content": json.dumps(LLM_FACTS)}}
         )
     )
     respx.get(f"{base_url}/api/tags").mock(

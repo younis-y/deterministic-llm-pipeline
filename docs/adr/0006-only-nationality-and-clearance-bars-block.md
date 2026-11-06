@@ -53,7 +53,7 @@ In `decide`:
   the candidate that a posting cannot settle, but it is a gap for a user who
   expects it to be checked.
 - `judge` mode still lets the model block on work authorisation, so the two modes
-  disagree on policy.
+  disagree on policy. *3.0.0: judge mode was removed, so they no longer do.*
 
 ### Risks
 - A resolver false positive on a structural bar is a silent deletion. The only

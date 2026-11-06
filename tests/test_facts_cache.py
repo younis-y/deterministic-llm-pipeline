@@ -23,7 +23,7 @@ import respx
 import rolescan.scoring.llm as llm
 from rolescan.config import Config, LLMConfig, ProfileConfig
 from rolescan.digest import render_markdown
-from rolescan.models import FitVerdict, Job, ScoredJob
+from rolescan.models import Job, ScoredJob
 from rolescan.pipeline import ScanResult, _settle_identity, run_scan
 from rolescan.scoring import FitScorer
 from rolescan.scoring.facts import PostingFacts, YearsFact
@@ -43,8 +43,6 @@ class _Counting(Judge):
         super().__init__(LLMConfig())
         self.calls = 0
 
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        raise NotImplementedError
 
     async def facts(self, system: str, user: str) -> PostingFacts:
         self.calls += 1
@@ -166,9 +164,9 @@ def test_the_examples_digest_keyword_still_keys_a_call_with_no_fingerprint() -> 
     cfg = LLMConfig(enabled=True, backend="ollama", model="m:1")
     base = f"{job.content_hash}:facts-v14:ollama:m:1"
 
-    assert cache_key(job, "facts", cfg, examples_digest="abc123") == f"{base}:ex-abc123"
+    assert cache_key(job, cfg, examples_digest="abc123") == f"{base}:ex-abc123"
     assert (
-        cache_key(job, "facts", cfg, fingerprint="0123456789ab", examples_digest="x")
+        cache_key(job, cfg, fingerprint="0123456789ab", examples_digest="x")
         == f"{base}:0123456789ab"
     )
 

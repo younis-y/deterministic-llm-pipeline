@@ -6,8 +6,8 @@ credential. Making it a plugin keeps the tool useful with none: run the
 keyword prefilter alone, point it at a local model, or supply an API key —
 the pipeline, the cache and the digest are identical either way.
 
-A judge does one thing: turn a rendered prompt into a validated FitVerdict.
-Everything expensive and easy to get wrong — the verdict cache, the spend
+A judge does one thing: turn a rendered prompt into validated PostingFacts.
+Everything expensive and easy to get wrong — the facts cache, the spend
 ceiling, concurrency, ordering, error counting — stays in FitScorer, so a new
 backend is one method rather than a fork of the scorer.
 
@@ -20,19 +20,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib.util
-import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points
-from typing import Annotated, Any, ClassVar
+from typing import Any, ClassVar
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
 from rolescan.config import LLMConfig
-from rolescan.models import Confidence, FitVerdict, Verdict
 from rolescan.scoring.facts import PostingFacts
 
 __all__ = [
@@ -193,7 +191,7 @@ def _model_window(info: dict[str, Any]) -> int | None:
 
 
 class Judge(ABC):
-    """Renders a prompt into a FitVerdict, however it likes."""
+    """Renders a prompt into PostingFacts, however it likes."""
 
     name: ClassVar[str] = ""
     #: True when the backend talks to a hosted API that authenticates. Read by
@@ -224,12 +222,6 @@ class Judge(ABC):
         #: digest is what says the weights changed.
         self.model_digest = ""
 
-    #: True when `triage` is genuinely cheaper than `verdict`. False by
-    #: default, and FitScorer will not run the cascade against a backend that
-    #: leaves it False - the default `triage` is a full call, so cascading on
-    #: one would buy nothing and bill twice.
-    cheap_triage: ClassVar[bool] = False
-
     #: True when `facts` collects concurrent calls into one batch request
     #: while `llm.batch` is on (2.9.0). FitScorer then lets every facts call
     #: start at once instead of `llm.max_concurrent` at a time, because a
@@ -237,32 +229,9 @@ class Judge(ABC):
     batches_facts: ClassVar[bool] = False
 
     @abstractmethod
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        """One posting, one judgement. Raise on failure; FitScorer counts it."""
-
     async def facts(self, system: str, user: str) -> PostingFacts:
-        """Extract quoted facts from one posting, for `llm.mode: facts`.
-
-        The default raises: a judge that only speaks the old single-call
-        protocol - built-in or third-party - explains itself the moment
-        facts mode is selected, rather than failing with an AttributeError
-        deep inside FitScorer once a scan is already under way.
-        """
-        msg = f"{type(self).__name__} does not implement facts mode"
-        raise NotImplementedError(msg)
-
-    async def triage(self, system: str, user: str) -> FitVerdict:
-        """A first pass that only has to be right about the score.
-
-        The digest prints `reason` and `blockers` only for roles
-        that clear `min_report_score`; everything below it pays to generate
-        prose no one reads. Generating that prose is ~85% of a local call.
-
-        The default is the full call, which is correct and no cheaper - hence
-        `cheap_triage`. A backend that can constrain output to a subset of the
-        schema overrides both.
-        """
-        return await self.verdict(system, user)
+        """Extract quoted facts from one posting. Raise on failure;
+        FitScorer counts it."""
 
     async def preflight(self) -> str:
         """Why this backend cannot be reached right now, or "" if it can.
@@ -446,7 +415,6 @@ class AnthropicJudge(Judge):
     api_key_env = "ANTHROPIC_API_KEY"
     requires_module = "anthropic"
     description = "Claude API. Best quality. Needs ANTHROPIC_API_KEY."
-    cheap_triage = True
     batches_facts = True
 
     def __init__(self, cfg: LLMConfig) -> None:
@@ -477,7 +445,7 @@ class AnthropicJudge(Judge):
     def _cached_system(system: str, ttl: str = "") -> list[dict[str, Any]]:
         """Wrap the system prompt as one cached block.
 
-        Every Anthropic call - verdict, triage, facts - reads the same
+        Every Anthropic facts call reads the same
         candidate summary, so caching it once buys a discount on every call
         after the first. Haiku 4.5 only caches prefixes of >= 4,096 tokens
         and silently ignores smaller ones, so a short prompt (facts mode's)
@@ -541,14 +509,6 @@ class AnthropicJudge(Judge):
                         e,
                     )
         return await client.messages.parse(**request)
-
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        response = await self._parse(system, user, FitVerdict, self.cfg.max_tokens)
-        parsed = response.parsed_output
-        if not isinstance(parsed, FitVerdict):  # pragma: no cover - enforced upstream
-            msg = f"model returned {type(parsed).__name__}, expected FitVerdict"
-            raise RuntimeError(msg)
-        return _without_rule(parsed)
 
     async def facts(self, system: str, user: str) -> PostingFacts:
         if self.cfg.batch:
@@ -806,26 +766,6 @@ class AnthropicJudge(Judge):
             usage.output,
         )
 
-    async def triage(self, system: str, user: str) -> FitVerdict:
-        """Score and route without paying for prose the digest will not print.
-
-        Same contract as the Ollama triage: only the fields the gate needs,
-        under a small output cap, returned as a FitVerdict stub marked with
-        TRIAGE_REASON.
-        """
-        response = await self._parse(system, user, _TriageOutput, TRIAGE_MAX_TOKENS)
-        parsed = response.parsed_output
-        if parsed is None:
-            stop = getattr(response, "stop_reason", None)
-            msg = f"claude returned no triage verdict (stop_reason={stop!r})"
-            raise RuntimeError(msg)
-        return FitVerdict(
-            fit_score=parsed.fit_score,
-            verdict=parsed.verdict,
-            confidence=parsed.confidence,
-            reason=TRIAGE_REASON,
-        )
-
 
 #: The fewest waiting facts calls worth a batch. Below it they are made
 #: directly: one goes first to warm the cache either way, and a batch of one
@@ -924,57 +864,6 @@ def _rejects_temperature(error: Exception) -> bool:
     )
 
 
-def _without_rule(verdict: FitVerdict) -> FitVerdict:
-    """`verdict` with `rule` cleared: only `rules.decide` names a rule.
-
-    `rule` is kept out of the schema both backends sample against, but
-    validation still accepts the key, and a model that echoes it anyway would
-    mark the posting rule-hidden in the digest on its own say-so. Defence in
-    depth behind the schema, not a replacement for it.
-    """
-    if verdict.rule is None:
-        return verdict
-    return verdict.model_copy(update={"rule": None})
-
-
-#: Marks a verdict produced by the triage pass, which was never asked for a
-#: reason. It is a sentinel, not prose for a reader: FitScorer matches on it to
-#: spot a cached stub that a lowered threshold has brought into scope.
-TRIAGE_REASON = "(triage pass: below the reporting threshold, no detail requested)"
-
-#: Everything needed to build a valid FitVerdict and decide the gate, minus the
-#: two generated fields. `confidence` is an enum costing a handful of tokens
-#: and carrying real information, so it is asked for rather than invented.
-_TRIAGE_FIELDS = ("fit_score", "verdict", "confidence")
-
-
-def triage_schema() -> dict[str, Any]:
-    """FitVerdict's schema cut down to the fields the gate needs."""
-    full = FitVerdict.model_json_schema()
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {name: full["properties"][name] for name in _TRIAGE_FIELDS},
-        "required": list(_TRIAGE_FIELDS),
-    }
-    if "$defs" in full:
-        schema["$defs"] = full["$defs"]
-    return schema
-
-
-#: Enough for the three gate fields as JSON (about 20 tokens) with headroom.
-TRIAGE_MAX_TOKENS = 64
-
-
-#: FitVerdict cut down to the gate fields. The fit_score bounds are copied
-#: by hand; tests/test_judges.py pins them to FitVerdict's.
-class _TriageOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    fit_score: Annotated[int, Field(ge=0, le=100)]
-    verdict: Verdict
-    confidence: Confidence
-
-
 def _read_tags(payload: Any) -> tuple[set[str], dict[str, str]]:
     """(the model names, each name's digest prefix) from `/api/tags`.
 
@@ -1033,37 +922,13 @@ class OllamaJudge(Judge):
     """A model running locally under Ollama. No key, no network egress, no bill.
 
     Ollama's /api/chat takes a JSON Schema in `format` and constrains sampling
-    to it, so FitVerdict still arrives validated rather than coaxed out of
-    prose — the same contract the Claude backend gives, locally.
-
-    Measured once against a live server, not only a mock, in judge mode and
-    recorded on 24 September 2026 (the README's "Measured quality" has the
-    whole record): a 25-posting benchmark plus one 34-posting scan. Verdict
-    accuracy 72% against hand-labelled expectations, and 0% score/verdict
-    violations — the band table in `SYSTEM` and the verdict it returned never
-    disagreed.
-
-    Model-level blocker recall was 50%: the model itself named half the
-    structural bars in the benchmark set. That is the number to design around
-    rather than quote selectively. rolescan does not depend on it — configured
-    `hard_blockers` are matched deterministically before the model is called
-    and force `blocked` whatever it says, and `min_report_score` gates the
-    rest — but a bar that appears only in the posting text, and that no
-    configured term names, is one this backend will miss half the time.
-
-    Quality is materially below Claude for this task; the point is that the
-    tool works for someone who has no key and does not want one.
+    to it, so PostingFacts arrive validated rather than coaxed out of prose:
+    the same contract the Claude backend gives, locally.
     """
 
     name = "ollama"
     needs_api_key = False
-    description = (
-        "Local model via Ollama. Free, offline, no key. Measured once, in judge "
-        "mode (September 2026): 72% verdict accuracy over 25 postings, 50% "
-        "blocker recall."
-    )
-
-    cheap_triage = True
+    description = "Local model via Ollama. Free, offline, no key."
 
     #: The token counts of the last answer, or None before the first call or
     #: when the server reported none (2.5.8). One attribute per judge, shared
@@ -1100,9 +965,7 @@ class OllamaJudge(Judge):
     async def _chat(self, system: str, user: str, schema: dict[str, Any]) -> str:
         """One /api/chat round trip under `schema`, returning the raw content.
 
-        Shared by `verdict` and `triage` so the two passes cannot drift apart
-        in how they talk to the server - only in what they ask it for. Sends
-        `ollama_options` (so `num_ctx` always), retries once on a timeout or
+        Sends `ollama_options` (so `num_ctx` always), retries once on a timeout or
         a 5xx, and raises `PromptTruncatedError` when the answer's token
         counts show the prompt was cut (2.5.8).
         """
@@ -1157,60 +1020,14 @@ class OllamaJudge(Judge):
         raw = message.get("content") if isinstance(message, dict) else None
         return raw if isinstance(raw, str) else ""
 
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        content = await self._chat(system, user, FitVerdict.model_json_schema())
-        try:
-            return _without_rule(FitVerdict.model_validate_json(content))
-        except ValueError as e:
-            # Schema-constrained sampling should make this unreachable, but a
-            # small model on an old Ollama can still return prose.
-            msg = f"ollama did not return a usable verdict: {e}"
-            raise RuntimeError(msg) from e
-
     async def facts(self, system: str, user: str) -> PostingFacts:
         content = await self._chat(system, user, PostingFacts.model_json_schema())
         try:
             return PostingFacts.model_validate_json(content)
         except ValueError as e:
-            # Same defect class as `verdict`: schema-constrained sampling
-            # should make this unreachable, but a small model on an old
-            # Ollama can still return prose.
+            # Schema-constrained sampling should make this unreachable, but a
+            # small model on an old Ollama can still return prose.
             msg = f"ollama did not return usable posting facts: {e}"
-            raise RuntimeError(msg) from e
-
-    async def triage(self, system: str, user: str) -> FitVerdict:
-        """Score and route without paying for prose the digest will not print.
-
-        Measured on 25 real postings: 18 decode tokens against 137, and 1.38s
-        against 7.45s. The obvious worry is that `reason` acts as reasoning
-        scaffolding, so that removing it moves the score and the gate routes on
-        a different number than it reports. Tested over two independent
-        25-posting slices, one long-description and one short: identical score
-        AND verdict in all 50 cases, and no posting crossed the threshold.
-        """
-        content = await self._chat(system, user, triage_schema())
-        try:
-            fields = json.loads(content)
-        except ValueError as e:
-            msg = f"ollama did not return a usable triage verdict: {e}"
-            raise RuntimeError(msg) from e
-        if not isinstance(fields, dict):
-            msg = (
-                f"ollama returned a triage body that was not an object: {content[:120]}"
-            )
-            raise RuntimeError(msg)
-        # Named explicitly rather than splatted: a server that answers with the
-        # full schema (or any extra key) would otherwise pass `reason` twice
-        # and raise TypeError from a call that actually succeeded.
-        try:
-            return FitVerdict(
-                fit_score=fields["fit_score"],
-                verdict=fields["verdict"],
-                confidence=fields["confidence"],
-                reason=TRIAGE_REASON,
-            )
-        except (KeyError, TypeError, ValidationError) as e:
-            msg = f"ollama did not return a usable triage verdict: {e}"
             raise RuntimeError(msg) from e
 
     async def preflight(self) -> str:

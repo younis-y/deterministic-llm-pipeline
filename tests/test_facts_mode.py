@@ -1,9 +1,4 @@
-"""Facts mode end to end: one call per posting, decided by `rules.decide`.
-
-The judge here is a fake that only implements `facts`, never `verdict` or
-`triage` - so any test that reaches either of those raises, which is exactly
-how a stray call into the judge-mode path would be caught.
-"""
+"""Facts mode end to end: one call per posting, decided by `rules.decide`."""
 
 from __future__ import annotations
 
@@ -13,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from rolescan.config import LLMConfig, ProfileConfig, RulesConfig
-from rolescan.models import FitVerdict, Job, ScoredJob, Verdict
+from rolescan.models import Job, ScoredJob, Verdict
 from rolescan.scoring import FitScorer
 from rolescan.scoring.facts import (
     FieldFact,
@@ -56,24 +51,15 @@ def _facts(fit_score: int = 70, **kw: object) -> PostingFacts:
 
 
 class _FakeFactsJudge(Judge):
-    """Only implements `facts`. `verdict`/`triage` raise if ever reached."""
+    """Returns the facts it was given and records every call."""
 
     name = "fake-facts"
     description = "test only"
-    cheap_triage = True
 
     def __init__(self, cfg: LLMConfig, facts: PostingFacts) -> None:
         super().__init__(cfg)
         self.facts_calls: list[tuple[str, str]] = []
-        self.triage_calls = 0
         self._facts = facts
-
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        raise AssertionError("facts mode must not call verdict")
-
-    async def triage(self, system: str, user: str) -> FitVerdict:
-        self.triage_calls += 1
-        raise AssertionError("facts mode must not call triage")
 
     async def facts(self, system: str, user: str) -> PostingFacts:
         self.facts_calls.append((system, user))
@@ -88,12 +74,9 @@ def _facts_scorer(
     store: Store | None = None,
     extra_prompt: str = "",
 ) -> tuple[FitScorer, _FakeFactsJudge]:
-    cfg = LLMConfig(enabled=True, backend="ollama", mode="facts")
+    cfg = LLMConfig(enabled=True, backend="ollama", extra_prompt=extra_prompt)
     scorer = FitScorer(
-        cfg,
-        ProfileConfig(rules=rules, min_report_score=min_report_score),
-        store,
-        extra_prompt=extra_prompt,
+        cfg, ProfileConfig(rules=rules, min_report_score=min_report_score), store
     )
     judge = _FakeFactsJudge(cfg, facts)
     scorer._judge = judge
@@ -119,18 +102,6 @@ async def test_facts_mode_makes_one_call_and_the_rule_decides() -> None:
     assert "5+ years of Python experience" in out.fit.reason
 
 
-async def test_facts_mode_never_triages_even_when_cheap() -> None:
-    job = _job("Junior analyst role.")
-    facts = _facts(fit_score=70)
-    scorer, judge = _facts_scorer(facts)
-
-    [out] = await scorer.score_all([job])
-
-    assert judge.triage_calls == 0
-    assert scorer.errors == 0
-    assert out.fit is not None
-
-
 async def test_facts_prompt_carries_no_extra_prompt() -> None:
     job = _job("Analyst role.")
     facts = _facts(fit_score=60)
@@ -142,17 +113,15 @@ async def test_facts_prompt_carries_no_extra_prompt() -> None:
     assert "SECRET-BLOCK" not in system
 
 
-async def test_cache_key_is_mode_aware() -> None:
+async def test_cache_key_names_the_version_backend_and_model() -> None:
     job = _job().job
     cfg = LLMConfig(enabled=True, backend="ollama", model="qwen2.5:14b")
-    assert cache_key(job, "facts", cfg) != cache_key(job, "judge", cfg)
-    assert cache_key(job, "judge", cfg) == job.content_hash
     assert (
-        cache_key(job, "facts", cfg)
+        cache_key(job, cfg)
         == f"{job.content_hash}:facts-v14:ollama:qwen2.5:14b"
     )
     assert (
-        cache_key(job, "facts", cfg, fingerprint="0123456789ab")
+        cache_key(job, cfg, fingerprint="0123456789ab")
         == f"{job.content_hash}:facts-v14:ollama:qwen2.5:14b:0123456789ab"
     )
 
@@ -166,10 +135,8 @@ async def test_facts_cache_key_changes_with_backend_and_model() -> None:
     hosted = LLMConfig(
         enabled=True, backend="anthropic", model="qwen2.5:14b", api_key="k"
     )
-    keys = {cache_key(job, "facts", c) for c in (local, other_model, hosted)}
+    keys = {cache_key(job, c) for c in (local, other_model, hosted)}
     assert len(keys) == 3
-    # judge mode is unchanged: the bare content hash whatever the backend
-    assert {cache_key(job, "judge", c) for c in (local, hosted)} == {job.content_hash}
 
 
 async def test_a_facts_row_cached_under_another_model_is_not_read_back(
@@ -177,7 +144,7 @@ async def test_a_facts_row_cached_under_another_model_is_not_read_back(
 ) -> None:
     job = _job("Analyst role.")
     async with Store(tmp_path / "store.db") as store:
-        old = LLMConfig(enabled=True, backend="ollama", mode="facts", model="older")
+        old = LLMConfig(enabled=True, backend="ollama", model="older")
         older = FitScorer(old, ProfileConfig(), store)
         await store.put_verdict(older._facts_cache_key(job.job), _facts(fit_score=99))
 
@@ -186,60 +153,6 @@ async def test_a_facts_row_cached_under_another_model_is_not_read_back(
 
         assert len(judge.facts_calls) == 1
         assert out.fit is not None and out.fit.fit_score == 60
-
-
-async def test_a_judge_mode_cache_entry_is_not_read_back_in_facts_mode(
-    tmp_path: Path,
-) -> None:
-    job = _job("Analyst role.")
-
-    async with Store(tmp_path / "store.db") as store:
-        stale = FitVerdict(
-            fit_score=90,
-            verdict=Verdict.APPLY,
-            confidence="high",
-            reason="stale judge-mode verdict",
-        )
-        await store.put_verdict(cache_key(job.job, "judge", LLMConfig()), stale)
-
-        facts = _facts(fit_score=60, reason="fresh facts-mode verdict")
-        scorer, judge = _facts_scorer(facts, store=store)
-
-        [out] = await scorer.score_all([job])
-
-        assert len(judge.facts_calls) == 1, (
-            "a verdict cached under the judge-mode key must not satisfy a "
-            "facts-mode read"
-        )
-        assert out.fit is not None
-        assert out.fit.reason != "stale judge-mode verdict"
-
-
-class _JudgeModeJudge(Judge):
-    """Only implements `verdict`. `facts` raises if ever reached."""
-
-    name = "fake-judge-mode"
-    description = "test only"
-    cheap_triage = False
-
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        return FitVerdict(
-            fit_score=70, verdict=Verdict.APPLY, confidence="high", reason="ok"
-        )
-
-    async def facts(self, system: str, user: str) -> PostingFacts:
-        raise AssertionError("judge mode must not call facts")
-
-
-async def test_judge_mode_still_routes_through_verdict_not_facts() -> None:
-    cfg = LLMConfig(enabled=True, backend="ollama", mode="judge")
-    scorer = FitScorer(cfg, ProfileConfig())
-    scorer._judge = _JudgeModeJudge(cfg)
-
-    [out] = await scorer.score_all([_job("Analyst role.")])
-
-    assert out.fit is not None
-    assert out.fit.fit_score == 70
 
 
 # --- the cache holds facts, not the post-rules verdict ---------------------
@@ -517,7 +430,7 @@ async def test_a_nationality_bar_the_candidate_meets_passes_on_a_fresh_call() ->
     job, bar = _job_with_nationality_bar()
     facts = _facts(fit_score=75, hard_bars=[bar])
     scorer = FitScorer(
-        LLMConfig(enabled=True, backend="ollama", mode="facts"),
+        LLMConfig(enabled=True, backend="ollama"),
         ProfileConfig(nationalities=["freedonian", "freedonia"]),
     )
     judge = _FakeFactsJudge(scorer.cfg, facts)
@@ -535,7 +448,7 @@ async def test_a_nationality_bar_the_candidate_meets_passes_on_a_cached_hit(
 
     async with Store(tmp_path / "store.db") as store:
         scorer1 = FitScorer(
-            LLMConfig(enabled=True, backend="ollama", mode="facts"),
+            LLMConfig(enabled=True, backend="ollama"),
             ProfileConfig(nationalities=["freedonian"]),
             store,
         )
@@ -545,7 +458,7 @@ async def test_a_nationality_bar_the_candidate_meets_passes_on_a_cached_hit(
         assert len(judge1.facts_calls) == 1
 
         scorer2 = FitScorer(
-            LLMConfig(enabled=True, backend="ollama", mode="facts"),
+            LLMConfig(enabled=True, backend="ollama"),
             ProfileConfig(nationalities=["freedonian"]),
             store,
         )
@@ -559,7 +472,7 @@ async def test_a_nationality_bar_the_candidate_meets_passes_on_a_cached_hit(
     assert out.fit.rule is None
 
 
-# --- extra_prompt is not sent in facts mode; say so once (fix E) -----------
+# --- extra_prompt is never sent to the scoring call; say so once (fix E) ---
 
 
 def test_facts_mode_with_extra_prompt_and_no_enricher_logs_once_at_info(
@@ -567,30 +480,23 @@ def test_facts_mode_with_extra_prompt_and_no_enricher_logs_once_at_info(
 ) -> None:
     with caplog.at_level(logging.INFO, logger="rolescan.scoring.llm"):
         FitScorer(
-            LLMConfig(enabled=True, backend="ollama", mode="facts"),
+            LLMConfig(enabled=True, backend="ollama", extra_prompt="private block"),
             ProfileConfig(),
-            extra_prompt="private block",
         )
     hits = [r for r in caplog.records if "extra_prompt" in r.getMessage()]
     assert len(hits) == 1 and hits[0].levelno == logging.INFO
 
 
-@pytest.mark.parametrize(
-    ("mode", "enricher", "extra"),
-    [
-        ("judge", "", "private"),
-        ("facts", "some-enricher", "private"),
-        ("facts", "", ""),
-    ],
-)
+@pytest.mark.parametrize(("enricher", "extra"), [("some-enricher", "private"), ("", "")])
 def test_no_extra_prompt_notice_otherwise(
-    caplog: pytest.LogCaptureFixture, mode: str, enricher: str, extra: str
+    caplog: pytest.LogCaptureFixture, enricher: str, extra: str
 ) -> None:
     with caplog.at_level(logging.INFO, logger="rolescan.scoring.llm"):
         FitScorer(
-            LLMConfig(enabled=True, backend="ollama", mode=mode, enricher=enricher),
+            LLMConfig(
+                enabled=True, backend="ollama", enricher=enricher, extra_prompt=extra
+            ),
             ProfileConfig(),
-            extra_prompt=extra,
         )
     assert not [r for r in caplog.records if "extra_prompt" in r.getMessage()]
 

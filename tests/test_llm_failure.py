@@ -43,8 +43,6 @@ class _Scripted(Judge):
         self.outcomes = outcomes
         self.calls = 0
 
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        raise NotImplementedError
 
     async def facts(self, system: str, user: str) -> PostingFacts:
         ok = self.calls < len(self.outcomes) and self.outcomes[self.calls]

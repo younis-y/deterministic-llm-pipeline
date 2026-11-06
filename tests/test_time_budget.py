@@ -19,7 +19,7 @@ import pytest
 import respx
 from pydantic import ValidationError
 
-from conftest import LLM_VERDICT, OLLAMA_MODEL, mock_ollama_show, scan_and_record
+from conftest import LLM_FACTS, OLLAMA_MODEL, mock_ollama_show, scan_and_record
 from rolescan import pipeline
 from rolescan.config import Config, LLMConfig, ProfileConfig
 from rolescan.digest import render_html, render_markdown
@@ -54,8 +54,6 @@ class _SlowJudge(Judge):
         self.seconds = seconds
         self.calls = 0
 
-    async def verdict(self, system: str, user: str) -> FitVerdict:
-        raise NotImplementedError
 
     async def facts(self, system: str, user: str) -> PostingFacts:
         self.calls += 1
@@ -159,8 +157,6 @@ async def test_calls_in_flight_when_the_budget_runs_out_finish_and_are_scored() 
         def __init__(self) -> None:
             super().__init__(LLMConfig())
 
-        async def verdict(self, system: str, user: str) -> FitVerdict:
-            raise NotImplementedError
 
         async def facts(self, system: str, user: str) -> PostingFacts:
             nonlocal in_flight, calls
@@ -254,15 +250,15 @@ async def test_the_budget_also_stops_enrichment() -> None:
     started: list[str] = []
 
     class _Enrich:
-        verdict_model = FitVerdict
-
         async def enrich(self, job: Job, verdict: FitVerdict) -> FitVerdict:
             started.append(job.title)
             return verdict.model_copy(update={"reason": "enriched"})
 
     scorer._enricher = _Enrich()  # type: ignore[assignment]
     scorer._enricher_built = True
-    verdict = FitVerdict.model_validate(LLM_VERDICT)
+    verdict = FitVerdict(
+        fit_score=72, verdict="consider", confidence="medium", reason="fits"
+    )
     job = _postings(1)[0].job
 
     # Control: inside the budget the enricher runs.
@@ -366,10 +362,8 @@ def _cfg(tmp_path: Path, minutes: float) -> Config:
             "llm": {
                 "enabled": True,
                 "backend": "ollama",
-                "mode": "judge",
                 "model": OLLAMA_MODEL,
                 "max_concurrent": 1,
-                "cascade": False,
                 "max_minutes": minutes,
             },
             "output": {"dir": str(tmp_path), "db_path": str(tmp_path / "seen.db")},
@@ -408,7 +402,7 @@ async def test_postings_deferred_on_time_are_not_recorded_and_come_back(
     def _answer(request: httpx.Request) -> httpx.Response:
         clock.now += 4 * MINUTE
         return httpx.Response(
-            200, json={"message": {"content": json.dumps(LLM_VERDICT)}}
+            200, json={"message": {"content": json.dumps(LLM_FACTS)}}
         )
 
     respx.post("http://localhost:11434/api/chat").mock(side_effect=_answer)

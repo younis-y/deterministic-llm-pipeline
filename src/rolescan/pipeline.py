@@ -459,7 +459,6 @@ async def _settle_identity(cfg: Config, result: ScanResult) -> None:
         or result.llm_window_stop
         or not result.llm_unusable
         or not llm.enabled
-        or llm.mode != "facts"
         or llm.backend != "ollama"
     ):
         return
@@ -686,7 +685,6 @@ async def _judge(
         cfg.llm,
         cfg.profile,
         store,
-        extra_prompt=cfg.llm.extra_prompt,
         model_digest=result.llm_model_digest,
         facts_cache=not result.facts_cache_skipped,
         context_window=context_window,

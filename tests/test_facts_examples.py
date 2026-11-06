@@ -267,9 +267,6 @@ class _RecordingJudge(Judge):
         super().__init__(cfg)
         self.systems: list[str] = []
 
-    async def verdict(self, system: str, user: str):  # type: ignore[no-untyped-def]
-        raise AssertionError("facts mode only")
-
     async def facts(self, system: str, user: str) -> PostingFacts:
         self.systems.append(system)
         return PostingFacts(fit_score=70, reason="ok")
@@ -323,7 +320,7 @@ def test_examples_change_the_facts_cache_key(tmp_path: Path) -> None:
     without, _ = _scorer(None)
     job = _job().job
 
-    base = cache_key(job, "facts", without.cfg)
+    base = cache_key(job, without.cfg)
     plain = without._facts_cache_key(job)
     keyed = with_examples._facts_cache_key(job)
     assert plain.startswith(base + ":") and keyed.startswith(base + ":")

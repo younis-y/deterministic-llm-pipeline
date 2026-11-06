@@ -55,6 +55,7 @@ fact the advert does not state never fires a rule.
   design trades prompt fragility for a large deterministic resolver surface.
 - `judge` mode still exists with a different policy: there the model itself can
   still block on work authorisation, which facts mode ignores (ADR-0006).
+  *3.0.0: judge mode was removed; facts then rules is the only scoring path.*
 
 ### Risks
 - The model's `fit_score` is the one fuzzy input left. It must not be asked to
