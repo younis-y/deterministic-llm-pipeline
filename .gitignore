@@ -1,11 +1,14 @@
 # Your config: profile, keywords, source list, and possibly an SMTP username.
-config.yaml
+# Anchored to the root: factgate's example and starter configs are committed.
+/config.yaml
 
 # Third-party ATS dumps. CC BY-NC 4.0 — downloadable, not redistributable.
 # See ats-data/README.md for where to get them.
 ats-data/*.json
 
 # Local state and output.
+.factgate/
+factgate/examples/*/out/
 seen.db
 seen.db-wal
 seen.db-shm
