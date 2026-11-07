@@ -45,6 +45,8 @@ class Result(BaseModel):
 
 
 class RunStats(BaseModel):
+    #: The backend that answered (`replay` when answers came from a file).
+    backend: str = ""
     items: int = 0
     calls: int = 0
     cache_hits: int = 0
@@ -227,6 +229,7 @@ async def run(
             f.write("\n".join(recorded) + "\n")
     ordered = [results[item.id] for item in items]
     stats = state.stats
+    stats.backend = backend.name
     stats.items = len(items)
     stats.errors = sum(r.status == "error" for r in ordered)
     stats.deferred = sum(r.status == "deferred" for r in ordered)

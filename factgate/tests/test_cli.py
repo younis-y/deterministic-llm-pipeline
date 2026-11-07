@@ -17,6 +17,7 @@ def test_init_then_replay_run(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     assert "decided" in result.output
+    assert "3 answers replayed from a file, no model called" in result.output
     lines = (folder / "out" / "results.jsonl").read_text().splitlines()
     assert len(lines) == 3
 

@@ -20,6 +20,19 @@ def _table(title: str, counts: Counter[str]) -> list[str]:
     return [f"| {title} | Items |", "|---|---|", *rows, ""] if rows else []
 
 
+def _calls(stats: RunStats) -> str:
+    if stats.backend == "replay":
+        return (
+            f"{stats.calls} answers replayed from a file, no model called; "
+            f"{stats.cache_hits} from cache."
+        )
+    return (
+        f"{stats.calls} model calls, {stats.cache_hits} from cache, "
+        f"{stats.input_tokens:,} input and {stats.output_tokens:,} output tokens, "
+        f"{stats.seconds:g} seconds."
+    )
+
+
 def summary_markdown(cfg: Config, results: list[Result], stats: RunStats) -> str:
     decided = [r for r in results if r.status == "decided"]
     lines = [
@@ -27,9 +40,7 @@ def summary_markdown(cfg: Config, results: list[Result], stats: RunStats) -> str
         "",
         f"{stats.items} items: {len(decided)} decided, {stats.filtered} filtered, "
         f"{stats.deferred} deferred, {stats.errors} errors.",
-        f"{stats.calls} model calls, {stats.cache_hits} from cache, "
-        f"{stats.input_tokens:,} input and {stats.output_tokens:,} output tokens, "
-        f"{stats.seconds:g} seconds.",
+        _calls(stats),
         "",
         *_table("Outcome", Counter(str(r.outcome) for r in decided)),
         *_table("Rule", Counter(r.rule or f"(default: {cfg.default_outcome})" for r in decided)),
