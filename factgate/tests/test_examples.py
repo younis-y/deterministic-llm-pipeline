@@ -107,3 +107,18 @@ def test_the_readme_totals_are_the_latest_live_runs() -> None:
 
 def _load(path: Path) -> EvalRun:
     return EvalRun.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_the_batch_check_matches_the_direct_run(name: str) -> None:
+    """model.batch was checked live on the same cases: no case may have moved
+    between pass and fail, or become inconclusive (a move into or out of
+    flaky is model noise)."""
+    from factgate.eval.compare import compare
+
+    [path] = (EXAMPLES / name / "results" / "batch").glob("*.json")
+    batch = _load(path)
+    assert batch.mode == "live" and batch.repeats == 3
+    for moves in compare(_latest_live(name), batch):
+        assert (moves.fixed, moves.broke, moves.inconclusive) == ([], [], []), moves
+        assert (moves.only_before, moves.only_after) == ([], []), moves

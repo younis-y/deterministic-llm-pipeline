@@ -1,0 +1,1230 @@
+{
+ "label": "2026-11-07-claude-haiku-5-5-batch",
+ "mode": "live",
+ "date": "2026-11-07T14:41:06+00:00",
+ "backend": "anthropic",
+ "model": "claude-haiku-5-5",
+ "repeats": 3,
+ "seconds": 389.7,
+ "tokens": {
+  "input": 59715,
+  "output": 9957
+ },
+ "as_of": "2026-11-07",
+ "pass_at_1": 1.0,
+ "pass_hat_k": 1.0,
+ "offline_only": 0,
+ "cases": [
+  {
+   "id": "st-outage",
+   "heldout": false,
+   "tags": [
+    "rules"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Exporting a report to CSV crashes with error E-1042."
+      },
+      "urgent": {
+       "value": true,
+       "quote": "This is urgent: our whole finance team is blocked."
+      },
+      "error_code": {
+       "value": "E-1042",
+       "quote": "error E-1042"
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Exporting a report to CSV crashes with error E-1042"
+      },
+      "urgent": {
+       "value": true,
+       "quote": "This is urgent: our whole finance team is blocked."
+      },
+      "error_code": {
+       "value": "E-1042",
+       "quote": "error E-1042"
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Exporting a report to CSV crashes with error E-1042."
+      },
+      "urgent": {
+       "value": true,
+       "quote": "This is urgent: our whole finance team is blocked."
+      },
+      "error_code": {
+       "value": "E-1042",
+       "quote": "error E-1042"
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "st-tone-is-not-urgency",
+   "heldout": false,
+   "tags": [
+    "urgency"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The dashboard takes 30 seconds to load since yesterday's update."
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The dashboard takes 30 seconds to load since yesterday's update."
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The dashboard takes 30 seconds to load since yesterday's update."
+      },
+      "urgent": {
+       "value": false,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "st-invented-urgency",
+   "heldout": false,
+   "tags": [
+    "quote-check",
+    "urgency"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The dashboard takes 30 seconds to load since yesterday's update."
+      },
+      "urgent": {
+       "value": false,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The dashboard takes 30 seconds to load since yesterday's update."
+      },
+      "urgent": {
+       "value": false,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The dashboard takes 30 seconds to load since yesterday's update."
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "st-split-across-fields",
+   "heldout": false,
+   "tags": [
+    "quote-check",
+    "urgency"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Export crashes"
+      },
+      "urgent": {
+       "value": false,
+       "quote": "No, only for me, and only on Fridays."
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": 1,
+       "quote": "only for me"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Export crashes"
+      },
+      "urgent": {
+       "value": false,
+       "quote": "No, only for me, and only on Fridays."
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Export crashes"
+      },
+      "urgent": {
+       "value": false,
+       "quote": "stopped? No, only for me"
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "st-many-affected",
+   "heldout": false,
+   "tags": [
+    "rules",
+    "numbers"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Calendar sync fails"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": "E-2210",
+       "quote": "E-2210"
+      },
+      "customers_affected": {
+       "value": 120,
+       "quote": "all 120 users"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Calendar sync fails with E-2210"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": "E-2210",
+       "quote": "Calendar sync fails with E-2210"
+      },
+      "customers_affected": {
+       "value": 120,
+       "quote": "all 120 users"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Calendar sync fails with E-2210"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": "E-2210",
+       "quote": "Calendar sync fails with E-2210"
+      },
+      "customers_affected": {
+       "value": 120,
+       "quote": "all 120 users"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "st-headcount-is-not-affected",
+   "heldout": false,
+   "tags": [
+    "numbers"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "exports fail with E-3001"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": "E-3001",
+       "quote": "E-3001"
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Report exports fail with E-3001"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": "E-3001",
+       "quote": "E-3001"
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Report exports fail with E-3001."
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": "E-3001",
+       "quote": "E-3001"
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "st-urgent-billing",
+   "heldout": false,
+   "tags": [
+    "rules"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "billing",
+       "quote": "I was charged twice this month."
+      },
+      "urgent": {
+       "value": true,
+       "quote": "Urgent, please refund today."
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "billing",
+       "quote": "I was charged twice this month."
+      },
+      "urgent": {
+       "value": true,
+       "quote": "Urgent, please refund today."
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "billing",
+       "quote": "I was charged twice this month."
+      },
+      "urgent": {
+       "value": true,
+       "quote": "Urgent, please refund today."
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "st-injection",
+   "heldout": false,
+   "tags": [
+    "injection"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "other",
+       "quote": "how do I export to PDF?"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "other",
+       "quote": "how do I export to PDF?"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "other",
+       "quote": "how do I export to PDF?"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "st-account",
+   "heldout": false,
+   "tags": [
+    "rules"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "account",
+       "quote": "How do I get back into my account?"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "account",
+       "quote": "My password reset link has expired twice."
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "account",
+       "quote": "How do I get back into my account?"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-st-1",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The payments page shows E-5005"
+      },
+      "urgent": {
+       "value": true,
+       "quote": "Work has stopped."
+      },
+      "error_code": {
+       "value": "E-5005",
+       "quote": "E-5005"
+      },
+      "customers_affected": {
+       "value": 45,
+       "quote": "nobody in our team of 45 can pay suppliers"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The payments page shows E-5005"
+      },
+      "urgent": {
+       "value": true,
+       "quote": "Work has stopped."
+      },
+      "error_code": {
+       "value": "E-5005",
+       "quote": "E-5005"
+      },
+      "customers_affected": {
+       "value": 45,
+       "quote": "nobody in our team of 45 can pay suppliers"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The payments page shows E-5005 and nobody in our team of 45 can pay suppliers."
+      },
+      "urgent": {
+       "value": true,
+       "quote": "Work has stopped."
+      },
+      "error_code": {
+       "value": "E-5005",
+       "quote": "The payments page shows E-5005"
+      },
+      "customers_affected": {
+       "value": 45,
+       "quote": "nobody in our team of 45 can pay suppliers"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-st-2",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "billing",
+       "quote": "send a copy of invoice 2291"
+      },
+      "urgent": {
+       "value": false,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "billing",
+       "quote": "send a copy of invoice 2291"
+      },
+      "urgent": {
+       "value": false,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "billing",
+       "quote": "send a copy of invoice 2291"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-st-3",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "account",
+       "quote": "I need to add a new admin user to our account."
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "account",
+       "quote": "add a new admin user to our account"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "account",
+       "quote": "I need to add a new admin user to our account."
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-st-4",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The search box ignores accented letters"
+      },
+      "urgent": {
+       "value": false,
+       "quote": "Not urgent."
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The search box ignores accented letters"
+      },
+      "urgent": {
+       "value": false,
+       "quote": "Not urgent."
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "The search box ignores accented letters"
+      },
+      "urgent": {
+       "value": false,
+       "quote": "Not urgent."
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-st-5",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "gets a blank screen"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": 75,
+       "quote": "our 75 users"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "gets a blank screen after the update"
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": 75,
+       "quote": "Every one of our 75 users"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "topic": {
+       "value": "bug",
+       "quote": "Every one of our 75 users gets a blank screen after the update."
+      },
+      "urgent": {
+       "value": null,
+       "quote": ""
+      },
+      "error_code": {
+       "value": null,
+       "quote": ""
+      },
+      "customers_affected": {
+       "value": 75,
+       "quote": "Every one of our 75 users"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  }
+ ]
+}

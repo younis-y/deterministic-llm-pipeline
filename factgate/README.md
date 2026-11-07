@@ -188,7 +188,8 @@ invoice approved.
 4. Model: the rest are sent, `max_concurrent` at a time, until `max_calls` or
    `max_minutes` runs out. What does not fit ends as `deferred` and is answered
    on a later run. Three errors in a row stop the run and defer the rest.
-   `--record answers.jsonl` keeps every answer as it arrives.
+   `--record answers.jsonl` keeps every answer as it arrives. With
+   `model.batch: true` they go as one batch instead (see Providers).
 5. Quote check: each fact's quote must appear in one field of the item (spaces,
    case and typographic quotes and dashes folded), or the fact is cleared.
 6. Resolvers (optional): your Python functions correct the checked facts, and
@@ -352,6 +353,15 @@ A local model through Ollama, with no key and no bill:
 model: {backend: openai-compatible, name: "qwen2.5:14b", base_url: "http://localhost:11434/v1"}
 ```
 
+**Batch calls, at half the price.** With `model.batch: true` (anthropic only),
+a run sends its items, and a live eval its attempts, as one Message Batch. The
+first goes as an ordinary call that puts the shared prompt in a one-hour cache
+entry, so the batch's requests read the prompt instead of each writing it. A
+batch can take minutes: the run waits up to `max_minutes`, then cancels it,
+keeps what it answered and defers the rest. `max_calls` still caps what is
+sent. Use it for runs nobody is waiting on. On the 58 example cases it gave the
+same results as direct calls ([details](docs/providers.md#batch-calls)).
+
 [Providers](docs/providers.md) has the details, and how to add a backend as a
 plugin under the `factgate.backends` entry-point group.
 
@@ -382,13 +392,19 @@ for r in results:
     print(r.id, r.status, r.outcome, r.rule)
 ```
 
-## Not in this version
+## Roadmap
 
-- Documents other than text. Converting a PDF to text is your step.
-- A facts model written in Python instead of `facts:` in YAML.
-- Batching calls through a provider's batch API.
-- Installing from PyPI: install from this repository, as above, or with
+- **Not on PyPI yet.** Publishing is permanent, so it waits on a decision.
+  Install from this repository, as above, or with
   `pip install "git+https://github.com/younis-y/deterministic-llm-pipeline#subdirectory=factgate"`.
+- **A facts model written in Python** instead of `facts:` in YAML: not planned
+  until someone needs it.
+- **rolescan on factgate.** rolescan is in daily use, so it keeps its own copy
+  of the method for now. The plan for moving it, with its risks and how it
+  would be tested, is in
+  [`docs/superpowers/plans/2026-11-07-rolescan-onto-factgate.md`](../docs/superpowers/plans/2026-11-07-rolescan-onto-factgate.md).
+- **Out of scope:** documents other than text. Converting a PDF to text is
+  your step.
 
 ## Credits
 
