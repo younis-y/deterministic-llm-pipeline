@@ -28,7 +28,7 @@ from rolescan.scoring import facts, llm
 
 #: version -> digest, for every version whose digest is known.
 PINNED: dict[str, str] = {
-    "facts-v14": "6fa9547845ac303c",
+    "facts-v14": "a26add037965a06d",  # 3.0.1: resolver tables only
 }
 
 

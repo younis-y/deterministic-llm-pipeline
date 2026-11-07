@@ -12,7 +12,7 @@ sees a small fraction of the traffic, and the cheap stage is reproducible and
 free to re-run. [Measured quality](#measured-quality) has one real run and an
 eval that runs in CI.
 
-**The model reports; code decides.** In the default facts mode the model only
+**The model reports; code decides.** The model only
 extracts facts from a posting, each backed by a quote that code checks against
 the advert, and fixed rules turn those facts into the verdict. The same facts
 always give the same answer, and every hidden role is listed with the rule that
@@ -184,7 +184,7 @@ matched in Python before the model is called and force `blocked` whatever it
 says, and `min_report_score` gates the rest. A bar that appears only in the
 posting text, and that no configured term names, is the one a model can miss.
 
-**Facts first, then rules.** By default (`llm.mode: facts`) the model is not
+**Facts first, then rules.** The model is not
 asked whether you should apply. It is asked what the advert says: the level,
 the minimum years, whether it is open only to current students, the earliest
 graduation year it accepts, the field, and any hard eligibility bar, each with
@@ -546,7 +546,7 @@ The ranked postings are not: a digest records one person's job search, and that
 is not something to publish. The discard rate is a function of how tightly you
 write your keywords.
 
-**The facts pipeline, 6 November 2026.** `evals/cases.json` holds 26 synthetic
+**The facts pipeline, 7 November 2026.** `evals/cases.json` holds 26 synthetic
 adverts, each written around a trap that hides a good role or lets a bad one
 through: a range from zero ("0-2 years"), a cap ("up to 3 years"), an age
 limit, "student" naming who the role serves, a programme year read as a
@@ -556,17 +556,16 @@ facts and the rule that fires must be.
 
 | Run | What answers | Passed |
 |---|---|---|
-| Offline, in CI (`tests/test_eval_cases.py`) | each case's own model answer, often a wrong one, through the quote check, resolvers and rules | 19 of 26 |
-| Live, `claude-haiku-5-5`, 3 runs (`python -m evals.harness`) | the model, through the same `FitScorer` a scan uses | 25 of 26 in every run: pass@1 96%, pass^3 96% |
+| Offline, in CI (`tests/test_eval_cases.py`) | each case's own model answer, often a wrong one, through the quote check, resolvers and rules | 26 of 26 |
+| Live, `claude-haiku-5-5`, 3 runs (`python -m evals.harness`) | the model, through the same `FitScorer` a scan uses | 26 of 26 in every run: pass@1 100%, pass^3 100% |
 
 The offline run is the stricter one: it feeds the code the wrong answers a
-model has been seen to give and checks that the code corrects them. Its seven
-failures are open defects, each named in its case's `open_defect`; they run as
-strict expected failures, so fixing one fails CI until the case is updated.
-The live miss is the same defect both times: "Lead Cloud Data Engineer" is not
-read as a lead title, so the level rule never sees it. The 78 live calls took
-50 seconds and 39,858 output tokens, about USD 0.02 of output; the run's full
-record is in `evals/results/`. 26 short adverts is a regression set, not a
+model has been seen to give and checks that the code corrects them. A case the
+code gets wrong can be marked `open_defect` and runs as a strict expected
+failure, so fixing it fails CI until the mark is removed; 3.0.1 fixed the seven
+that 3.0.0 shipped with, and none is open. The 78 live calls took 47 seconds
+and 40,720 output tokens, about USD 0.02 of output; the run's full record is in
+`evals/results/`. 26 short adverts is a regression set, not a
 benchmark: it says which traps the pipeline handles, not how often real
 postings contain them.
 

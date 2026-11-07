@@ -157,6 +157,15 @@ def test_the_models_own_other_survives_with_a_two_word_quote() -> None:
     assert got.value == JobField.other and got.quote == "monthly payroll"
 
 
+def test_a_models_other_on_an_analytic_title_is_unknown_not_other() -> None:
+    """3.0.1: "Marketing Science Analyst" is not `other`; "Payroll Officer" may be."""
+    quote = FieldFact(value=JobField.other, quote="build econometric models")
+    job = _job("Marketing Science Analyst", "We build econometric models.")
+    assert _resolve(job, quote).value is None
+    job = _job("Payroll Officer", "We build econometric models.")
+    assert _resolve(job, quote).value == JobField.other
+
+
 def test_a_one_word_model_quote_is_dropped() -> None:
     job = _job("Commercial Strategy & Performance Analyst", "Python preferred.")
     got = _resolve(job, FieldFact(value=JobField.software, quote="Python"))

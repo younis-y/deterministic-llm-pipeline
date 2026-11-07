@@ -83,8 +83,7 @@
       "expect": {
         "rule_not": "years"
       },
-      "note": "a cap read as a minimum",
-      "open_defect": "a stated cap ('up to N years') is accepted as a minimum"
+      "note": "a cap read as a minimum"
     },
     {
       "id": "pub-years-05",
@@ -111,8 +110,7 @@
       "expect": {
         "rule_not": "years"
       },
-      "note": "an age limit is not an experience requirement",
-      "open_defect": "an age limit is accepted as years of experience"
+      "note": "an age limit is not an experience requirement"
     },
     {
       "id": "pub-stu-01",
@@ -154,8 +152,7 @@
       "expect": {
         "rule_not": "student_only"
       },
-      "note": "'student' names who the role serves",
-      "open_defect": "student_only accepted from a quote that names who the role serves"
+      "note": "'student' names who the role serves"
     },
     {
       "id": "pub-gy-01",
@@ -267,8 +264,7 @@
       "expect": {
         "rule_not": "hard_bar"
       },
-      "note": "an equal-opportunity statement",
-      "open_defect": "an equal-opportunity 'national origin' quote is accepted as a nationality bar"
+      "note": "an equal-opportunity statement"
     },
     {
       "id": "pub-bar-04",
@@ -304,8 +300,7 @@
       "expect": {
         "rule_not": "hard_bar"
       },
-      "note": "a benefit, filed by the model as an 'other' bar",
-      "open_defect": "a benefit quote is accepted as an 'other' bar"
+      "note": "a benefit, filed by the model as an 'other' bar"
     },
     {
       "id": "pub-lvl-01",
@@ -353,8 +348,7 @@
         "value": "lead_principal",
         "rule": "level"
       },
-      "note": "code reader returned None for this title on 2.5.6",
-      "open_defect": "the title reader misses 'Lead <words> Engineer'"
+      "note": "code reader returned None for this title on 2.5.6"
     },
     {
       "id": "pub-fld-01",
@@ -403,8 +397,7 @@
       "expect": {
         "rule_not": "field"
       },
-      "note": "a data role the model filed as other (seen in the owner's eval)",
-      "open_defect": "a model 'other' field on a data title is kept when the title names no field"
+      "note": "a data role the model filed as other (seen in the owner's eval)"
     }
   ]
 }

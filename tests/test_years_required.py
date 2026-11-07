@@ -276,3 +276,23 @@ def test_one_year_stays_within_the_users_cap() -> None:
     )
     assert facts.years_required.value == 1
     assert decide(facts, rules, 40).verdict == Verdict.APPLY
+
+
+@pytest.mark.parametrize(
+    ("quote", "kept"),
+    [
+        ("no less than 3 years of experience", True),
+        ("at least 3 years of experience", True),
+        ("3+ years of experience", True),
+        ("up to 3 years of professional experience", False),
+        ("3 years old or below", False),
+        ("aged 3 or under", False),
+    ],
+)
+def test_a_cap_or_an_age_in_the_models_quote_is_not_a_minimum(
+    quote: str, kept: bool
+) -> None:
+    """3.0.1: a model value its own quote caps or ages is cleared."""
+    job = _job(f"Requirements: {quote}.")
+    facts = verify_facts(_facts(years=3, quote=quote), job)
+    assert (resolve_years(facts, job).years_required.value == 3) is kept

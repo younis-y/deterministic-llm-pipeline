@@ -166,3 +166,19 @@ def test_only_the_unsupported_bar_is_dropped() -> None:
     assert verify_facts(facts, job).hard_bars == [
         HardBar(kind=BarKind.nationality, quote="UAE Nationals only")
     ]
+
+
+@pytest.mark.parametrize(
+    ("kind", "quote", "kept"),
+    [
+        (BarKind.other, "You must hold a full UK driving licence", True),
+        (BarKind.other, "individual visa sponsorship", False),
+        (BarKind.nationality, "regardless of nationality", False),
+        (BarKind.nationality, "national origin", False),
+    ],
+)
+def test_a_bar_must_require_something_and_not_be_equal_opportunity(
+    kind: BarKind, quote: str, kept: bool
+) -> None:
+    """3.0.1: benefits and equal-opportunity lines are not bars."""
+    assert _kept(_job(f"About us. {quote}."), kind, quote) is kept
