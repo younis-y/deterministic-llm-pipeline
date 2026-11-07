@@ -149,3 +149,9 @@ def test_a_bad_resolver_name_is_named() -> None:
 
     with pytest.raises(ValueError, match="resolver 'nope:fn'"):
         load_resolvers(["nope:fn"])
+
+
+def test_a_resolver_module_beside_the_config_loads(tmp_path: Path) -> None:
+    (tmp_path / "beside_fixes.py").write_text("def fix(item, facts):\n    return facts\n")
+    [fix] = load_resolvers(["beside_fixes:fix"], base=tmp_path)
+    assert fix.__name__ == "fix"

@@ -73,7 +73,7 @@ def run_cmd(
         sending = [i for i in items if prefilter_reason(i, cfg.prefilter) is None]
         typer.echo(f"{len(items)} items; would send {len(sending)} (cache permitting)")
         return
-    resolvers = load_resolvers(cfg.resolvers)
+    resolvers = load_resolvers(cfg.resolvers, cfg.base)
     backend = get_backend(cfg.model, replay)
 
     async def go() -> tuple[list[Result], RunStats]:

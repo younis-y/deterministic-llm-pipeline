@@ -11,6 +11,7 @@ import datetime as dt
 import importlib
 import json
 import re
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -72,14 +73,24 @@ def prefilter_reason(item: Item, prefilter: Prefilter | None) -> str | None:
     return None
 
 
-def load_resolvers(names: list[str]) -> list[Resolver]:
+def load_resolvers(names: list[str], base: Path | None = None) -> list[Resolver]:
+    """Each `module:function` in `names`. A module in `base` (the config's
+    folder) loads as well as an installed one."""
+    folder = str(base) if base is not None else ""
+    added = bool(folder) and folder not in sys.path
+    if added:
+        sys.path.insert(0, folder)
     resolvers = []
-    for name in names:
-        module, _, attr = name.partition(":")
-        try:
-            resolvers.append(getattr(importlib.import_module(module), attr))
-        except (ImportError, AttributeError, ValueError) as e:
-            raise ValueError(f"resolver {name!r} cannot be loaded ({e})") from e
+    try:
+        for name in names:
+            module, _, attr = name.partition(":")
+            try:
+                resolvers.append(getattr(importlib.import_module(module), attr))
+            except (ImportError, AttributeError, ValueError) as e:
+                raise ValueError(f"resolver {name!r} cannot be loaded ({e})") from e
+    finally:
+        if added:
+            sys.path.remove(folder)
     return resolvers
 
 

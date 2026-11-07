@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import math
 import re
 from typing import Any
@@ -28,6 +29,8 @@ _TYPO_FOLD = str.maketrans(
 )
 #: A number as written: plain ("42", "12.5") or grouped ("12,500.00", "12 500").
 _NUMBER = re.compile(r"\d{1,3}(?:[, ]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+#: A year written in a quote ("2026"), for the date check.
+_YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 
 
 def normalise(text: str) -> str:
@@ -54,6 +57,9 @@ def _verified(fact: Fact[Any], haystacks: list[str]) -> bool:
         return False
     if isinstance(fact.value, int | float) and not isinstance(fact.value, bool):
         return _number_in_quote(float(fact.value), fact.quote)
+    if isinstance(fact.value, dt.date):
+        years = _YEAR.findall(fact.quote)
+        return not years or str(fact.value.year) in years
     return True
 
 
@@ -61,8 +67,9 @@ def check_quotes(facts: BaseModel, item: Item) -> BaseModel:
     """`facts` with every fact whose quote is not in the item cleared.
 
     Each field of the item is a separate haystack. A number must also be in
-    its own quote. An unverified fact becomes unstated; an unverified list
-    entry is dropped. Never mutates `facts`.
+    its own quote, and a date's year must be one its quote states, when the
+    quote states a year. An unverified fact becomes unstated; an unverified
+    list entry is dropped. Never mutates `facts`.
     """
     haystacks = [normalise(text) for text in item.fields.values()]
     update: dict[str, Any] = {}

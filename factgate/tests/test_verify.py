@@ -54,3 +54,22 @@ def test_list_elements_are_checked_one_by_one() -> None:
 def test_an_unstated_fact_stays_unstated() -> None:
     facts = _check({})
     assert facts.note.value is None
+
+
+DATED = build_model({"due": FactSpec(type="date")})
+
+
+def test_a_date_must_carry_its_quotes_year() -> None:
+    item = Item(id="1", fields={"text": "Tenders close on 12 November 2026."})
+    wrong = check_quotes(
+        DATED.model_validate({"due": {"value": "2027-11-12", "quote": "12 November 2026"}}), item
+    )
+    right = check_quotes(
+        DATED.model_validate({"due": {"value": "2026-11-12", "quote": "12 November 2026"}}), item
+    )
+    no_year = check_quotes(
+        DATED.model_validate({"due": {"value": "2026-11-12", "quote": "Tenders close"}}), item
+    )
+    assert wrong.due.value is None  # type: ignore[attr-defined]
+    assert str(right.due.value) == "2026-11-12"  # type: ignore[attr-defined]
+    assert no_year.due.value is not None  # type: ignore[attr-defined]

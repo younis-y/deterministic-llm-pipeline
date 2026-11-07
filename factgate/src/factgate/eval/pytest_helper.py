@@ -47,5 +47,5 @@ def assert_case(bound: Bound, as_of: dt.date | None = None) -> None:
     cfg, case = bound
     model = build_model(cfg.facts)
     today = as_of or dt.datetime.now(dt.UTC).date()
-    got = offline(case, cfg, model, load_resolvers(cfg.resolvers), today)
+    got = offline(case, cfg, model, load_resolvers(cfg.resolvers, cfg.base), today)
     assert got.passed, f"{case.id}: {got.fact_failures} {got.outcome_failure or ''} {case.note}"

@@ -99,7 +99,7 @@ class _Grader:
     def __init__(self, cfg: Config, as_of: dt.date) -> None:
         self.cfg, self.as_of = cfg, as_of
         self.model = build_model(cfg.facts)
-        self.resolvers: list[Resolver] = load_resolvers(cfg.resolvers)
+        self.resolvers: list[Resolver] = load_resolvers(cfg.resolvers, cfg.base)
 
     def attempt(self, case: Case, raw: dict[str, Any] | None, error: str = "") -> Attempt:
         if raw is None:
