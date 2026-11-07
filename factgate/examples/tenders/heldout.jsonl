@@ -1,0 +1,5 @@
+{"id": "h-tn-1", "fields": {"title": "Flood model update", "body": "Estimated contract value: £640,000. Tenders close at noon on 2 March 2027. ISO 14001 is required."}, "expect": {"outcome": "bid"}, "as_of": "2026-11-07"}
+{"id": "h-tn-2", "fields": {"title": "Parking data feed", "body": "The deadline for bids is 16 November 2026. Value £120,000."}, "expect": {"outcome": "no-bid"}, "as_of": "2026-11-07"}
+{"id": "h-tn-3", "fields": {"title": "Regional analytics framework", "body": "Value £3,400,000 across 4 lots. Closing date 15 February 2027."}, "expect": {"outcome": "review"}, "as_of": "2026-11-07"}
+{"id": "h-tn-4", "fields": {"title": "Case management data", "body": "Staff will need SC clearance. Value £200,000. Submit by 10 February 2027."}, "expect": {"outcome": "no-bid"}, "as_of": "2026-11-07"}
+{"id": "h-tn-5", "fields": {"title": "Pilot survey", "body": "A small pilot worth £22,500. Deadline 19 January 2027."}, "expect": {"outcome": "no-bid"}, "as_of": "2026-11-07"}

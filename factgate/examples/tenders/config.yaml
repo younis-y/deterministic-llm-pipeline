@@ -1,0 +1,44 @@
+# Bid / no-bid on public-sector tenders. All sample text is synthetic.
+# Dates are relative to the run's --as-of date (2026-11-07 for the examples).
+name: tender-screen
+items: {jsonl: items.jsonl, id: id, fields: [title, body]}
+
+prefilter:
+  exclude_any: [contract award notice]
+
+facts:
+  deadline: {type: date, describe: "The deadline for submitting a tender or bid"}
+  value: {type: number, describe: "The estimated total contract value, in pounds"}
+  sc_clearance: {type: bool, describe: "Staff must hold or obtain SC (security) clearance"}
+  certifications:
+    type: list
+    of: text
+    describe: "Certifications a bidder must hold, such as ISO 9001 or Cyber Essentials"
+  lots: {type: integer, describe: "The number of lots the tender is divided into"}
+
+rules:
+  - name: too-soon
+    when: {deadline: {before_days: 14}}
+    then: no-bid
+  - name: clearance
+    when: {sc_clearance: {is: true}}
+    then: no-bid
+  - name: too-small
+    when: {value: {lt: 50000}}
+    then: no-bid
+  - name: iso-27001
+    when: {certifications: {matches: "27001"}}
+    then: no-bid
+  # A deadline the quote check cleared must not fall through to bid.
+  - name: no-deadline
+    when: {deadline: {stated: false}}
+    then: review
+  - name: very-large
+    when: {value: {gt: 2000000}}
+    then: review
+default_outcome: bid
+
+dangerous:
+  - {expected: no-bid, got: bid}
+
+model: {backend: anthropic, name: claude-haiku-5-5, max_calls: 50, max_minutes: 10}

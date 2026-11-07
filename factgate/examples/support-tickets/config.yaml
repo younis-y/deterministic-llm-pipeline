@@ -1,0 +1,38 @@
+# Support ticket routing. All sample text is synthetic.
+name: support-routing
+items: {jsonl: items.jsonl, id: id, fields: [subject, body]}
+
+facts:
+  topic:
+    type: enum
+    values: [billing, bug, account, other]
+    describe: "What the ticket is about: billing (charges, invoices, refunds), bug (the product does something wrong), account (login, password, access), other"
+  urgent:
+    type: bool
+    describe: "The customer says in words that it is urgent or that work is stopped; not inferred from tone"
+  error_code: {type: text, describe: "An error code the customer quotes, such as E-1042"}
+  customers_affected: {type: integer, describe: "How many users or customers the ticket says are affected"}
+
+rules:
+  - name: outage
+    when: {topic: {is: bug}, urgent: {is: true}}
+    then: page-oncall
+  - name: many-affected
+    when: {customers_affected: {ge: 50}}
+    then: page-oncall
+  - name: billing
+    when: {topic: {is: billing}}
+    then: billing-team
+  - name: account
+    when: {topic: {is: account}}
+    then: account-team
+  - name: bug
+    when: {topic: {is: bug}}
+    then: engineering
+default_outcome: triage
+
+dangerous:
+  - {expected: page-oncall, got: engineering}
+  - {expected: page-oncall, got: triage}
+
+model: {backend: anthropic, name: claude-haiku-5-5, max_calls: 50, max_minutes: 10}

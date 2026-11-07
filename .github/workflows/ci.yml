@@ -87,4 +87,4 @@ jobs:
       - name: Dependencies declared and used
         run: uvx deptry .
       - name: Dead code
-        run: uvx vulture src --min-confidence 80
+        run: uvx vulture src --min-confidence 80 --ignore-names exc_type,exc,tb

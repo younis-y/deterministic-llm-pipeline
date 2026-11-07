@@ -1,0 +1,55 @@
+# Invoice triage: approve, review or hold each supplier invoice email.
+# All sample text is synthetic.
+name: invoice-triage
+items: {jsonl: items.jsonl, id: id, fields: [subject, body]}
+
+prefilter:
+  require_any: [invoice]
+  exclude_any: [credit note]
+
+facts:
+  amount_due:
+    type: number
+    describe: "The total amount due on the invoice (not a subtotal, VAT line or earlier balance)"
+  currency: {type: enum, values: [GBP, EUR, USD, other], describe: "Currency of the amount due"}
+  due_date: {type: date, describe: "The date payment is due"}
+  disputed:
+    type: bool
+    describe: "The email says the invoice is disputed, queried or on hold"
+  po_number: {type: text, describe: "The purchase order (PO) number the invoice quotes"}
+
+rules:
+  - name: disputed
+    when: {disputed: {is: true}}
+    then: hold
+  - name: large
+    when: {amount_due: {gt: 10000}}
+    then: review
+  - name: no-po
+    when: {po_number: {stated: false}}
+    then: review
+  # A fact the quote check cleared is "not stated": send it to a person rather
+  # than letting it fall through to approve.
+  - name: no-amount
+    when: {amount_due: {stated: false}}
+    then: review
+  - name: no-due-date
+    when: {due_date: {stated: false}}
+    then: review
+  - name: not-sterling
+    when: {currency: {ne: GBP}}
+    then: review
+  - name: overdue
+    when: {due_date: {before_days: 0}}
+    then: review
+default_outcome: approve
+
+# Code that corrects the model, run on the checked facts (fixes.py, beside
+# this file). Its quotes are checked again like the model's.
+resolvers: ["fixes:total_not_subtotal"]
+
+dangerous:
+  - {expected: hold, got: approve}
+  - {expected: review, got: approve}
+
+model: {backend: anthropic, name: claude-haiku-5-5, max_calls: 50, max_minutes: 10}
