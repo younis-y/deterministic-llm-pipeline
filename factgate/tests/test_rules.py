@@ -38,6 +38,8 @@ AS_OF = dt.date(2026, 11, 7)
         (dt.date(2026, 11, 6), {"before_days": 0}, True),
         (dt.date(2026, 11, 7), {"before_days": 0}, False),
         (dt.date(2026, 11, 20), {"gt": "2026-11-19"}, True),
+        (dt.date(2026, 11, 1), {"in": ["2026-11-01"]}, True),
+        (dt.date(2026, 11, 1), {"in": [dt.date(2026, 11, 2)]}, False),
         (["A", "B"], {"contains": "B"}, True),
         (["A", "B"], {"contains": "C"}, False),
         ([], {"stated": False}, True),

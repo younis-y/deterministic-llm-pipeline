@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from factgate.items import ItemsConfig
 from factgate.rules import ALLOWED, OPERATORS, Condition, Rule
@@ -31,10 +32,10 @@ class ModelConfig(BaseModel):
     base_url: str | None = None
     #: Env var holding the API key; the backend's own default when unset.
     api_key_env: str | None = None
-    max_calls: int = 100
-    max_minutes: float = 30
-    max_concurrent: int = 4
-    max_tokens: int = 2048
+    max_calls: Annotated[int, Field(ge=0)] = 100
+    max_minutes: Annotated[float, Field(gt=0)] = 30
+    max_concurrent: Annotated[int, Field(ge=1)] = 4
+    max_tokens: Annotated[int, Field(ge=1)] = 2048
     #: Sent only when set: some models refuse the parameter.
     temperature: float | None = None
 
@@ -97,20 +98,66 @@ def check_condition(cfg: Config, fact: str, cond: Condition, where: str) -> None
     for op, arg in cond.items():
         if op not in OPERATORS:
             raise ValueError(f"{where}: unknown operator {op!r}")
-        if spec.type == "list" and op in {"contains", "stated"}:
-            continue
-        if op not in ALLOWED[spec.scalar]:
+        listed = spec.type == "list" and op in {"contains", "stated"}
+        if not listed and op not in ALLOWED[spec.scalar]:
             raise ValueError(f"{where}: {op!r} does not apply to a {spec.scalar} fact")
-        if op == "matches":
-            try:
-                re.compile(arg)
-            except re.error as e:
-                raise ValueError(f"{where}: bad regex {arg!r} ({e})") from e
+        problem = _argument_problem(spec, op, arg)
+        if problem:
+            raise ValueError(f"{where}: {op!r} on {fact!r} {problem} (got {arg!r})")
+
+
+def _argument_problem(spec: FactSpec, op: str, arg: Any) -> str | None:
+    """Why `arg` cannot be what `op` compares this fact with, or None."""
+    if op == "stated":
+        return None if isinstance(arg, bool) else "needs true or false"
+    if op in {"within_days", "before_days"}:
+        whole = isinstance(arg, int) and not isinstance(arg, bool) and arg >= 0
+        return None if whole else "needs a whole number of days, 0 or more"
+    if op == "in":
+        if not isinstance(arg, list) or not arg:
+            return "needs a list"
+        return next((p for a in arg if (p := _value_problem(spec, a))), None)
+    if op == "matches":
+        if not isinstance(arg, str):
+            return "needs text"
+        try:
+            re.compile(arg)
+        except re.error as e:
+            return f"is a bad regex ({e})"
+        return None
+    if op == "contains" and spec.type != "list":
+        return None if isinstance(arg, str) else "needs text"
+    return _value_problem(spec, arg)
+
+
+def _value_problem(spec: FactSpec, arg: Any) -> str | None:
+    """Why `arg` is not a value this fact can take, or None."""
+    kind = spec.scalar
+    if kind in {"number", "integer"}:
+        number = isinstance(arg, int | float) and not isinstance(arg, bool)
+        return None if number else "needs a number"
+    if kind == "date":
+        if isinstance(arg, dt.date):
+            return None
+        try:
+            dt.date.fromisoformat(str(arg))
+        except ValueError:
+            return "needs a date (YYYY-MM-DD)"
+        return None
+    if kind == "bool":
+        return None if isinstance(arg, bool) else "needs true or false"
+    if kind == "enum":
+        values = spec.values or []
+        return None if arg in values else f"needs one of {', '.join(values)}"
+    return None if isinstance(arg, str) else "needs text"
 
 
 def load_config(path: Path) -> Config:
     """Read and check a config; any mistake fails here, before a model call."""
-    data: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        data: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ValueError(f"{path}: not valid YAML ({e})") from e
     if not isinstance(data, dict):
         raise ValueError(f"{path}: not a YAML mapping")
     return Config.model_validate({**data, "base": path.resolve().parent})

@@ -58,6 +58,8 @@ class ItemsConfig(BaseModel):
         if len(chosen) != 1:
             msg = f"items: give exactly one of {', '.join(_READERS)} (got {chosen or 'none'})"
             raise ValueError(msg)
+        if not self.fields:
+            raise ValueError("items: fields must name at least one field")
         return self
 
 

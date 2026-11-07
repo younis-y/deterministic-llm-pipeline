@@ -34,7 +34,7 @@ _SCALAR: dict[str, Callable[[Any, Any, dt.date], bool]] = {
     "le": _cmp(lambda v, a: v <= a),
     "gt": _cmp(lambda v, a: v > a),
     "ge": _cmp(lambda v, a: v >= a),
-    "in": lambda v, a, _: v in a,
+    "in": lambda v, a, _: v in ([_date(x) for x in a] if isinstance(v, dt.date) else a),
     "contains": lambda v, a, _: str(a).casefold() in str(v).casefold(),
     "matches": lambda v, a, _: re.search(a, str(v), re.IGNORECASE) is not None,
     "within_days": lambda v, a, d: d <= v <= d + dt.timedelta(days=a),
