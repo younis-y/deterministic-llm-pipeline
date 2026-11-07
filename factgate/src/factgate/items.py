@@ -32,7 +32,8 @@ class Item(BaseModel):
 
     @property
     def content_hash(self) -> str:
-        blob = json.dumps(self.fields, sort_keys=True, ensure_ascii=True)
+        """The text in field order: reordering fields reorders the prompt."""
+        blob = json.dumps(list(self.fields.items()), ensure_ascii=True)
         return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
@@ -65,16 +66,11 @@ class ItemsConfig(BaseModel):
 
 def _from_rows(rows: Iterable[dict[str, Any]], cfg: ItemsConfig) -> list[Item]:
     items: list[Item] = []
-    seen: set[str] = set()
     for row in rows:
         if cfg.id not in row:
             msg = f"an item has no id field {cfg.id!r}: {str(row)[:80]}"
             raise ValueError(msg)
         item_id = str(row[cfg.id])
-        if item_id in seen:
-            msg = f"duplicate item id {item_id!r}"
-            raise ValueError(msg)
-        seen.add(item_id)
         missing = [f for f in cfg.fields if f not in row]
         if missing:
             msg = f"item {item_id!r} has no field {missing[0]!r}"
@@ -114,12 +110,23 @@ def _plugin(name: str) -> Callable[[ItemsConfig, Path], list[Item]]:
 
 
 def read_items(cfg: ItemsConfig, base: Path) -> list[Item]:
-    """Every item the config names; relative paths are read from `base`."""
+    """Every item the config names; relative paths are read from `base`. Two
+    items with one id would share one result, so that is an error."""
+    items = _read(cfg, base)
+    seen: set[str] = set()
+    for item in items:
+        if item.id in seen:
+            raise ValueError(f"duplicate item id {item.id!r}")
+        seen.add(item.id)
+    return items
+
+
+def _read(cfg: ItemsConfig, base: Path) -> list[Item]:
     if cfg.jsonl:
         text = (base / cfg.jsonl).read_text(encoding="utf-8")
         return _from_rows(_jsonl(text.splitlines()), cfg)
     if cfg.csv:
-        with (base / cfg.csv).open(newline="", encoding="utf-8") as f:
+        with (base / cfg.csv).open(newline="", encoding="utf-8-sig") as f:
             return _from_rows(csv.DictReader(f), cfg)
     if cfg.folder:
         return _folder(base / cfg.folder, cfg)

@@ -55,3 +55,22 @@ def test_content_hash_depends_on_fields_only() -> None:
     b = Item(id="2", fields={"text": "x"})
     assert a.content_hash == b.content_hash
     assert a.content_hash != Item(id="1", fields={"text": "y"}).content_hash
+
+
+def test_a_duplicate_id_from_a_folder_is_named(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "acme.txt").write_text("one")
+    (tmp_path / "docs" / "acme.md").write_text("two")
+    with pytest.raises(ValueError, match="duplicate item id 'acme'"):
+        read_items(ItemsConfig(folder="docs"), tmp_path)
+
+
+def test_a_csv_saved_with_a_byte_order_mark(tmp_path: Path) -> None:
+    (tmp_path / "a.csv").write_text("﻿id,text\n7,hello\n", encoding="utf-8")
+    assert read_items(ItemsConfig(csv="a.csv"), tmp_path)[0].id == "7"
+
+
+def test_content_hash_depends_on_field_order() -> None:
+    a = Item(id="1", fields={"subject": "x", "body": "y"})
+    b = Item(id="1", fields={"body": "y", "subject": "x"})
+    assert a.content_hash != b.content_hash

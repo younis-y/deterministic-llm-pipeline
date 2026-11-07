@@ -95,7 +95,12 @@ async def test_anthropic_parses_the_structured_answer() -> None:
                 "content": [{"type": "text", "text": json.dumps(RAW)}],
                 "stop_reason": "end_turn",
                 "stop_sequence": None,
-                "usage": {"input_tokens": 20, "output_tokens": 9},
+                "usage": {
+                    "input_tokens": 20,
+                    "output_tokens": 9,
+                    "cache_read_input_tokens": 900,
+                    "cache_creation_input_tokens": 5,
+                },
             },
         )
 
@@ -108,6 +113,7 @@ async def test_anthropic_parses_the_structured_answer() -> None:
     assert "temperature" not in sent[0]
     assert got.raw == RAW
     assert got.output_tokens == 9
+    assert got.input_tokens == 925, "cached prompt tokens are input too"
 
 
 def test_replay_answers_by_item_id(tmp_path: Path) -> None:

@@ -155,3 +155,72 @@ def test_a_resolver_module_beside_the_config_loads(tmp_path: Path) -> None:
     (tmp_path / "beside_fixes.py").write_text("def fix(item, facts):\n    return facts\n")
     [fix] = load_resolvers(["beside_fixes:fix"], base=tmp_path)
     assert fix.__name__ == "fix"
+
+
+async def test_a_resolver_that_raises_costs_one_item_not_the_run(monkeypatch: Any) -> None:
+    module = types.ModuleType("brittle")
+
+    def brittle(item: Item, facts: Any) -> Any:
+        if item.id == "1":
+            raise ValueError("no PO to normalise")
+        return facts
+
+    module.brittle = brittle  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "brittle", module)
+    cfg = _cfg(resolvers=["brittle:brittle"])
+    results, stats = await run(
+        cfg, _items(3), Counting(cfg.model), as_of=AS_OF, resolvers=load_resolvers(cfg.resolvers)
+    )
+    assert [r.status for r in results] == ["decided", "error", "decided"]
+    assert "no PO to normalise" in results[1].reason and stats.errors == 1
+
+
+async def test_record_keeps_cache_hits_and_invalid_answers(tmp_path: Path) -> None:
+    cfg = _cfg()
+    path = tmp_path / "answers.jsonl"
+    async with Cache(tmp_path / "c.sqlite") as cache:
+        await run(cfg, _items(2), Counting(cfg.model), as_of=AS_OF, cache=cache)
+        await run(cfg, _items(2), Counting(cfg.model), as_of=AS_OF, cache=cache, record=path)
+    bad = ReplayBackend(cfg.model, {"0": {"kind": {"value": "zzz", "quote": "x"}}})
+    await run(cfg, _items(1), bad, as_of=AS_OF, record=path)
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [r["id"] for r in rows] == ["0", "1", "0"]
+
+
+async def test_a_missing_replay_answer_is_an_error_not_a_breaker() -> None:
+    cfg = _cfg()
+    cfg.model.max_concurrent = 1
+    backend = ReplayBackend(cfg.model, {"3": _raw(3), "4": _raw(4)})
+    results, stats = await run(cfg, _items(5), backend, as_of=AS_OF)
+    assert [r.status for r in results] == ["error"] * 3 + ["decided"] * 2
+    assert "no recorded answer" in results[0].reason
+    assert stats.calls == 2
+
+
+async def test_the_prefilter_folds_whitespace_and_typography() -> None:
+    items = [
+        Item(id="a", fields={"text": "Credit\nnote CN-1"}),
+        Item(id="b", fields={"text": "Please don" + chr(0x2019) + "t pay this"}),
+        Item(id="c", fields={"text": "Amount\ndue: £10"}),
+        Item(id="d", fields={"text": "Hello"}),
+    ]
+    prefilter = {"exclude_any": ["credit note", "don't pay"], "require_any": ["amount due"]}
+    cfg = _cfg(prefilter=prefilter)
+    results, _ = await run(cfg, items, Counting(cfg.model), as_of=AS_OF)
+    assert [r.status == "filtered" for r in results] == [True, True, False, True]
+
+
+def test_resolvers_beside_two_configs_stay_apart(tmp_path: Path) -> None:
+    for name in ("one", "two"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "fixes.py").write_text(f"def fix(item, facts):\n    return {name!r}\n")
+    [one] = load_resolvers(["fixes:fix"], base=tmp_path / "one")
+    [two] = load_resolvers(["fixes:fix"], base=tmp_path / "two")
+    got: Any = (one(None, None), two(None, None))  # type: ignore[arg-type]
+    assert got == ("one", "two")
+
+
+async def test_a_decision_carries_the_quotes_of_its_rule() -> None:
+    cfg = _cfg()
+    results, _ = await run(cfg, _items(3), Counting(cfg.model), as_of=AS_OF)
+    assert results[2].quotes == {"amount": "Total 200"} and results[0].quotes == {}

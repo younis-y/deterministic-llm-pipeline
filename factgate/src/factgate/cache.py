@@ -1,9 +1,10 @@
 """The answer cache: the model's raw answer, keyed so it is never served stale.
 
-The key names the item's text, a fingerprint of everything that decides the
-answer (the prompt, the schema, `max_tokens`, `temperature`), the backend and
-the model. Checking and deciding run on every read, so a rule or resolver
-change reaches cached items with no call (rolescan ADR-0008).
+The key names the item's text (in field order), a fingerprint of everything
+that decides the answer (the prompt, the schema, `max_tokens`, `temperature`,
+the server's `base_url`), the backend and the model. Checking and deciding run
+on every read, so a rule or resolver change reaches cached items with no call
+(rolescan ADR-0008).
 """
 
 from __future__ import annotations
@@ -23,8 +24,16 @@ from factgate.items import Item
 CACHE_VERSION = "v1"
 
 
-def fingerprint(system: str, schema_json: str, max_tokens: int, temperature: float | None) -> str:
-    blob = json.dumps([CACHE_VERSION, system, schema_json, max_tokens, temperature])
+def fingerprint(
+    system: str,
+    schema_json: str,
+    max_tokens: int,
+    temperature: float | None,
+    base_url: str | None = None,
+) -> str:
+    """12 hex characters naming everything that decides the answer besides the
+    item, the backend and the model: two servers under one model name differ."""
+    blob = json.dumps([CACHE_VERSION, system, schema_json, max_tokens, temperature, base_url])
     return hashlib.sha256(blob.encode()).hexdigest()[:12]
 
 

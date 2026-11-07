@@ -25,6 +25,10 @@ RETRY_DELAY = 2.0
 _TIMEOUT = 120.0
 
 
+class MissingAnswer(KeyError):
+    """A replay file has no answer for this item: not a call, not a fault."""
+
+
 class Answer(BaseModel):
     raw: dict[str, Any]
     input_tokens: int = 0
@@ -98,10 +102,14 @@ class AnthropicBackend(Backend):
         if parsed is None:
             msg = f"no facts in the answer (stop_reason={response.stop_reason!r})"
             raise RuntimeError(msg)
+        usage = response.usage
+        cached = (getattr(usage, "cache_read_input_tokens", 0) or 0) + (
+            getattr(usage, "cache_creation_input_tokens", 0) or 0
+        )
         return Answer(
             raw=parsed.model_dump(mode="json"),
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
+            input_tokens=usage.input_tokens + cached,
+            output_tokens=usage.output_tokens,
         )
 
 
@@ -176,7 +184,7 @@ class ReplayBackend(Backend):
 
     async def extract(self, system: str, user: str, model: type[BaseModel], item_id: str) -> Answer:
         if item_id not in self.answers:
-            raise KeyError(f"no recorded answer for item {item_id!r}")
+            raise MissingAnswer(f"no recorded answer for item {item_id!r}")
         return Answer(raw=self.answers[item_id])
 
 
