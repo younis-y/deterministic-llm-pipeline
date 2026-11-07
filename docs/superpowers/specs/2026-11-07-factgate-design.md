@@ -79,8 +79,11 @@ Success:
 
 ### Items
 
-An item is `{id, text, meta}`; `meta` is free-form and passed through to the
-output. Built-in readers: a JSONL file (one object per line, field names
+An item is `{id, fields, meta}`: `fields` is one or more named text fields
+(`subject`, `body`; a single field is called `text` by default), and `meta` is
+free-form and passed through to the output. Each field is a separate haystack
+for the quote check, never joined, so a quote cannot splice the end of one field
+onto the start of the next (rolescan checks title and description this way). Built-in readers: a JSONL file (one object per line, field names
 configurable), a CSV (id and text columns configurable), a folder of `.txt` or
 `.md` files (id = file name), and stdin as JSONL. More readers load as
 entry-point plugins (`factgate.sources`), the same pattern rolescan uses.
@@ -89,7 +92,7 @@ entry-point plugins (`factgate.sources`), the same pattern rolescan uses.
 
 ```yaml
 name: invoice-triage
-items: {jsonl: invoices.jsonl, id: invoice_no, text: body}
+items: {jsonl: invoices.jsonl, id: invoice_no, fields: [subject, body]}
 
 prefilter:            # optional; plain keyword rules, no model
   require_any: [invoice, "amount due"]
@@ -108,11 +111,18 @@ rules:                # first match wins; conditions in one rule are ANDed
   - name: large
     when: {amount_due: {gt: 10000}}
     then: review
-  default: approve
+  - name: overdue
+    when: {due_date: {before_days: 0}}
+    then: review
+default_outcome: approve
 
 model: {backend: anthropic, name: claude-haiku-5-5, max_calls: 200, max_minutes: 20}
 cache: .factgate/cache.sqlite
 ```
+
+Python users may pass their own Pydantic model instead of `facts:`; every
+field must be a `Fact[T]` (value plus quote) from factgate, with `T` one of the
+types below, so the quote check, the prompt and the rule conditions all apply.
 
 Fact types: `number`, `integer`, `text`, `bool`, `date` (ISO), `enum`, and
 `list` of any of these. Every fact is optional: the model may report "not
@@ -121,8 +131,19 @@ stated" by the quote check, never guessed.
 
 Rule conditions per fact: `is`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `in`,
 `contains`, `matches` (a regex, checked when the config loads), `stated`
-(true/false). A rule's `then` is any outcome label the user chooses. A
+(true/false), and for dates `within_days: N` (between today and N days ahead)
+and `before_days: N` (earlier than N days from today; `0` is "in the past").
+"Today" is the run's `as_of` date: today by default, fixed by `--as-of` or in an
+eval case, so replays and offline evals do not depend on the clock. A rule's `then` is any outcome label the user chooses. A
 condition on a fact that is not stated is false, except `stated: false`.
+
+### Runs
+
+Every run reads the whole input and outputs every item. The cache makes a
+repeat free: an item answered before is not sent again. There is no
+seen-tracking in v1. An item `deferred` by the call or time limit is simply
+answered on a later run, when it is no longer competing with the items the
+cache now serves. A run is named by its start time in the summary.
 
 ### Pipeline
 
@@ -134,12 +155,20 @@ condition on a fact that is not stated is false, except `stated: false`.
    fit ends as `deferred` and is first in line next run.
 5. Quote check: each fact's quote must appear in the item text (after the same
    whitespace, case and typographic-quote folding rolescan uses), else the fact
-   is cleared. The cache stores the model's raw answer, and the check runs on
-   every read, as in rolescan (ADR-0008).
+   is cleared. A quote is a list when the fact is a list, one per element.
+   For `number` and `integer` facts the value must also be in its own quote:
+   the quote's numbers, read with thousands separators and currency symbols
+   removed, must include the value, so "Total due: £12,500" answered as
+   125000 is cleared (rolescan does the same for graduation years). `text`,
+   `bool`, `enum` and `date` values are not value-checked in v1; a resolver can
+   add a check, and the README says so plainly. The cache stores the model's
+   raw answer, and the check runs on every read, as in rolescan (ADR-0008).
 6. Resolvers (optional): Python functions named in the config
    (`resolvers: [mypkg.fixes:fix_amounts]`) that take the item and the checked
    facts and return corrected facts. This is rolescan's "code corrects the
-   model" step, opened up.
+   model" step, opened up. The quote check runs again on what resolvers
+   return, so a resolver must quote the item verbatim like the model does,
+   and every decision still quotes the document.
 7. Rules: first match wins, else `default`.
 8. Output: one JSONL line per item with id, outcome, the rule that fired, the
    facts with their quotes, `meta`, and status (`decided`, `filtered`,
@@ -215,6 +244,12 @@ extra. Python 3.11+.
 - `openai-compatible` instead of a dedicated Ollama backend.
 - YAML condition operators instead of an expression language.
 - The three example domains.
+
+Reviewer questions settled as my calls: named text fields per item; numeric
+values checked against their own quote; relative dates through an `as_of`
+date; resolver output re-checked; a Python schema must use `Fact[T]`; no state
+between runs beyond the cache. The live recordings use the owner's existing
+Anthropic key, about USD 0.02 per example run.
 
 ## Left to the builder
 
