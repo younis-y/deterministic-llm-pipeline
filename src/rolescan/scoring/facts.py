@@ -379,7 +379,7 @@ def _year_in_quote(year: int | None, quote: str) -> bool:
 # only), so `resolve_hard_bars` can quote them.
 _BAR_WORDS: dict[BarKind, re.Pattern[str]] = {
     BarKind.nationality: re.compile(
-        r"\b(?:nationals?|nationality|nationalities|citizens?|citizenship"
+        r"\b(?:nationals?(?!\s+origin)|nationality|nationalities|citizens?|citizenship"
         r"|passports?|emiratis?|saudis|uaen|family\s+book|emirati[sz]ed"
         r"|(?:saudi|emirati|omani|qatari|kuwaiti|bahraini|national)i?[sz]ation)\b",
         re.IGNORECASE,
@@ -392,16 +392,37 @@ _BAR_WORDS: dict[BarKind, re.Pattern[str]] = {
 }
 
 
+#: An equal-opportunity line names nationality to say it does not count
+#: ("without regard to race, religion or national origin") (3.0.1).
+_BAR_EQUAL_OPPORTUNITY = re.compile(
+    r"\b(?:without\s+regard|regardless\s+of|irrespective\s+of|equal\s+opportunit"
+    r"|discriminat)",
+    re.IGNORECASE,
+)
+#: An `other` bar's quote must require something (3.0.1): "Benefits include
+#: individual visa sponsorship" was filed as one and skipped a good role.
+_BAR_REQUIRES = re.compile(
+    r"\b(?:must|required?|requires|requirement|only|eligib\w*|need(?:s|ed)?"
+    r"|necessary|mandatory|essential|have\s+to|open\s+to|restricted|limited"
+    r"|reserved|cannot|unable|not|no)\b|n't\b",
+    re.IGNORECASE,
+)
+
+
 def _bar_supported(bar: HardBar) -> bool:
     """Whether a bar's quote names its own kind (2.5.2).
 
-    Only the kinds in `_BAR_WORDS` are checked; any other kind passes, since
-    its quote has no fixed vocabulary to check against.
+    A nationality or clearance quote must name its kind (`_BAR_WORDS`), an
+    `other` quote must require something (`_BAR_REQUIRES`), and no quote may
+    be an equal-opportunity line (3.0.1). `work_auth` is ignored by `decide`.
     """
+    quote = bar.quote.translate(_TYPO_FOLD)
+    if _BAR_EQUAL_OPPORTUNITY.search(quote):
+        return False
+    if bar.kind is BarKind.other:
+        return _BAR_REQUIRES.search(quote) is not None
     pattern = _BAR_WORDS.get(bar.kind)
-    if pattern is None:
-        return True
-    return pattern.search(bar.quote.translate(_TYPO_FOLD)) is not None
+    return pattern is None or pattern.search(quote) is not None
 
 
 #: A graduation year's quote must say graduation (2.5.7). "2027 Summer
@@ -418,6 +439,16 @@ _GRADUATION_WORD = re.compile(
     r"|complet(?:e|ing)\s+(?:your|the|a|their)\s+"
     r"(?:degree|studies|programme|program|course)"
     r"|degree\s+(?:by|in|before|between|no\s+later))\b",
+    re.IGNORECASE,
+)
+
+
+#: A `student_only` quote about who the role serves, not who may apply
+#: (3.0.1): "student success team", "student services", "student loans".
+_STUDENT_SERVED = re.compile(
+    r"\bstudents?\s+(?:success|services?|support|experience|union|body|life|loans?"
+    r"|finance|accommodation|recruitment|engagement|affairs|wellbeing|records?"
+    r"|journey|outcomes|retention|satisfaction|data|information|systems?)\b",
     re.IGNORECASE,
 )
 
@@ -452,7 +483,8 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
     Likewise a nationality or clearance bar must name its own kind in its
     quote (2.5.2, `_BAR_WORDS`): a verbatim sentence about something else
     proves the quote exists but not the bar, so the bar is dropped like an
-    unverified one.
+    unverified one. 3.0.1: a true `student_only` whose quote is about who the role
+    serves (`_STUDENT_SERVED`) is cleared too.
     """
     title = _normalise(job.title)
     description = _normalise(job.description)
@@ -472,7 +504,9 @@ def verify_facts(facts: PostingFacts, job: Job) -> PostingFacts:
         years = YearsFact(value=None, quote="")
 
     student = facts.student_only
-    if not _verified(student.quote):
+    if not _verified(student.quote) or (
+        student.value is True and _STUDENT_SERVED.search(student.quote)
+    ):
         student = StudentFact(value=None, quote="")
 
     graduation_year = facts.graduation_year
@@ -926,6 +960,29 @@ def _range_bounds(quote: str) -> tuple[int, int] | None:
     return (low, high) if low < high else None
 
 
+#: An age, not experience: "27 years old", "aged 27", "age limit of 27".
+_YEARS_AGE_AFTER = re.compile(
+    r"^\s*(?:years?|yrs?)[\s-]+(?:old|of\s+age)\b", re.IGNORECASE
+)
+_YEARS_AGE_BEFORE = re.compile(r"\bage(?:d|\s+limit)?\b[^\d]{0,10}$", re.IGNORECASE)
+_YEARS_FLOOR = re.compile(r"\bno[t]?\s+(?:less|fewer)\s+than\s*$", re.IGNORECASE)
+
+
+def _years_not_minimum(fact: YearsFact) -> bool:
+    """Whether the model's own quote makes its count a cap or an age (3.0.1):
+    "up to 3 years of professional experience", "27 years old or below"."""
+    m = re.search(rf"(?<![\d.]){fact.value}(?![\d.])", fact.quote)
+    if m is None:
+        return False
+    before = fact.quote[: m.start()]
+    clause = before[max((b.end() for b in _CLAUSE_START.finditer(before)), default=0) :]
+    return bool(
+        (_YEARS_CAP.search(clause) and not _YEARS_FLOOR.search(clause))
+        or _YEARS_AGE_BEFORE.search(clause)
+        or _YEARS_AGE_AFTER.match(fact.quote[m.end() :])
+    )
+
+
 def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
     """Fill a null `years_required` from the advert's own words (2.5.5).
 
@@ -947,11 +1004,16 @@ def resolve_years(facts: PostingFacts, job: Job) -> PostingFacts:
     the same pass, so a later requirement in the advert ("0-2 years ... You
     will also need 3+ years") is found now and not only on a rerun.
 
+    3.0.1: a stated value whose own quote makes it a cap or an age
+    (`_years_not_minimum`) is cleared and read like a null.
+
     Pure and idempotent; never mutates `facts`. Expects `facts` to have been
     through `verify_facts` already.
     """
     stated = facts.years_required
-    if stated.value is not None:
+    if stated.value is not None and _years_not_minimum(stated):
+        facts = facts.model_copy(update={"years_required": YearsFact()})
+    elif stated.value is not None:
         bounds = _range_bounds(stated.quote)
         if bounds is None or bounds[1] != stated.value:
             return facts
@@ -1562,6 +1624,9 @@ def resolve_hard_bars(facts: PostingFacts, job: Job) -> PostingFacts:
 # end of the title or a title segment ("Tech Lead - Payments", "Video Lead",
 # "Data Lead, EMEA"). "Staff Accountant", "Staff Nurse" and "Lead Generation
 # Executive" still match nothing.
+# 3.0.1: up to two words may sit between "lead" and the role word ("Lead
+# Cloud Data Engineer") if capitalised, as in a title, so a quote "lead the
+# data team" is not a level; "Lead Generation Analyst" is still not a lead.
 _LEAD_ROLE_WORDS = r"(?:engineer|developer|scientist|analyst|data|architect|ml|ai)"
 _STAFF_ROLE_WORDS = r"(?:engineer|developer|scientist|analyst|architect)"
 _LEVEL_WORDS: tuple[tuple[Level, re.Pattern[str]], ...] = (
@@ -1580,7 +1645,7 @@ _LEVEL_WORDS: tuple[tuple[Level, re.Pattern[str]], ...] = (
             r"\b(?:principal|director|head\s+of"
             rf"|staff\s+(?:[\w&/-]+\s+){{0,3}}?{_STAFF_ROLE_WORDS}"
             r"|(?:tech|technical|team)\s+lead"
-            rf"|lead\s+{_LEAD_ROLE_WORDS}"
+            rf"|lead\s+(?!gen(?:eration)?\b)(?:(?-i:[A-Z])[\w&/-]*\s+){{0,2}}?{_LEAD_ROLE_WORDS}"
             r"|lead(?=\s*(?:$|[-\u2013\u2014,(|/:])))\b",
             re.IGNORECASE,
         ),
@@ -1799,6 +1864,15 @@ def field_from_text(text: str) -> JobField | None:
     return None
 
 
+#: Title words of an analytic role (3.0.1). The model filed "Marketing Science
+#: Analyst" as `other`, hiding a data role; a title with one of these that
+#: `_FIELD_WORDS` cannot place is unknown, not `other`.
+_ANALYTIC_TITLE = re.compile(
+    r"\b(?:data|analy\w*|scien(?:ce|tists?)|quant\w*|insights?|statistic\w*)\b",
+    re.IGNORECASE,
+)
+
+
 def resolve_field(facts: PostingFacts, job: Job) -> PostingFacts:
     """Settle `field` deterministically, after `verify_facts`.
 
@@ -1814,6 +1888,9 @@ def resolve_field(facts: PostingFacts, job: Job) -> PostingFacts:
        more) names one: derive the field from it.
     4. Otherwise None.
 
+    3.0.1: a model `other` on a title with an analytic word
+    (`_ANALYTIC_TITLE`) is None, before step 2.
+
     Pure and idempotent; never mutates `facts`. Expects `facts` to have been
     through `verify_facts` already, so every quote it reads is verbatim.
     """
@@ -1824,7 +1901,9 @@ def resolve_field(facts: PostingFacts, job: Job) -> PostingFacts:
         model = facts.field
         enough_words = len(model.quote.split()) >= 2
         derived = field_from_text(model.quote) if enough_words else None
-        if model.value is not None and enough_words:
+        if model.value is JobField.other and _ANALYTIC_TITLE.search(job.title):
+            field = FieldFact(value=None, quote="")
+        elif model.value is not None and enough_words:
             field = model
         elif model.value is None and derived is not None:
             field = FieldFact(value=derived, quote=model.quote)

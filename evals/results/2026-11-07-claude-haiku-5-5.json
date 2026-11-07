@@ -1,0 +1,225 @@
+{
+  "date": "2026-11-07T01:37:39+00:00",
+  "backend": "anthropic",
+  "model": "claude-haiku-5-5",
+  "runs": 3,
+  "pass_at_1": 1.0,
+  "pass_hat_3": 1.0,
+  "seconds": 47,
+  "tokens": {
+    "input": 7455,
+    "output": 40720,
+    "cache_read": 307632,
+    "cache_write": 0
+  },
+  "cases": [
+    {
+      "id": "pub-years-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-years-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-years-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-years-04",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-years-05",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-years-06",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-stu-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-stu-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-stu-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-gy-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-gy-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-gy-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-gy-04",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-04",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-bar-05",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-lvl-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-lvl-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-lvl-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-lvl-04",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-fld-01",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-fld-02",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-fld-03",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    },
+    {
+      "id": "pub-fld-04",
+      "passed": 3,
+      "runs": 3,
+      "offline_passes": true,
+      "open_defect": "",
+      "failures": []
+    }
+  ]
+}

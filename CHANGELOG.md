@@ -2,6 +2,18 @@
 
 All notable changes to rolescan. Newest first.
 
+## 3.0.1 (2026-11-07)
+
+### Fixed
+The seven open defects in `evals/cases.json`, each a wrong model answer the code let through. All 26 cases now pass offline; on `claude-haiku-5-5` 26 of 26 passed in each of 3 runs (pass@1 100%, 47 seconds, 40,720 output tokens).
+- `years_required`: a value whose own quote makes it a cap ("up to 3 years of professional experience") or an age ("27 years old or below", "aged 27") is cleared and read from the advert like a null. A "Graduate Analyst" advert allowing up to three years was skipped as needing three.
+- `student_only`: a quote in which "student" names who the role serves ("student success team", "student services") is dropped by the quote check, so a data role in a university was not skipped as student-only.
+- Hard bars: "national origin" is not a nationality word, and a quote from an equal-opportunity line ("without regard to", "regardless of", "equal opportunity") supports no bar, so an equal-opportunity statement no longer blocks a role. An `other` bar's quote must require something ("must", "only", "eligible", "not", ...): "Benefits include individual visa sponsorship" no longer skips a role.
+- Level: up to two words may sit between "lead" and the role word, so "Lead Cloud Data Engineer" is read as lead from the title. The words between must be capitalised, so a quote "lead the data team" is not a level, and "Lead Generation Analyst" still names none.
+- Field: a model `other` on a title with an analytic word ("Marketing Science Analyst") is cleared, as the title reader does not guess `other` from a title it cannot place. A non-analytic title the model files as `other` is unchanged.
+
+The facts key stays `facts-v14`: rows hold the model's raw facts and the resolvers run on every read (ADR-0008), so every fix applies to cached postings with no model call. `tests/test_facts_key_pin.py` is re-pinned for the changed tables.
+
 ## 3.0.0 (2026-11-06)
 
 ### Removed

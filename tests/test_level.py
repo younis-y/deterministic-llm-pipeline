@@ -175,6 +175,9 @@ def test_resolve_level_is_idempotent_and_never_mutates() -> None:
         ("Product Manager", None),
         ("Staff Accountant", None),
         ("Lead Generation Executive", None),
+        ("Lead Generation Analyst", None),
+        ("Lead Cloud Data Engineer", Level.lead_principal),
+        ("You will lead the data team", None),
         ("Headquarters Analyst", None),
     ],
 )
