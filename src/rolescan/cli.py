@@ -220,7 +220,7 @@ def _deliver(
         raise typer.Exit(1) from e
 
 
-#: Shown under `rolescan scan --help`; README.md lists the same codes.
+#: Shown under `rolescan scan --help`; docs/commands.md lists the same codes.
 _SCAN_EXIT_STATUS = (
     "Exit status: 0 ok; 1 email failed, the day's backup failed its check, or "
     "the store was written by a newer rolescan (takes precedence over 3); "

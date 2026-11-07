@@ -117,7 +117,8 @@ def test_no_source_text_names_whose_data_a_measurement_came_from() -> None:
 def test_no_install_hint_names_a_package_that_is_not_published() -> None:
     """`pip install 'rolescan[anthropic]'` told a user to install from an index
     this project is not on. The README's form is from a checkout."""
-    files = [*SRC.rglob("*.py"), ROOT / "README.md", ROOT / "config.example.yaml"]
+    files = [*SRC.rglob("*.py"), *(ROOT / "docs").glob("*.md"), ROOT / "README.md"]
+    files.append(ROOT / "config.example.yaml")
     for path in files:
         text = path.read_text(encoding="utf-8")
         assert not re.search(r"pip install\s+['\"]?rolescan", text), path.name
