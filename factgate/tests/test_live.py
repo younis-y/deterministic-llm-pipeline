@@ -306,3 +306,42 @@ def test_regrade_says_which_cases_it_left_out(tmp_path: Path) -> None:
     out = runner.invoke(app, ["eval", "regrade", str(results / "a.json"), config, str(only_one)])
     assert out.exit_code == 0, out.output
     assert "1 case(s) in the run are not in the case files" in out.output
+
+
+async def test_a_live_eval_can_send_every_attempt_as_one_batch(tmp_path: Path) -> None:
+    from factgate.backends import Answer as BatchAnswer
+
+    class Batching(Backend):
+        name = "batching"
+        batches = True
+
+        def __init__(self) -> None:
+            super().__init__(ModelConfig(name="m"))
+            self.sent: list[list[str]] = []
+
+        async def extract(
+            self, system: str, user: str, model: type[BaseModel], item_id: str
+        ) -> Answer:
+            raise AssertionError("no one-by-one call")
+
+        async def extract_many(
+            self, system: str, users: list[str], model: type[BaseModel], deadline: float
+        ) -> list[Answer | Exception | None]:
+            self.sent.append(users)
+            out: list[Answer | Exception | None] = []
+            for user in users:
+                text = user.split("\n", 1)[1]
+                value = int(text.split()[-1])
+                out.append(BatchAnswer(raw={"amount": {"value": value, "quote": text}}))
+            out[-1] = None  # the last attempt was not answered in time
+            return out
+
+    cases = _cases(tmp_path)
+    cfg = Config.model_validate({**CFG_DATA, "model": {"name": "m", "batch": True}})
+    backend = Batching()
+    run = await live(cases, cfg, backend, repeats=2, label="b", as_of=AS_OF)
+    assert len(backend.sent) == 1 and len(backend.sent[0]) == 2 * len(cases)
+    states = {c.id: c.state for c in run.cases}
+    assert states == {"big": "pass", "small": "pass", "h1": "inconclusive"}
+    last = next(c for c in run.cases if c.id == "h1").attempts[1]
+    assert last.outcome == "inconclusive" and "not answered" in last.error

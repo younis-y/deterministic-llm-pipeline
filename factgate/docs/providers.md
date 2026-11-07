@@ -18,6 +18,7 @@ All backends read the `model:` block of the config:
 | `max_concurrent` | 4 | calls in flight at once |
 | `max_tokens` | 2048 | the longest answer asked for |
 | `temperature` | not sent | sent only when set |
+| `batch` | `false` | send a run as one Message Batch, at half price (anthropic only): see [Batch calls](#batch-calls) |
 
 ## anthropic
 
@@ -39,6 +40,33 @@ is set and the API refuses it, factgate logs that once and stops sending it.
 The live results in the README were recorded with `claude-haiku-5-5`. The
 three examples' 174 calls cost at most USD 0.05. Input token counts include
 the prompt read back from the cache, which bills for less.
+
+### Batch calls
+
+```yaml
+model: {backend: anthropic, name: claude-haiku-5-5, batch: true, max_minutes: 60}
+```
+
+With `batch: true` a run sends its items, and a live eval its attempts, as one
+Message Batch, which bills every token at half the standard price. The first
+prompt goes as an ordinary call that writes the shared prompt to a one-hour
+cache entry, and the batch's requests read it. Requests in a batch run side by
+side, so without that call each would write the prompt itself, and a write
+costs more than the batch saves.
+
+The run waits for the batch, checking every 10 seconds, until `max_minutes`.
+Then it cancels it: what the batch answered is kept, and the rest is deferred
+to the next run (in a live eval, it is inconclusive). A failed check counts as
+"not yet", and a run stopped while it waits cancels its batch. `max_calls`
+still caps how many items are sent.
+
+Checked on 7 November 2026 with `claude-haiku-5-5` on the README's 58 cases,
+3 attempts each. No case moved between pass and fail, and the one case that
+was flaky with direct calls passed every attempt; the comparisons are in each
+example's `results/batch/`. The support and tender batches (42 and 36
+requests) took 6 and 5 minutes, and the invoice batch (96 requests) took 45.
+So set `max_minutes` to as long as you can wait, and batch the runs nobody is
+watching.
 
 ## openai-compatible
 
@@ -128,6 +156,13 @@ mine = "mypkg.backend:MyBackend"
 `extract` raises on failure: the run counts it as an error for that item, and
 three in a row stop the run and defer the rest. It must not check quotes or
 decide anything; the pipeline does both.
+
+A backend that can send many prompts at a lower price sets `batches = True`
+and implements `extract_many(system, users, model, deadline)`. It returns one
+entry per prompt, in order: an `Answer`, the exception that request failed
+with, or `None` when the request was not answered by `deadline` (a
+`time.monotonic()` value). The run defers a `None` and records an exception as
+an error.
 
 ## Writing a reader
 

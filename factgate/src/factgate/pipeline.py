@@ -200,6 +200,38 @@ class _Run:
         self.results[item.id] = _decided(item, facts, decision)
         return True
 
+    async def batch(self, items: list[Item]) -> None:
+        """Every item in one batch, as many as `max_calls` allows. The batch is
+        waited on until `max_minutes`; what it had not answered by then is
+        deferred, as an item past the time limit always is."""
+        limit = self.cfg.model.max_calls
+        for item in items[max(0, limit - self.stats.calls) :]:
+            self.end(item, "deferred", f"call limit reached (max_calls {limit})")
+        sent = items[: max(0, limit - self.stats.calls)]
+        if not sent:
+            return
+        self.stats.calls += len(sent)
+        prompts = [render_user(item) for item in sent]
+        try:
+            answers = await self.backend.extract_many(
+                self.system, prompts, self.model, self.deadline
+            )
+        except Exception as e:
+            for item in sent:
+                self.end(item, "error", f"the batch failed: {type(e).__name__}: {e}")
+            return
+        minutes = self.cfg.model.max_minutes
+        for item, answer in zip(sent, answers, strict=True):
+            if answer is None:
+                self.end(item, "deferred", f"not answered within the time limit ({minutes:g} min)")
+            elif isinstance(answer, Exception):
+                self.end(item, "error", f"{type(answer).__name__}: {answer}")
+            else:
+                self.stats.input_tokens += answer.input_tokens
+                self.stats.output_tokens += answer.output_tokens
+                if self.settle(item, answer.raw) and self.cache is not None:
+                    await self.cache.put(self.key(item), answer.raw)
+
     async def call(self, item: Item) -> None:
         async with self.gate:
             stop = self.stop_reason()
@@ -257,7 +289,10 @@ async def run(
             state.settle(item, raw)
             continue
         pending.append(item)
-    await asyncio.gather(*(state.call(item) for item in pending))
+    if cfg.model.batch and backend.batches:
+        await state.batch(pending)
+    else:
+        await asyncio.gather(*(state.call(item) for item in pending))
 
     ordered = [state.results[item.id] for item in items]
     stats = state.stats
