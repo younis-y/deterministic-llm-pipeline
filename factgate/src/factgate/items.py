@@ -1,0 +1,127 @@
+"""Items: the documents factgate reads, and the readers that load them."""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+import sys
+from collections.abc import Callable, Iterable
+from importlib.metadata import entry_points
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, model_validator
+
+_READERS = ("jsonl", "csv", "folder", "stdin", "plugin")
+_FOLDER_SUFFIXES = {".txt", ".md"}
+
+
+class Item(BaseModel):
+    """One document: an id, one or more named text fields, and pass-through meta.
+
+    Each field is checked separately for quotes, never joined, so a quote
+    cannot splice the end of one field onto the start of the next.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    fields: dict[str, str]
+    meta: dict[str, Any] = {}
+
+    @property
+    def content_hash(self) -> str:
+        blob = json.dumps(self.fields, sort_keys=True, ensure_ascii=True)
+        return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+class ItemsConfig(BaseModel):
+    """Where items come from: exactly one reader, and which keys hold what."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    jsonl: str | None = None
+    csv: str | None = None
+    folder: str | None = None
+    stdin: bool = False
+    #: A `factgate.sources` entry point; it receives this whole config.
+    plugin: str | None = None
+    options: dict[str, Any] = {}
+    id: str = "id"
+    fields: list[str] = ["text"]
+    meta: list[str] = []
+
+    @model_validator(mode="after")
+    def _one_reader(self) -> ItemsConfig:
+        chosen = [r for r in _READERS if getattr(self, r)]
+        if len(chosen) != 1:
+            msg = f"items: give exactly one of {', '.join(_READERS)} (got {chosen or 'none'})"
+            raise ValueError(msg)
+        return self
+
+
+def _from_rows(rows: Iterable[dict[str, Any]], cfg: ItemsConfig) -> list[Item]:
+    items: list[Item] = []
+    seen: set[str] = set()
+    for row in rows:
+        if cfg.id not in row:
+            msg = f"an item has no id field {cfg.id!r}: {str(row)[:80]}"
+            raise ValueError(msg)
+        item_id = str(row[cfg.id])
+        if item_id in seen:
+            msg = f"duplicate item id {item_id!r}"
+            raise ValueError(msg)
+        seen.add(item_id)
+        missing = [f for f in cfg.fields if f not in row]
+        if missing:
+            msg = f"item {item_id!r} has no field {missing[0]!r}"
+            raise ValueError(msg)
+        fields = {f: str(row[f] or "") for f in cfg.fields}
+        meta = {m: row[m] for m in cfg.meta if m in row}
+        items.append(Item(id=item_id, fields=fields, meta=meta))
+    return items
+
+
+def _jsonl(lines: Iterable[str]) -> Iterable[dict[str, Any]]:
+    for n, line in enumerate(lines, 1):
+        if line.strip():
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError as e:
+                msg = f"line {n}: not JSON ({e.msg})"
+                raise ValueError(msg) from e
+
+
+def _folder(path: Path, cfg: ItemsConfig) -> list[Item]:
+    field = cfg.fields[0]
+    return [
+        Item(id=p.stem, fields={field: p.read_text(encoding="utf-8")})
+        for p in sorted(path.iterdir())
+        if p.suffix in _FOLDER_SUFFIXES
+    ]
+
+
+def _plugin(name: str) -> Callable[[ItemsConfig, Path], list[Item]]:
+    found = entry_points(group="factgate.sources", name=name)
+    if not found:
+        msg = f"no factgate.sources plugin named {name!r}"
+        raise ValueError(msg)
+    reader: Callable[[ItemsConfig, Path], list[Item]] = next(iter(found)).load()
+    return reader
+
+
+def read_items(cfg: ItemsConfig, base: Path) -> list[Item]:
+    """Every item the config names; relative paths are read from `base`."""
+    if cfg.jsonl:
+        text = (base / cfg.jsonl).read_text(encoding="utf-8")
+        return _from_rows(_jsonl(text.splitlines()), cfg)
+    if cfg.csv:
+        with (base / cfg.csv).open(newline="", encoding="utf-8") as f:
+            return _from_rows(csv.DictReader(f), cfg)
+    if cfg.folder:
+        return _folder(base / cfg.folder, cfg)
+    if cfg.stdin:
+        return _from_rows(_jsonl(sys.stdin), cfg)
+    assert cfg.plugin is not None  # the validator allows nothing else
+    return _plugin(cfg.plugin)(cfg, base)

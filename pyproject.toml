@@ -159,6 +159,8 @@ ignore_missing_imports = true
 # src-layout: `rolescan` is this project, not a PyPI package it forgot to
 # declare. Without this every intra-package import reads as DEP001.
 known_first_party = ["rolescan"]
+# factgate/ is its own package with its own deptry run.
+extend_exclude = ["factgate"]
 
 [tool.deptry.package_module_name_map]
 pyyaml = ["yaml"]
