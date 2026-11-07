@@ -30,6 +30,10 @@ class Case(BaseModel):
     tags: list[str] = []
     #: A known failure: runs as a strict expected failure until fixed.
     open_defect: str = ""
+    #: The expectation is what the code does with THIS `model_facts` (a
+    #: misread number the quote check clears, say), not the truth about the
+    #: document, so a live model's different answer would grade nothing.
+    offline_only: bool = False
     as_of: dt.date | None = None
     note: str = ""
     #: Shown as id and totals only, so nobody tunes to it.
@@ -79,6 +83,8 @@ def _case(row: Any, where: str, cfg: Config, heldout: bool) -> Case:
         raise ValueError(f"{where}: {e.errors()[0]['msg']}") from e
     for fact, cond in case.expect_facts.items():
         check_condition(cfg, fact, cond, where)
+    if case.offline_only and case.model_facts is None:
+        raise ValueError(f"{where}: an offline_only case needs model_facts")
     for fact in case.model_facts or {}:
         if fact not in cfg.facts:
             raise ValueError(f"{where}: model_facts has unknown fact {fact!r}")

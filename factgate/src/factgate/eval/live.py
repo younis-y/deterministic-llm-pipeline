@@ -61,6 +61,8 @@ class EvalRun(BaseModel):
     tokens: dict[str, int] = {}
     pass_at_1: float = 0.0
     pass_hat_k: float = 0.0
+    #: Offline-only cases a live run left out.
+    offline_only: int = 0
     cases: list[CaseRun]
 
     def unexpected(self) -> list[str]:
@@ -165,8 +167,11 @@ async def live(
     label: str,
     as_of: dt.date,
 ) -> EvalRun:
-    """Every case `repeats` times through the model; no cache."""
+    """Every case `repeats` times through the model; no cache. An
+    offline_only case is left out: its expectation needs its own answer."""
     started = time.monotonic()
+    skipped = sum(c.offline_only for c in cases)
+    cases = [c for c in cases if not c.offline_only]
     grader = _Grader(cfg, as_of)
     system = system_prompt(cfg.facts)
     gate = asyncio.Semaphore(cfg.model.max_concurrent)
@@ -195,6 +200,7 @@ async def live(
             repeats=repeats,
             seconds=round(time.monotonic() - started, 1),
             tokens=tokens,
+            offline_only=skipped,
             cases=runs,
         )
     )

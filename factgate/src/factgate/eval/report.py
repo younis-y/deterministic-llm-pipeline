@@ -49,6 +49,11 @@ def report_markdown(run: EvalRun, cfg: Config) -> str:
         f"pass@1 {run.pass_at_1:.0%}; pass^{run.repeats} {run.pass_hat_k:.0%} "
         f"({passed} of {len(conclusive)} conclusive cases pass every attempt; "
         f"Wilson 95% {lo:.0%}-{hi:.0%}). Inconclusive cases are outside these figures.",
+        *(
+            [f"{run.offline_only} offline-only case(s) not run: they need their own answer."]
+            if run.offline_only
+            else []
+        ),
         "",
         "| Split | Cases | Pass | Fail | Flaky | Inconclusive |",
         "|---|---|---|---|---|---|",

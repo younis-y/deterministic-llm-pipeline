@@ -67,6 +67,10 @@ def test_heldout_files_are_marked(tmp_path: Path) -> None:
         ({"id": "x", "text": "t", "expect": {"outcome": "nope"}}, r"a\.jsonl:1: unknown outcome"),
         ({"id": "x", "text": "t"}, r"a\.jsonl:1: nothing to grade"),
         ({"id": "x", "expect": {"outcome": "ok"}}, r"a\.jsonl:1: no text"),
+        (
+            {"id": "x", "text": "t", "expect": {"outcome": "ok"}, "offline_only": True},
+            r"a\.jsonl:1: an offline_only case needs model_facts",
+        ),
     ],
 )
 def test_bad_cases_name_file_and_line(tmp_path: Path, row: Any, error: str) -> None:

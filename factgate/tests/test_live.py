@@ -93,6 +93,31 @@ async def test_live_states_and_inconclusive(tmp_path: Path) -> None:
     assert run.tokens["output"] == 15
 
 
+async def test_live_leaves_out_offline_only_cases(tmp_path: Path) -> None:
+    """An offline_only case grades what the code does with ITS model answer
+    (a misread number the quote check clears, say): a live model answers
+    differently, so asking it would grade nothing real."""
+    path = tmp_path / "a.jsonl"
+    rows = [
+        {"id": "big", "text": "Total 500", "expect": {"outcome": "review"}},
+        {
+            "id": "misread",
+            "text": "Total 500",
+            "expect": {"facts": {"amount": {"stated": False}}},
+            "model_facts": {"amount": {"value": 5000, "quote": "Total 500"}},
+            "offline_only": True,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows))
+    cases = load_cases([path], CFG)
+    backend = Scripted({"big": [500]})
+    run = await live(cases, CFG, backend, repeats=1, label="l", as_of=AS_OF)
+    assert [c.id for c in run.cases] == ["big"] and backend.calls == 1
+    assert run.offline_only == 1
+    assert "1 offline-only case" in report_markdown(run, CFG)
+    assert [c.id for c in offline_run(cases, CFG, "o", AS_OF).cases] == ["misread"]
+
+
 async def test_the_report_hides_heldout_text(tmp_path: Path) -> None:
     cases = _cases(tmp_path)
     run = await live(
