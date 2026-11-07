@@ -86,7 +86,7 @@ adapter or a new model backend without touching pipeline code, and the pipeline
 holds no knowledge of either. Adding an employer on an already-supported
 platform is a line of config and no code at all.
 
-**The model never makes the decision.** In facts mode (the default) the model
+**The model never makes the decision.** The model
 returns structured facts with quotes; a quote the advert does not contain is
 dropped, resolver passes settle the level, field and years required, and
 `decide` applies your `profile.rules` in plain code. A model that misreads one
@@ -119,283 +119,36 @@ The hard part is not fetching. It is knowing that Octopus Energy's board is
 
 ## How scoring works
 
-**1. Keywords.** Pure Python, no network, no credentials. Described above. You
-can stop here: `--no-llm` still gives a ranked, deduplicated, seen-tracked
-digest.
+Two stages. The first is keywords: weighted terms, tripled when they appear in
+the title, minus `blockers` and a location penalty. A `blockers` term costs
+points; a `hard_blockers` term forces `blocked` whatever the model says, so keep
+that list short. The second, for the postings that pass, is a model
+(`anthropic`, or a local one through `ollama`) asked only what the advert says:
+the level, the minimum years, whether it is open only to students, the earliest
+graduation year it accepts, the field and any hard bar, each with the words it
+read them from. Code drops a fact whose quote is not in the posting and applies
+your `profile.rules` in a fixed order. A fact the advert does not state never
+fires a rule, and the model's 0-100 fit score decides the rest. Facts are
+cached and the rules run on every read, so a rule change costs no model calls.
 
-**Blockers, and which of them are walls.** Two separate fields, because they
-answer different questions:
-
-```yaml
-blockers:            # a severity gradient. Points off the keyword score.
-  security clearance: 60
-  matlab: 15
-hard_blockers:       # structural bars. Nothing you can apply your way past.
-  - security clearance
-  - uae national
-```
-
-`blockers` says what a term *costs*. However heavy, it only moves a posting
-down the ranking, and the LLM can still say apply — until the deduction takes
-it under `min_keyword_score`, at which point it is prefiltered, recorded as
-seen, and gone. That is why the two fields are matched identically rather than
-the weights being matched loosely.
-
-`hard_blockers` says what no application can get past. A term here forces
-`blocked` whatever the model decides, so the posting is pushed to the bottom of
-the digest — or, with `output.show_blocked: false`, removed from it entirely
-and recorded as seen, which means you never see that role again. **That is a
-real deletion, on a term you typed into a YAML file**, so keep the list short
-and specific. Terms in both fields are normalised at load and matched
-case-insensitively on word boundaries (`crypto` does not match
-"cryptographic", `head of` does not match "head office"), a term in both
-lists keeps its weight, and a term in `hard_blockers` alone blocks and costs
-nothing. Whenever
-a posting is deleted this way the digest's stats line says how many, and its
-"Hidden by your rules" section lists the posting with the term that matched,
-so a blocker matching the wrong thing shows up rather than as silence. That
-includes a posting the term's `blockers` weight took under the prefilter; one
-that would have failed the prefilter without the term is not listed, and an
-`excluded_locations` entry, which has no weight, never lists a prefiltered
-posting. It is listed once, on the run that first sees it (an annual
-programme can be listed again after a gap: `output.reopen_programme_days`).
-
-Hardness is deliberately not a weight threshold. A weight is retuned whenever
-you calibrate the prefilter; whether a clearance is a wall is a fact about you
-that changes once a decade. One number could not encode both without one of
-them silently changing the other.
-
-**2. An LLM,** optionally. It scores fit against your profile summary and
-flags hard eligibility bars. Verdicts are cached on a content hash of the
-posting text, so re-running costs nothing for unchanged postings.
-
-The backend is a plugin. `rolescan backends` lists what is registered:
-
-| Name | Needs a key | What it is |
-|---|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` | Claude API. Best quality. Needs ANTHROPIC_API_KEY. |
-| `ollama` | no | Local model via Ollama. Free, offline, no key. See [Measured quality](#measured-quality). |
-
-The tool does not rely on a model to catch structural bars: `hard_blockers` are
-matched in Python before the model is called and force `blocked` whatever it
-says, and `min_report_score` gates the rest. A bar that appears only in the
-posting text, and that no configured term names, is the one a model can miss.
-
-**Facts first, then rules.** The model is not
-asked whether you should apply. It is asked what the advert says: the level,
-the minimum years, whether it is open only to current students, the earliest
-graduation year it accepts, the field, and any hard eligibility bar, each with
-the advert text it read it from. Code checks every quote is really in the
-posting (a fact whose quote is not there is dropped), then applies your
-`profile.rules` in a fixed order:
-
-1. A nationality or security-clearance bar: `blocked`. The bar's own quote
-   must name it - nationality, national(s), citizen(ship), passport,
-   Emirati, Emiratisation and the like for nationality ("right to work" is
-   not one); clearance, cleared, vetting, SC, DV, BPSS, NPPV for clearance -
-   or the bar is dropped like an unverified quote. Any other stated
-   mandatory requirement (a licence, a residency) is a `skip` that quotes it,
-   never a block. A work-authorisation bar the model extracts decides
-   nothing: put the visa wording you cannot get past in `hard_blockers`.
-2. With `max_graduation_year` set, a stated graduation year above it: `skip`.
-   The year is the earliest the advert accepts, so "graduating 2027 or 2028"
-   is 2027 and passes a limit of 2027.
-3. `student_only: skip` and the advert is students-only: `skip`. While
-   `max_graduation_year` is set, this applies only to adverts that state no
-   graduation year: one that states a year within the limit passes, however
-   student-only it is, because the year is the sharper test. An advert that
-   also accepts graduates ("students or recent graduates", "recently
-   completed a degree", "graduated within the last year") is not
-   students-only, whatever the model says: code finds that wording in the
-   title or description and clears the flag, quoting it. Wording with a
-   negation close by ("recent graduates are not eligible") does not count.
-4. The level is not in `allowed_levels`: `skip`. A level word in the title
-   decides the level: graduate, grad, intern, internship, placement,
-   entry-level, trainee, apprentice; junior, jr, assistant; senior, sr,
-   mid-senior; principal, head of, director, "staff" before
-   engineer/scientist/developer, and "lead" before a role word (Lead Data
-   Engineer, not Lead Generation); mid-level, intermediate. Graduate and
-   junior words beat the rest; lead beats senior; senior beats mid.
-   "manager" is not a level word. Otherwise the model's level counts only
-   with a quote of two words or more. With `level_from_title_only: true`,
-   only a level word in the title can fire this rule; a level the model
-   states is ignored, even when its quote is copied from the title (the
-   title "Data Engineer" names no level, so a model answering "mid" from it
-   has guessed).
-5. The stated minimum years exceed `max_years_required`: `skip`.
-6. The field is not in `allowed_fields`: `skip`. Like level, the field is
-   read from the title first (Data Engineer, Data Analyst, ML Engineer,
-   Quantitative Analyst, Product Manager, Consultant and so on; a title is
-   never read as `other`); otherwise the model's field counts only with a
-   quote of two words or more. Data and AI words win over the rest ("Data
-   Science Consultant" is `data_science`), quant and product words beat
-   software words, and software beats a plain "consultant".
-7. Otherwise the model's 0-100 skills/domain score decides.
-
-A fact the advert does not state never fires a rule, so an advert that says
-nothing about level or years is decided on fit alone. Every rule skip names
-the rule and quotes the advert, and the digest lists every posting a rule
-kept out of it under "Hidden by your rules", one line each grouped by rule,
-so a wrong skip shows up rather than vanishing. The `rules` keys and their
-defaults:
-
-| Key | Default | Meaning |
-|---|---|---|
-| `max_years_required` | `null` | Skip a stated minimum above this; `null` disables the check. |
-| `allowed_levels` | `[graduate_entry, junior, mid, not_stated]` | Levels that pass. Also `senior`, `lead_principal`. Keep `not_stated`. |
-| `student_only` | `allow` | `skip` drops roles open only to current students. |
-| `max_graduation_year` | `null` | Skip a stated graduation year above this; `null` is no limit, and a stated year then changes nothing. |
-| `level_from_title_only` | `false` | `true`: only a level word in the job title can skip; a level the model states is ignored. |
-| `allowed_fields` | `null` (any) | From `data_engineering`, `ai_llm`, `data_science`, `analytics_bi`, `quant`, `product`, `software`, `consulting`, `finance`, `other`. |
-
-Since 2.5.7 the digest's stats line also reports a posting a run could not
-get to: "N deferred to the next run", with the reason (over the LLM budget,
-over the digest cap, or no description text yet), or, when `llm.max_minutes`
-ran out, "model time budget of N minutes spent; M postings deferred to the next
-run". A deferred posting is not
-recorded as seen, so it comes round again. A posting with no text is held back
-only `output.thin_unread_after` times (default 3): after that many runs without
-text it is listed once under "Unread (no text after N runs)", with its link,
-and recorded, so a source that never sends descriptions cannot hold it back for
-ever. To bring back a posting a wrong rule or term hid, run `rolescan unsee
-URL` (or its uid); the next scan reports it again. Four keys tune what gets
-hidden. On `profile`: `nationalities` (the demonyms and countries you hold, so
-a nationality bar that names one is not a bar for you; it acts through the
-rules, and does nothing against a `hard_blockers` term), `title_only_blockers` (`blockers` terms such as
-`head of`, `director` or `military` whose weight counts only in the job title,
-not in boilerplate in the body) and `hidden_gate_margin` (how far under
-`min_keyword_score` a reject may fall and still be listed under "Hidden by
-your rules"; default 10, 0 lists none). On `profile.rules`:
-`field_exempt_companies` (employers whose postings pass the field rule
-whatever their field). All four are in `config.example.yaml`.
-
-`llm.facts_examples_file` points at a YAML list of worked examples, each a
-posting excerpt and the facts it should yield:
-
-```yaml
-- title: Data Science Intern
-  company: Example Co
-  description: A ten-week internship for students graduating in 2028.
-  facts:                      # the shape the model returns
-    level: {value: graduate_entry, quote: Data Science Intern}
-    graduation_year: {value: 2028, quote: graduating in 2028}
-    fit_score: 70
-    reason: Python and SQL match.
-```
-
-They are appended to the facts-mode system prompt after its instructions, so
-they sit inside the cached prefix. The path is relative to the config file,
-and every example is validated when the config loads: a bad one stops the run
-and names the example. That includes the quote check every real posting gets:
-each quote must appear in the example's own title or description, a
-graduation year must appear in its quote, a nationality or clearance bar must
-name its kind, and an example must not mark students-only an advert that
-also accepts graduates. No file, no change to the prompt.
-
-With examples, a facts-mode call needs about 8k tokens of context (the
-prompt, the examples and one posting). rolescan asks Ollama for
-`llm.num_ctx` tokens on every call (12,288 by default), checks before the
-scan that the model can hold that many, and treats an answer whose token
-counts show the prompt was cut as an error rather than as facts. Raise
-`llm.num_ctx` if you add many more examples. A model whose own window is
-smaller than `llm.num_ctx` (an 8k one, under the default) is refused: no
-posting is sent to it, the run falls back to keyword scoring and exits 3;
-lower `llm.num_ctx` to its window, or choose a longer one. If your Ollama
-counts only the uncached part of a prompt, every call would look cut: set
-`llm.check_truncation: false`.
-
-Facts are cached as the model gave them, per posting text and per
-fingerprint of everything that decides the answer (the prompt, your summary,
-the examples, the model's digest, `num_ctx`). Verification, the resolvers
-and your rules run on every read, so a rules or resolver change applies to
-cached postings at no model cost, and a prompt or model change asks the
-model again.
-
-`llm.enricher` names a plugin registered under the `rolescan.enrichers`
-entry-point group that does extra work only for postings that clear
-`min_report_score`; a failing enricher keeps the plain verdict.
-`llm.extra_prompt` is never sent to the scoring call (an enricher may use it),
-and rolescan logs a note at startup when it is set with no enricher configured.
-
-With `llm.enabled: false`, or with no key and no local model, you get stage one
-alone. If a configured backend fails, the digest says so rather than quietly
-serving keyword scores that look like a normal run. There is a test that
-asserts exactly this.
+[docs/scoring.md](docs/scoring.md) has the rule order, the `profile.rules` keys,
+worked examples, the local model's context window and the cache.
 
 ## What gets hidden, and where to look
 
-rolescan leaves postings out of your digest, and it reports most of what it
-leaves out. Where to look for each kind:
+rolescan reports most of what it leaves out of your digest. The stats line
+counts what a threshold dropped. A "Hidden by your rules" section lists each
+posting a rule skipped or a weighted term pushed under the gate, with the
+advert's own words, so a rule that matches the wrong thing shows up rather than
+staying silent. A `hard_blockers` or `excluded_locations` match stays at the
+bottom of the digest, marked BLOCKED, unless `output.show_blocked: false` moves
+it into that section.
 
-| Why a posting is not in your digest | Where to look |
-|---|---|
-| Its keyword score was under `min_keyword_score`, so no model saw it | The stats line counts it ("N filtered before scoring"). It is not listed. To see more, lower the number and re-assess (see below). |
-| Its score was under `min_report_score` | The stats line counts it ("N below min_report_score"). It is not listed. Lower the number and re-assess (see below). |
-| A `profile.rules` rule skipped it, or the advert states a nationality or clearance bar | **Hidden by your rules**, one line each: the rule, and the advert's own words. |
-| A `hard_blockers` term or an `excluded_locations` entry matched | Shown at the bottom, marked BLOCKED, while `output.show_blocked` is `true` (the default). With `false` it is removed and listed under **Hidden by your rules**, and the stats line says "N blocked and hidden". |
-| Weighted `blockers` pushed it under the keyword gate, or it fell within `profile.hidden_gate_margin` of the gate | **Hidden by your rules**, under "Your weighted terms" or "Just under your keyword gate". |
-| It is waiting its turn (model budget, digest cap, no text yet) | "N deferred to the next run" in the stats line. A deferred posting is not recorded as seen, so it comes round again. |
-
-The **Hidden by your rules** section appears only when something was hidden, and
-the stats line then says "N hidden by your rules (listed below)". It is how you
-catch a rule or a term that matches the wrong thing. Each group heading carries
-its count. It looks like this:
-
-```markdown
-## Hidden by your rules
-
-Skipped or blocked by one of your rules, so not listed above. One line each, so a wrong skip can be spotted.
-
-**Years of experience** (1)
-
-- **Example Co** · [Senior Data Engineer](https://example.test/jobs/12) · London: advert asks for "5+ years"
-
-**Your blocking terms (hard_blockers, excluded_locations)** (1)
-
-- **Example Plc** · [Data Analyst](https://example.test/jobs/31) · Leeds: blocked by "security clearance"
-```
-
-**At volume, the section is capped and the alarms come first.** The digest lists
-at most `output.hidden_max` hidden postings (60 by default), the highest-scoring
-first, since a hide with a high score is the likeliest wrong one. Every rule's
-count is still shown. When the cap cuts the list, the whole of it is written to
-`<digest name>-hidden.md` beside the digest, the digest names that file, and the
-stats line reads "N hidden by your rules (M listed below, all N in the file)".
-Gmail clips an email past about 102 KB, so the digest opens with what needs
-attention (a source that failed, went quiet, shrank or was cut short, a model that
-did not run or whose rates jumped), then the roles, then this section. The roles
-get the email's room first: if an email holds more role cards than fit, the later
-ones become one line each, and the digest on disk keeps them all. This section
-gets what the roles leave, so a high `hidden_max` never pushes a role out; the
-email always keeps its heading, every rule's count and where the rest is, and as
-many rows as fit, which the section says when it is fewer than the cap.
-
-**Re-assessing needs more than `--dry`.** Every posting a real scan assessed is
-recorded as seen, the ones under a threshold included, and a `--dry` run drops
-seen postings like any other. So after a real scan, lowering a threshold and
-re-running `--dry` finds nothing new. Either run `rolescan unsee URL` for a
-posting you know of, or tune against a scratch store: point `output.db_path` at a
-new file (and `output.dir` if you like), run `--dry` as often as you want, then
-point it back.
-
-**A hidden posting is listed once.** Everything a scan assesses is recorded as
-seen, hidden postings included, and is not reported again; a `--dry` run records
-nothing, so it lists them every time. The one exception is a yearly programme:
-a posting whose title names one ("Summer Internship", "Graduate Programme",
-"Off-Cycle Internship", "Insight Week") has the same identity every year, so a
-board that opens it again would never be heard from twice. Each scan refreshes
-`last_seen` on the postings it finds already seen, so a posting no scan has found
-for `output.reopen_programme_days` days (120; `0` turns this off) counts as new:
-it is scored and listed again, under "Returning: listed again after N days off
-the board", and its row takes a fresh `first_seen`. A posting a board lists on
-every scan never comes back, nor does one whose title is not a programme, and
-your shortlist, applied and dismissed marks are left as they were: a role you
-dismissed last year still returns under that line. Read the section on the day you scan: the
-digest is also saved under `digests/`, and `rolescan show` reprints the latest
-one. If a rule or term was wrong, fix it in `config.yaml`, then
-`rolescan unsee URL` (the URL as the digest prints it) so the next scan reports
-that posting again. Deleting `seen.db` re-assesses everything, but it also
-clears your shortlist, applied and dismissed marks.
+After a real scan, a `--dry` re-run finds nothing new, because it drops seen
+postings too. Run `rolescan unsee URL` for one posting, or tune against a
+scratch `output.db_path`. [docs/hidden.md](docs/hidden.md) has where to look for
+each kind of hidden posting, the section's cap and when a posting is listed
+again.
 
 ## What you must supply
 
@@ -430,34 +183,10 @@ run.
 
 `rolescan backends` lists what is registered and which backends need a key.
 
-What keeps a model's cost down:
-
-- Only postings that clear the keyword prefilter reach a model.
-- A verdict is cached for `llm.cache_days` (30), so an unchanged posting is not
-  paid for twice.
-- `llm.max_calls_per_run` (60) is a hard ceiling per scan. Postings past it are
-  deferred to the next run, not dropped.
-- `llm.max_minutes` (0, no limit) is a wall-clock budget for the model, counted
-  from the scan's first model call. On a local model one call takes 10 to 40
-  seconds, so a call count says little about how long a scan runs. When the
-  budget is spent no new call starts, calls already running finish, and the
-  postings not yet scored are deferred to the next run exactly as the call
-  ceiling defers them: kept out of `seen`, so they come round again. The stats
-  line says which limit stopped the run: "model time budget of 10 minutes
-  spent; 12 postings deferred to the next run", or "(N over the LLM budget)"
-  for the call count. Whichever was reached first is the one named.
-- `llm.batch` (off) sends facts-mode calls on the `anthropic` backend through
-  the Message Batches API, which bills every token at half the standard price.
-  The scan waits for the batch to end, usually within the hour, so it suits a
-  scan nobody is watching. One direct call goes first and writes the shared
-  prompt to a one-hour cache entry, so the batch reads it instead of writing
-  it. If the batch has not ended after `llm.batch_max_minutes` (120) it is
-  cancelled: what it answered is kept, and the rest are scored on the next
-  run.
-- A call sends the fixed instructions, your `profile.summary`, any worked
-  examples, and one posting's title, company, location, date and the first
-  `llm.description_chars` characters of its description (6,000 by default): a
-  few thousand tokens in, a few hundred out.
+Only postings that pass the prefilter reach a model, a cached answer is not
+paid for twice, and `llm.max_calls_per_run` and `llm.max_minutes` cap each
+scan. [docs/models.md](docs/models.md) has those limits, batch calls at half
+price, what a call sends and the model-health check.
 
 One cost has been measured. With `claude-haiku-4-5` in facts mode, two
 evaluation runs of 97 postings each, on 8 October 2026, cost USD 0.29 and
@@ -470,57 +199,15 @@ unreachable, a context window too small), the scan says so at the top of its
 output and in the digest, ranks on keywords instead, and exits 3. It does not
 pretend.
 
-**Model health.** In facts mode the quote guard drops what a posting does not
-say, and code passes then set the level and the field, fill the years required
-and add a hard bar the model missed. A lot of what reaches the digest is that
-correction, so each scan that used a model keeps one row of counts (`llm_runs`
-in `seen.db`: calls, cache hits, errors, and how many postings the guard or a
-pass changed) and compares them with the median of the last three to five runs
-(as many as exist) of the same backend and model. When a rate is more than twice
-that median, over at least five postings, the digest's "Needs attention" block
-adds a "Model health" line: the model, its prompt or a pass may have changed. It
-says nothing until three earlier runs exist, and a `--dry` run compares but keeps
-nothing.
-
 ## Privacy and storage
 
-- **What leaves your machine.** Only with `llm.backend: anthropic`: your
-  `profile.summary`, the optional `llm.facts_examples_file`, and for each
-  posting that passes the prefilter its title, company, location, date and the
-  first `llm.description_chars` characters of its description. `profile.name` is
-  not sent. With `ollama` and with keyword-only scoring, nothing is sent to a
-  model provider. The sources are fetched over HTTPS from the employers' own
-  public endpoints.
-- **Where keys go.** Environment variables: `ANTHROPIC_API_KEY`,
-  `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, `REED_API_KEY`, `JOOBLE_API_KEY`,
-  `ROLESCAN_SMTP_PASS`. You can instead write `llm.api_key`,
-  `output.email.password`, an Adzuna `app_id` and `app_key`, or a Reed or
-  Jooble `api_key` in `config.yaml`; that file is gitignored, so keep it out of version control and
-  out of any backup you share. rolescan does not read a `.env` file: export the
-  variable in your shell or scheduler.
-- **What is stored.** `seen.db` (SQLite, next to `config.yaml` unless
-  `output.db_path` says otherwise) holds every posting a scan assessed (URL,
-  title, company, location, source), cached model answers, cached posting pages
-  from sitemap sources, per-source counts, where each incremental source left
-  off (`source_marks`), per-run model counts (`llm_runs`, no posting text), and
-  your `mark` decisions.
-  `digests/` holds each scan's digest, and `backups/` beside the store holds
-  daily copies of it (`output.backup_keep`). All of it describes your job
-  search, so treat it as private; `seen.db`, `digests/` and `config.yaml` are
-  gitignored by default. Delete them to forget everything.
-  `output.retention_days` trims the caches, never `seen` or your marks.
-- **Email.** If enabled, the digest is sent over SMTP with the host and
-  credentials you give: STARTTLS on port 587 by default, implicit TLS on 465.
-  The server's certificate must verify against your system's trusted
-  authorities, on both; a relay with a self-signed certificate is refused.
-- **What rolescan requests.** Public job-board JSON endpoints and the public
-  sitemap and job pages you list, with the User-Agent
-  `rolescan/<version> (+<http.contact_url>)`. No logins, no cookies, nothing
-  behind a form. `http.max_concurrent` and a per-source `delay` pace the
-  requests. `robots.txt` is read in one place: a `structured` source asks the
-  host for its `Crawl-delay` and keeps `delay` at least that long. The core does
-  not check any `Disallow` rule, for any source, so add only sites whose terms
-  let you read them this way, and keep `delay` generous.
+Only with `llm.backend: anthropic` does anything go to a model provider: your
+`profile.summary`, any worked examples, and the title, company, location, date
+and the start of the description of each posting that passes the prefilter.
+What rolescan keeps (`seen.db`, `digests/`, `backups/`) is local and describes
+your job search, so treat it as private. It reads public endpoints only, with
+no logins or cookies. [docs/privacy.md](docs/privacy.md) has where keys go, what
+is stored, how email is sent and what rolescan requests.
 
 ## Measured quality
 
@@ -582,60 +269,9 @@ rolescan backup       copy the store to backups/ and check the copy
 rolescan prune        trim old caches (output.retention_days); never seen or applications
 ```
 
-`mark` takes one of three states. `shortlist` keeps a posting in the digest's
-**Shortlist** section, which is repeated under the new roles on every run so an
-open application stays in front of you rather than scrolling away with
-yesterday's email. `applied` clears it from that section. `dismissed` clears it
-too, and additionally stops the posting ever being reported again, however many
-boards go on listing it. Every shortlist row in the digest carries the exact
-`mark` command to clear it, with the config path already filled in.
-
-`scan --dry` marks nothing seen and writes `digest-dry.md`, leaving `latest.md`
-as the last real run's digest. `unsee` takes a posting's URL (as the digest
-prints it) or its uid and removes it from the seen list, so the next scan can
-report it again.
-
-`rolescan scan` tells a scheduler how the run went. Exit status: 0 ok; 1
-email failed, the day's backup failed its check, or the store was written by
-a newer rolescan (takes precedence over 3); 2 config error, or
-http.bind_interface names an interface with no IPv4 address; 3 LLM scoring
-failed as a whole (after the digest was written and sent); 4 another run
-holds the store's lock. The digest says why. The store gets a checked copy in
-`backups/` beside it once a day (`output.backup_keep`, default 7), and its
-caches are trimmed after each real scan (`output.retention_days`).
-
-If the digest is written but the email times out, a VPN may be blocking the mail
-ports: set `output.email.bind_interface` to the interface that reaches the
-internet directly (for example `en0`) and the mail socket binds to that
-interface's address, looked up at every send (port 465 uses implicit TLS, any
-other port STARTTLS).
-
-The same VPN's exit address can be the thing a job site refuses, while the site
-answers the same request from your own network. Set `http.bind_interface` to the
-interface that reaches the internet directly (for example `en0`) and the
-job-fetching connections leave from that interface's IPv4 address, read once
-when a scan or `discover` starts. An interface with no IPv4 address stops the
-run before any request, with exit status 2. The model backends are never bound,
-so a model on localhost still answers. A site reachable over IPv6 only cannot be
-reached from an IPv4 address, and `HTTP_PROXY` and `HTTPS_PROXY` are not used
-while the setting is on.
-
-`discover` distinguishes five outcomes on purpose. `EMPTY` means a real board
-with no openings; `UNKNOWN` means an API that cannot tell an empty board from a
-wrong slug. Collapsing those into a single "OK" hides which of them actually returned postings.
-
-## Finding slugs
-
-`rolescan slugs` searches a harvested ATS directory you download yourself. It
-matches on `difflib.SequenceMatcher` with a length-aware cap and a directional
-containment bonus, because absolute name length rather than length ratio is
-what separates `octoenergy` from `octopusenergy` without also collapsing `vitl`
-into `vitol`.
-
-The dataset has no SmartRecruiters file and covers no bespoke platforms, so
-expect to resolve some employers by hand: open the careers page, follow where it
-redirects, and read the ATS and slug out of the final URL. `discover` then
-confirms or refutes it.
+[docs/commands.md](docs/commands.md) covers `mark`'s three states, the exit
+statuses a scheduler sees, the settings for a VPN that blocks mail or job
+sites, `discover`'s five outcomes, and finding slugs.
 
 ## Scope
 

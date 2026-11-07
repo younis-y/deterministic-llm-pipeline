@@ -75,13 +75,15 @@ def test_help_lists_every_command() -> None:
         assert command in plain(result.output)
 
 
-def test_scan_help_and_the_readme_name_the_same_exit_statuses() -> None:
+def test_scan_help_and_the_docs_name_the_same_exit_statuses() -> None:
     result = runner.invoke(app, ["scan", "--help"])
     assert result.exit_code == 0
     sentence = " ".join(_SCAN_EXIT_STATUS.split())
     assert sentence in " ".join(plain(result.output).split())
-    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
-    assert sentence in " ".join(readme.split())
+    commands = (Path(__file__).parents[1] / "docs" / "commands.md").read_text(
+        encoding="utf-8"
+    )
+    assert sentence in " ".join(commands.split())
 
 
 def test_missing_config_exits_cleanly(tmp_path: Path) -> None:

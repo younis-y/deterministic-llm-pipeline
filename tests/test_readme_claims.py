@@ -17,12 +17,23 @@ from rolescan.cli import app
 
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+#: The README's reference sections, moved into docs/. The README links each one,
+#: and the claims tested here hold wherever the text lives.
+MOVED = ("scoring.md", "hidden.md", "models.md", "privacy.md", "commands.md")
+DOCS = {name: (ROOT / "docs" / name).read_text(encoding="utf-8") for name in MOVED}
+PROSE = {"README.md": README, **{f"docs/{name}": text for name, text in DOCS.items()}}
 
 
 def test_the_readme_hard_codes_no_test_count() -> None:
-    assert not re.search(r"\b\d[\d,]*\s+tests\b", README), (
-        "say 'over a thousand tests', not a number that goes stale"
-    )
+    for name, text in PROSE.items():
+        assert not re.search(r"\b\d[\d,]*\s+tests\b", text), (
+            f"{name}: say 'over a thousand tests', not a number that goes stale"
+        )
+
+
+def test_the_readme_links_every_moved_section() -> None:
+    for name in MOVED:
+        assert f"](docs/{name})" in README, name
 
 
 def test_the_prefilter_run_is_stated_once_with_the_right_ratio() -> None:
@@ -49,10 +60,11 @@ def test_the_eval_figures_match_the_cases_and_the_recorded_run() -> None:
 
 
 def test_the_readme_claims_no_unrecorded_model_run() -> None:
-    lowered = README.lower()
-    assert "have now run against a live server" not in lowered
-    assert "anthropic backend scored" not in lowered
-    assert "has since been revoked" not in lowered
+    for text in PROSE.values():
+        lowered = text.lower()
+        assert "have now run against a live server" not in lowered
+        assert "anthropic backend scored" not in lowered
+        assert "has since been revoked" not in lowered
 
 
 @pytest.mark.parametrize(
@@ -77,7 +89,11 @@ def test_the_readme_points_at_the_generated_config_reference() -> None:
 def test_every_command_the_readme_shows_exists() -> None:
     """`rolescan cvs` stayed in the command list for four releases after the
     command was removed."""
-    blocks = "\n".join(re.findall(r"```[^\n]*\n(.*?)```", README, re.DOTALL))
+    blocks = "\n".join(
+        block
+        for text in PROSE.values()
+        for block in re.findall(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
+    )
     shown = set(re.findall(r"^rolescan (\w+)", blocks, re.MULTILINE))
     assert {"scan", "discover", "mark"} <= shown, "the pattern found too little"
     for command in sorted(shown):
@@ -91,7 +107,7 @@ def test_no_doc_still_offers_judge_mode() -> None:
     from rolescan.config import LLMConfig
 
     sources = {
-        "README.md": README,
+        **PROSE,
         "config.example.yaml": (ROOT / "config.example.yaml").read_text(),
         "docs/config.md": (ROOT / "docs" / "config.md").read_text(),
         "LLMConfig.mode": LLMConfig.model_fields["mode"].description or "",
@@ -107,7 +123,7 @@ def test_the_hidden_table_names_the_stats_clause_for_the_final_gate() -> None:
     the number the stats line gives."""
     row = next(
         line
-        for line in README.splitlines()
+        for line in DOCS["hidden.md"].splitlines()
         if line.startswith("| Its score was under `min_report_score`")
     )
     assert "N below min_report_score" in row
@@ -117,7 +133,9 @@ def test_no_row_advises_a_bare_dry_rerun_as_the_way_to_see_more() -> None:
     """A `--dry` re-run still drops every posting an earlier real scan
     recorded as seen, so "re-run with `--dry` and a lower number" finds
     nothing new after a real scan. The README says how to re-assess."""
-    assert "Re-run with `--dry` and a lower number" not in README
+    assert all(
+        "Re-run with `--dry` and a lower number" not in t for t in PROSE.values()
+    )
     assert "still drops postings" in README
     section = README[README.index("## What gets hidden, and where to look") :]
     section = section[: section.index("\n## What you must supply")]
@@ -125,15 +143,16 @@ def test_no_row_advises_a_bare_dry_rerun_as_the_way_to_see_more() -> None:
     assert "output.db_path" in section
 
 
-def test_the_readme_and_the_example_config_document_the_hidden_cap() -> None:
-    assert "output.hidden_max" in README
-    assert "-hidden.md" in README
+def test_the_docs_and_the_example_config_document_the_hidden_cap() -> None:
+    assert "output.hidden_max" in DOCS["hidden.md"]
+    assert "-hidden.md" in DOCS["hidden.md"]
     example = (ROOT / "config.example.yaml").read_text(encoding="utf-8")
     assert "hidden_max" in example
 
 
-def test_the_readme_says_the_mail_servers_certificate_must_verify() -> None:
-    section = README[README.index("- **Email.**") :]
+def test_the_privacy_doc_says_the_mail_servers_certificate_must_verify() -> None:
+    privacy = DOCS["privacy.md"]
+    section = privacy[privacy.index("- **Email.**") :]
     assert "certificate must verify" in section.split("- **What rolescan")[0]
 
 
