@@ -145,9 +145,14 @@ def _finish_run(run: EvalRun) -> EvalRun:
 
 
 def offline_run(cases: list[Case], cfg: Config, label: str, as_of: dt.date) -> EvalRun:
-    """One attempt per case, the case's `model_facts` standing in for the model."""
+    """One attempt per case, the case's `model_facts` standing in for the model.
+
+    A case with no `model_facts` (a held-out one, say) runs live only.
+    """
     grader = _Grader(cfg, as_of)
-    runs = [_case_run(c, [grader.attempt(c, c.model_facts or {})]) for c in cases]
+    runs = [
+        _case_run(c, [grader.attempt(c, c.model_facts)]) for c in cases if c.model_facts is not None
+    ]
     return _finish_run(EvalRun(label=label, mode="offline", cases=runs))
 
 

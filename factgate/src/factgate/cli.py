@@ -166,6 +166,9 @@ def eval_run(
         _save(run, cfg, results)
         return
     run = offline_run(loaded, cfg, label or "offline", today)
+    live_only = len(loaded) - len(run.cases)
+    if live_only:
+        typer.echo(f"{live_only} case(s) have no model_facts: they run with --live only")
     _save(run, cfg, results)
     problems = run.unexpected()
     if problems:

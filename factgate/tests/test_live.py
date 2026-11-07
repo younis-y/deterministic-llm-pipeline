@@ -158,12 +158,20 @@ def test_offline_run_marks_open_defects(tmp_path: Path) -> None:
                 "text": "Total 500",
                 "open_defect": "known",
                 "expect": {"outcome": "review"},
+                "model_facts": {},
             }
         )
     )
     run = offline_run(load_cases([path], CFG), CFG, "ci", AS_OF)
     assert run.cases[0].state == "fail" and run.cases[0].open_defect == "known"
     assert run.unexpected() == []
+
+
+def test_offline_leaves_out_cases_with_no_model_answer(tmp_path: Path) -> None:
+    """A case with no `model_facts` (a held-out one, say) has nothing to feed
+    the code offline: it runs live only, and never fails CI for it."""
+    run = offline_run(_cases(tmp_path), CFG, "ci", AS_OF)
+    assert run.cases == [] and run.unexpected() == []
 
 
 def test_readme_matches_names_missing_figures(tmp_path: Path) -> None:

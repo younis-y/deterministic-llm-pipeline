@@ -7,7 +7,8 @@
         assert_case(bound)
 
 A case with `open_defect` runs as a strict expected failure, so fixing it
-fails the suite until the mark is removed, and the fix is then held.
+fails the suite until the mark is removed, and the fix is then held. A case
+with no `model_facts` runs live only and is left out.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ def case_params(config: str | Path, *paths: str | Path) -> list[Any]:
             marks=[pytest.mark.xfail(strict=True, reason=c.open_defect)] if c.open_defect else [],
         )
         for c in cases
+        if c.model_facts is not None
     ]
 
 
