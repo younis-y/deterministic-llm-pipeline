@@ -1,6 +1,6 @@
 [project]
 name = "factgate"
-version = "0.1.0"
+version = "0.2.0"
 description = "Quoted facts from any text, decided by rules you write: the model reports, code decides"
 readme = "README.md"
 requires-python = ">=3.11"
