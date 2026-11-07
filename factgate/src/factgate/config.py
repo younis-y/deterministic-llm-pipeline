@@ -100,7 +100,7 @@ def check_condition(cfg: Config, fact: str, cond: Condition, where: str) -> None
             raise ValueError(f"{where}: unknown operator {op!r}")
         listed = spec.type == "list" and op in {"contains", "stated"}
         if not listed and op not in ALLOWED[spec.scalar]:
-            raise ValueError(f"{where}: {op!r} does not apply to a {spec.scalar} fact")
+            raise ValueError(f"{where}: {op!r} does not apply to {spec.scalar} facts")
         problem = _argument_problem(spec, op, arg)
         if problem:
             raise ValueError(f"{where}: {op!r} on {fact!r} {problem} (got {arg!r})")

@@ -43,7 +43,7 @@ def test_a_good_config_loads_with_its_folder(tmp_path: Path) -> None:
         ("when: {amount: {gt: 10}}", None),
         ("when: {nope: {gt: 10}}", "rule 'big': unknown fact 'nope'"),
         ("when: {amount: {bigger: 10}}", "rule 'big': unknown operator 'bigger'"),
-        ("when: {note: {gt: 10}}", "rule 'big': 'gt' does not apply to a text fact"),
+        ("when: {note: {gt: 10}}", "rule 'big': 'gt' does not apply to text facts"),
         ("when: {amount: {within_days: 3}}", "rule 'big': 'within_days' does not apply"),
         ("when: {note: {matches: '(unclosed'}}", "rule 'big': 'matches' on 'note' is a bad regex"),
         ("when: {}", "rule 'big': `when` is empty"),

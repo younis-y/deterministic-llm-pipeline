@@ -83,7 +83,10 @@ def run_cmd(
     items = or_exit(config, lambda: read_items(cfg.items, cfg.base))
     if dry:
         sending = [i for i in items if prefilter_reason(i, cfg.prefilter) is None]
-        typer.echo(f"{len(items)} items; would send {len(sending)} (cache permitting)")
+        typer.echo(
+            f"{len(items)} items; {len(sending)} pass the prefilter: would send {len(sending)}, "
+            "less any already answered in the cache. No model called."
+        )
         return
     resolvers = or_exit(config, lambda: load_resolvers(cfg.resolvers, cfg.base))
     backend = get_backend(cfg.model, replay)
@@ -215,5 +218,12 @@ def eval_regrade(
     run's own date unless --as-of says otherwise: no model calls."""
     cfg = config_or_exit(config)
     run = EvalRun.model_validate_json(run_file.read_text(encoding="utf-8"))
-    again = regrade(run, _cases(cfg, cases, heldout), cfg, as_of_date(as_of or run.as_of or None))
+    loaded = _cases(cfg, cases, heldout)
+    left_out = {c.id for c in run.cases} - {c.id for c in loaded}
+    if left_out:
+        typer.echo(
+            f"{len(left_out)} case(s) in the run are not in the case files (pass --heldout "
+            f"for held-out ones), so they are left out: {', '.join(sorted(left_out))}"
+        )
+    again = regrade(run, loaded, cfg, as_of_date(as_of or run.as_of or None))
     _save(again, cfg, results or run_file.parent)

@@ -13,7 +13,7 @@ import pytest
 from factgate.backends import ReplayBackend
 from factgate.config import load_config
 from factgate.eval.cases import load_cases
-from factgate.eval.live import EvalRun, offline_run
+from factgate.eval.live import EvalRun, offline_run, wilson
 from factgate.eval.report import readme_matches
 from factgate.items import read_items
 from factgate.pipeline import load_resolvers, run
@@ -56,26 +56,53 @@ def test_the_heldout_invoices_are_what_the_oracle_writes() -> None:
     assert spec is not None and spec.loader is not None
     oracle = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(oracle)
-    written, _ = oracle.cases()
+    written = oracle.cases()
     on_disk = (EXAMPLES / "invoices" / "heldout.jsonl").read_text(encoding="utf-8")
     assert [json.loads(line) for line in on_disk.splitlines()] == written
 
 
-@pytest.mark.parametrize("name", NAMES)
-def test_the_readme_quotes_the_latest_live_run(name: str) -> None:
+def _latest_live(name: str) -> EvalRun:
     runs = [_load(p) for p in (EXAMPLES / name / "results").glob("*.json")]
     live = [r for r in runs if r.mode == "live"]
     assert live, f"no live run recorded for {name}"
-    latest = max(live, key=lambda r: r.date)
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert readme_matches(readme, latest) == []
-    [row] = [line for line in readme.splitlines() if f"(examples/{name})" in line]
-    assert f"pass@1 {latest.pass_at_1:.0%}" in row, row
-    assert f"| {len(latest.cases)} (" in row, row
+    return max(live, key=lambda r: r.date)
+
+
+def measured_row(name: str) -> str:
+    """The figures the README's Measured table must show for `name`, cell by cell."""
+    run = _latest_live(name)
     cfg = load_config(EXAMPLES / name / "config.yaml")
     offline = offline_run(load_cases([EXAMPLES / name / "cases.jsonl"], cfg), cfg, "ci", AS_OF)
+    held = sum(c.heldout for c in run.cases)
+    conclusive = [c for c in run.cases if c.state != "inconclusive"]
+    lo, hi = wilson(sum(c.state == "pass" for c in conclusive), len(conclusive))
     passing = sum(c.state == "pass" for c in offline.cases)
-    assert f"{passing} of {len(offline.cases)} pass" in row, row
+    defects = sum(bool(c.open_defect) for c in offline.cases)
+    offline_cell = f"{passing} of {len(offline.cases)} pass" + (
+        f", {defects} open defect" if defects else ""
+    )
+    return (
+        f"| {len(run.cases)} ({len(run.cases) - held} + {held}) "
+        f"| pass@1 {run.pass_at_1:.0%}, pass^{run.repeats} {run.pass_hat_k:.0%}, "
+        f"Wilson 95% {lo:.0%}-{hi:.0%} | {offline_cell} |"
+    )
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_the_readme_row_is_the_latest_live_run(name: str) -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert readme_matches(readme, _latest_live(name)) == []
+    [row] = [line for line in readme.splitlines() if f"(examples/{name})" in line]
+    assert row.endswith(measured_row(name)), f"{row}\nshould end {measured_row(name)}"
+
+
+def test_the_readme_totals_are_the_latest_live_runs() -> None:
+    runs = [_latest_live(name) for name in NAMES]
+    calls = sum(len(a) for r in runs for c in r.cases for a in [c.attempts])
+    seconds = round(sum(r.seconds for r in runs))
+    tokens = sum(r.tokens.get("output", 0) for r in runs)
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    assert f"The {calls} live calls took {seconds} seconds and {tokens:,} output tokens" in readme
 
 
 def _load(path: Path) -> EvalRun:

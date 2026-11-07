@@ -292,3 +292,17 @@ def test_cli_refuses_zero_repeats(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code == 2
+
+
+def test_regrade_says_which_cases_it_left_out(tmp_path: Path) -> None:
+    runner = CliRunner()
+    folder = tmp_path / "s"
+    runner.invoke(app, ["init", str(folder)])
+    results = tmp_path / "results"
+    config, cases = str(folder / "config.yaml"), str(folder / "cases.jsonl")
+    runner.invoke(app, ["eval", "run", config, cases, "--results", str(results), "--label", "a"])
+    only_one = tmp_path / "one.jsonl"
+    only_one.write_text((folder / "cases.jsonl").read_text().splitlines()[0] + "\n")
+    out = runner.invoke(app, ["eval", "regrade", str(results / "a.json"), config, str(only_one)])
+    assert out.exit_code == 0, out.output
+    assert "1 case(s) in the run are not in the case files" in out.output
