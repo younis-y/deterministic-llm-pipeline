@@ -1,0 +1,3 @@
+{"id": "e1", "raw": {"order_number": {"value": "4471", "quote": "Order 4471"}, "refund_requested": {"value": true, "quote": "would like a refund"}, "amount": {"value": 34.99, "quote": "I paid £34.99"}}}
+{"id": "e2", "raw": {"order_number": {"value": "5120", "quote": "order 5120"}, "refund_requested": {"value": true, "quote": "I want my money back"}, "amount": {"value": 649, "quote": "I paid £649"}}}
+{"id": "e3", "raw": {"order_number": {"value": "6002", "quote": "order 6002"}, "refund_requested": {"value": false, "quote": "when will order 6002 arrive"}, "amount": {"value": null, "quote": ""}}}

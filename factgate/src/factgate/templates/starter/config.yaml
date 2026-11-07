@@ -1,0 +1,34 @@
+# A starter factgate config: customer emails -> refund, escalate or reply.
+# Edit the facts and rules, put your own items in items.jsonl, then:
+#   factgate check config.yaml        # the prompt and schema the model gets
+#   factgate run config.yaml --dry    # what would be sent, no model call
+#   factgate run config.yaml          # needs ANTHROPIC_API_KEY (see model:)
+#   factgate eval run config.yaml cases.jsonl
+name: starter
+items: {jsonl: items.jsonl, id: id, fields: [subject, body]}
+
+prefilter:
+  exclude_any: [unsubscribe]
+
+facts:
+  order_number: {type: text, describe: "The order number the customer gives"}
+  refund_requested: {type: bool, describe: "The customer asks for their money back"}
+  amount: {type: number, describe: "The amount the customer says they paid"}
+
+rules:
+  - name: large-refund
+    when: {refund_requested: {is: true}, amount: {gt: 100}}
+    then: escalate
+  # An amount the quote check cleared is "not stated": never refund blind.
+  - name: refund-unknown-amount
+    when: {refund_requested: {is: true}, amount: {stated: false}}
+    then: escalate
+  - name: refund
+    when: {refund_requested: {is: true}}
+    then: refund
+default_outcome: reply
+
+dangerous:
+  - {expected: escalate, got: refund}
+
+model: {backend: anthropic, name: claude-haiku-5-5, max_calls: 50, max_minutes: 10}

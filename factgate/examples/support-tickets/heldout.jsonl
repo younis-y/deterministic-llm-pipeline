@@ -1,0 +1,5 @@
+{"id": "h-st-1", "fields": {"subject": "Payments down", "body": "The payments page shows E-5005 and nobody in our team of 45 can pay suppliers. Work has stopped."}, "expect": {"outcome": "page-oncall"}, "as_of": "2026-11-07"}
+{"id": "h-st-2", "fields": {"subject": "Copy of invoice", "body": "Please send a copy of invoice 2291, our auditors need it."}, "expect": {"outcome": "billing-team"}, "as_of": "2026-11-07"}
+{"id": "h-st-3", "fields": {"subject": "New admin", "body": "I need to add a new admin user to our account."}, "expect": {"outcome": "account-team"}, "as_of": "2026-11-07"}
+{"id": "h-st-4", "fields": {"subject": "Search and accents", "body": "The search box ignores accented letters: café finds nothing. Not urgent."}, "expect": {"outcome": "engineering"}, "as_of": "2026-11-07"}
+{"id": "h-st-5", "fields": {"subject": "Blank screen", "body": "Every one of our 75 users gets a blank screen after the update."}, "expect": {"outcome": "page-oncall"}, "as_of": "2026-11-07"}

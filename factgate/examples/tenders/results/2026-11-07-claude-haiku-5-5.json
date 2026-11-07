@@ -1,0 +1,1162 @@
+{
+ "label": "2026-11-07-claude-haiku-5-5",
+ "mode": "live",
+ "date": "2026-11-07T14:09:32+00:00",
+ "backend": "anthropic",
+ "model": "claude-haiku-5-5",
+ "repeats": 3,
+ "seconds": 15.0,
+ "tokens": {
+  "input": 58557,
+  "output": 6164
+ },
+ "as_of": "2026-11-07",
+ "pass_at_1": 0.9722222222222222,
+ "pass_hat_k": 0.9166666666666666,
+ "offline_only": 2,
+ "cases": [
+  {
+   "id": "tn-too-soon",
+   "heldout": false,
+   "tags": [
+    "dates"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2026-11-12",
+       "quote": "Deadline for tenders: 12 November 2026."
+      },
+      "value": {
+       "value": 95000.0,
+       "quote": "Estimated value £95,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "ISO 9001",
+        "quote": "ISO 9001 required."
+       }
+      ],
+      "lots": {
+       "value": 1,
+       "quote": "Analytics support, single lot"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2026-11-12",
+       "quote": "Deadline for tenders: 12 November 2026."
+      },
+      "value": {
+       "value": 95000.0,
+       "quote": "Estimated value £95,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "ISO 9001",
+        "quote": "ISO 9001 required."
+       }
+      ],
+      "lots": {
+       "value": 1,
+       "quote": "Analytics support, single lot"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2026-11-12",
+       "quote": "Deadline for tenders: 12 November 2026."
+      },
+      "value": {
+       "value": 95000.0,
+       "quote": "Estimated value £95,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "ISO 9001",
+        "quote": "ISO 9001 required."
+       }
+      ],
+      "lots": {
+       "value": 1,
+       "quote": "Analytics support, single lot"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "tn-spend-is-not-value",
+   "heldout": false,
+   "tags": [
+    "numbers"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2026-12-18",
+       "quote": "tenders close on 18 December 2026"
+      },
+      "value": {
+       "value": 75000.0,
+       "quote": "This audit has an estimated value of £75,000"
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2026-12-18",
+       "quote": "tenders close on 18 December 2026"
+      },
+      "value": {
+       "value": 75000.0,
+       "quote": "This audit has an estimated value of £75,000"
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2026-12-18",
+       "quote": "tenders close on 18 December 2026"
+      },
+      "value": {
+       "value": 75000.0,
+       "quote": "This audit has an estimated value of £75,000"
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "tn-clearance",
+   "heldout": false,
+   "tags": [
+    "rules"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-20",
+       "quote": "Closing date 20 January 2027."
+      },
+      "value": {
+       "value": 400000.0,
+       "quote": "Value £400,000."
+      },
+      "sc_clearance": {
+       "value": true,
+       "quote": "All supplier staff must obtain SC clearance before starting."
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-20",
+       "quote": "Closing date 20 January 2027."
+      },
+      "value": {
+       "value": 400000.0,
+       "quote": "Value £400,000."
+      },
+      "sc_clearance": {
+       "value": true,
+       "quote": "All supplier staff must obtain SC clearance before starting."
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-20",
+       "quote": "Closing date 20 January 2027."
+      },
+      "value": {
+       "value": 400000.0,
+       "quote": "Value £400,000."
+      },
+      "sc_clearance": {
+       "value": true,
+       "quote": "All supplier staff must obtain SC clearance before starting."
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "tn-clearance-not-needed",
+   "heldout": false,
+   "tags": [
+    "negation"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-09",
+       "quote": "Closing date 9 January 2027."
+      },
+      "value": {
+       "value": 150000.0,
+       "quote": "Value £150,000."
+      },
+      "sc_clearance": {
+       "value": false,
+       "quote": "SC clearance is not required for this work."
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-09",
+       "quote": "Closing date 9 January 2027."
+      },
+      "value": {
+       "value": 150000.0,
+       "quote": "Value £150,000."
+      },
+      "sc_clearance": {
+       "value": false,
+       "quote": "SC clearance is not required for this work."
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-09",
+       "quote": "Closing date 9 January 2027."
+      },
+      "value": {
+       "value": 150000.0,
+       "quote": "Value £150,000."
+      },
+      "sc_clearance": {
+       "value": false,
+       "quote": "SC clearance is not required for this work."
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "tn-two-certs",
+   "heldout": false,
+   "tags": [
+    "lists"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-02-02",
+       "quote": "Submit tenders by 2 February 2027."
+      },
+      "value": {
+       "value": 12000000.0,
+       "quote": "a total estimated value of £12,000,000"
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "ISO 9001",
+        "quote": "Suppliers must hold ISO 9001 and Cyber Essentials Plus."
+       },
+       {
+        "value": "Cyber Essentials Plus",
+        "quote": "Suppliers must hold ISO 9001 and Cyber Essentials Plus."
+       }
+      ],
+      "lots": {
+       "value": 3,
+       "quote": "Framework in 3 lots"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-02-02",
+       "quote": "Submit tenders by 2 February 2027."
+      },
+      "value": {
+       "value": 12000000.0,
+       "quote": "a total estimated value of £12,000,000"
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "ISO 9001",
+        "quote": "Suppliers must hold ISO 9001 and Cyber Essentials Plus."
+       },
+       {
+        "value": "Cyber Essentials Plus",
+        "quote": "Suppliers must hold ISO 9001 and Cyber Essentials Plus."
+       }
+      ],
+      "lots": {
+       "value": 3,
+       "quote": "Framework in 3 lots"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-02-02",
+       "quote": "Submit tenders by 2 February 2027."
+      },
+      "value": {
+       "value": 12000000.0,
+       "quote": "a total estimated value of £12,000,000"
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "ISO 9001",
+        "quote": "Suppliers must hold ISO 9001 and Cyber Essentials Plus."
+       },
+       {
+        "value": "Cyber Essentials Plus",
+        "quote": "Suppliers must hold ISO 9001 and Cyber Essentials Plus."
+       }
+      ],
+      "lots": {
+       "value": 3,
+       "quote": "Framework in 3 lots"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "tn-cert-bad-quote",
+   "heldout": false,
+   "tags": [
+    "lists",
+    "quote-check"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-08",
+       "quote": "Deadline 8 January 2027."
+      },
+      "value": {
+       "value": 260000.0,
+       "quote": "Estimated value £260,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "Cyber Essentials",
+        "quote": "Bidders must hold Cyber Essentials."
+       }
+      ],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-08",
+       "quote": "Deadline 8 January 2027."
+      },
+      "value": {
+       "value": 260000.0,
+       "quote": "Estimated value £260,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "Cyber Essentials",
+        "quote": "Bidders must hold Cyber Essentials."
+       }
+      ],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-08",
+       "quote": "Deadline 8 January 2027."
+      },
+      "value": {
+       "value": 260000.0,
+       "quote": "Estimated value £260,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "Cyber Essentials",
+        "quote": "Bidders must hold Cyber Essentials."
+       }
+      ],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "tn-small",
+   "heldout": false,
+   "tags": [
+    "rules"
+   ],
+   "open_defect": "",
+   "state": "flaky",
+   "attempts": [
+    {
+     "outcome": "fail",
+     "raw": {
+      "deadline": {
+       "value": null,
+       "quote": ""
+      },
+      "value": {
+       "value": null,
+       "quote": ""
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": "outcome=review",
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": null,
+       "quote": ""
+      },
+      "value": {
+       "value": 18000.0,
+       "quote": "Budget up to £18,000"
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": null,
+       "quote": ""
+      },
+      "value": {
+       "value": 18000.0,
+       "quote": "Budget up to £18,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-tn-1",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-03-02",
+       "quote": "Tenders close at noon on 2 March 2027."
+      },
+      "value": {
+       "value": 640000.0,
+       "quote": "Estimated contract value: £640,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "ISO 14001",
+        "quote": "ISO 14001 is required."
+       }
+      ],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-03-02",
+       "quote": "Tenders close at noon on 2 March 2027."
+      },
+      "value": {
+       "value": 640000.0,
+       "quote": "Estimated contract value: £640,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "ISO 14001",
+        "quote": "ISO 14001 is required."
+       }
+      ],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-03-02",
+       "quote": "Tenders close at noon on 2 March 2027."
+      },
+      "value": {
+       "value": 640000.0,
+       "quote": "Estimated contract value: £640,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [
+       {
+        "value": "ISO 14001",
+        "quote": "ISO 14001 is required."
+       }
+      ],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-tn-2",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2026-11-16",
+       "quote": "The deadline for bids is 16 November 2026."
+      },
+      "value": {
+       "value": 120000.0,
+       "quote": "Value £120,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2026-11-16",
+       "quote": "The deadline for bids is 16 November 2026."
+      },
+      "value": {
+       "value": 120000.0,
+       "quote": "Value £120,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2026-11-16",
+       "quote": "The deadline for bids is 16 November 2026."
+      },
+      "value": {
+       "value": 120000.0,
+       "quote": "Value £120,000."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-tn-3",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-02-15",
+       "quote": "Closing date 15 February 2027."
+      },
+      "value": {
+       "value": 3400000.0,
+       "quote": "Value £3,400,000 across 4 lots."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": 4,
+       "quote": "across 4 lots"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-02-15",
+       "quote": "Closing date 15 February 2027."
+      },
+      "value": {
+       "value": 3400000.0,
+       "quote": "Value £3,400,000 across 4 lots."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": 4,
+       "quote": "across 4 lots"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-02-15",
+       "quote": "Closing date 15 February 2027."
+      },
+      "value": {
+       "value": 3400000.0,
+       "quote": "Value £3,400,000 across 4 lots."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": 4,
+       "quote": "across 4 lots"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-tn-4",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-02-10",
+       "quote": "Submit by 10 February 2027."
+      },
+      "value": {
+       "value": 200000.0,
+       "quote": "Value £200,000."
+      },
+      "sc_clearance": {
+       "value": true,
+       "quote": "Staff will need SC clearance."
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-02-10",
+       "quote": "Submit by 10 February 2027."
+      },
+      "value": {
+       "value": 200000.0,
+       "quote": "Value £200,000."
+      },
+      "sc_clearance": {
+       "value": true,
+       "quote": "Staff will need SC clearance."
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-02-10",
+       "quote": "Submit by 10 February 2027."
+      },
+      "value": {
+       "value": 200000.0,
+       "quote": "Value £200,000."
+      },
+      "sc_clearance": {
+       "value": true,
+       "quote": "Staff will need SC clearance."
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-tn-5",
+   "heldout": true,
+   "tags": [],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-19",
+       "quote": "Deadline 19 January 2027."
+      },
+      "value": {
+       "value": 22500.0,
+       "quote": "A small pilot worth £22,500."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-19",
+       "quote": "Deadline 19 January 2027."
+      },
+      "value": {
+       "value": 22500.0,
+       "quote": "A small pilot worth £22,500."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "deadline": {
+       "value": "2027-01-19",
+       "quote": "Deadline 19 January 2027."
+      },
+      "value": {
+       "value": 22500.0,
+       "quote": "A small pilot worth £22,500."
+      },
+      "sc_clearance": {
+       "value": null,
+       "quote": ""
+      },
+      "certifications": [],
+      "lots": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  }
+ ]
+}

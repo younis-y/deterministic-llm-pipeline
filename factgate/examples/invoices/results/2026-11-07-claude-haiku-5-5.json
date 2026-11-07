@@ -1,0 +1,3193 @@
+{
+ "label": "2026-11-07-claude-haiku-5-5",
+ "mode": "live",
+ "date": "2026-11-07T14:08:54+00:00",
+ "backend": "anthropic",
+ "model": "claude-haiku-5-5",
+ "repeats": 3,
+ "seconds": 32.4,
+ "tokens": {
+  "input": 161715,
+  "output": 17906
+ },
+ "as_of": "2026-11-07",
+ "pass_at_1": 1.0,
+ "pass_hat_k": 1.0,
+ "offline_only": 2,
+ "cases": [
+  {
+   "id": "inv-total",
+   "heldout": false,
+   "tags": [
+    "amounts"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 12540.0,
+       "quote": "total due £12,540.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £10,450.00"
+      },
+      "due_date": {
+       "value": "2026-12-15",
+       "quote": "Due 15 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88390",
+       "quote": "PO-88390"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 12540.0,
+       "quote": "total due £12,540.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £10,450.00"
+      },
+      "due_date": {
+       "value": "2026-12-15",
+       "quote": "Due 15 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88390",
+       "quote": "PO-88390"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 12540.0,
+       "quote": "total due £12,540.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £10,450.00"
+      },
+      "due_date": {
+       "value": "2026-12-15",
+       "quote": "Due 15 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88390",
+       "quote": "PO-88390"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "inv-subtotal-read",
+   "heldout": false,
+   "tags": [
+    "amounts",
+    "resolver"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 12540.0,
+       "quote": "total due £12,540.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £10,450.00"
+      },
+      "due_date": {
+       "value": "2026-12-15",
+       "quote": "Due 15 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88390",
+       "quote": "PO-88390"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 12540.0,
+       "quote": "total due £12,540.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £10,450.00"
+      },
+      "due_date": {
+       "value": "2026-12-15",
+       "quote": "Due 15 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88390",
+       "quote": "PO-88390"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 12540.0,
+       "quote": "total due £12,540.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £10,450.00"
+      },
+      "due_date": {
+       "value": "2026-12-15",
+       "quote": "Due 15 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88390",
+       "quote": "PO-88390"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "inv-earlier-balance",
+   "heldout": false,
+   "tags": [
+    "amounts",
+    "resolver"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 860.0,
+       "quote": "Amount now due: £860.00 by 12 December 2026."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount now due: £860.00"
+      },
+      "due_date": {
+       "value": "2026-12-12",
+       "quote": "by 12 December 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Previous balance £4,000.00 (paid, thank you)."
+      },
+      "po_number": {
+       "value": "PO-88501",
+       "quote": "quoting PO-88501"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 860.0,
+       "quote": "Amount now due: £860.00 by 12 December 2026."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount now due: £860.00"
+      },
+      "due_date": {
+       "value": "2026-12-12",
+       "quote": "by 12 December 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Previous balance £4,000.00 (paid, thank you)."
+      },
+      "po_number": {
+       "value": "PO-88501",
+       "quote": "quoting PO-88501"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 860.0,
+       "quote": "Amount now due: £860.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount now due: £860.00"
+      },
+      "due_date": {
+       "value": "2026-12-12",
+       "quote": "by 12 December 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88501",
+       "quote": "quoting PO-88501"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "inv-invented-hold",
+   "heldout": false,
+   "tags": [
+    "quote-check"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 310.0,
+       "quote": "Amount due £310.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due £310.00"
+      },
+      "due_date": {
+       "value": "2026-12-01",
+       "quote": "by 1 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88470",
+       "quote": "PO-88470"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 310.0,
+       "quote": "Amount due £310.00 by 1 December 2026."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due £310.00 by 1 December 2026."
+      },
+      "due_date": {
+       "value": "2026-12-01",
+       "quote": "by 1 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88470",
+       "quote": "PO-88470"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 310.0,
+       "quote": "Amount due £310.00 by 1 December 2026."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due £310.00 by 1 December 2026."
+      },
+      "due_date": {
+       "value": "2026-12-01",
+       "quote": "Amount due £310.00 by 1 December 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88470",
+       "quote": "PO-88470"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "inv-on-hold",
+   "heldout": false,
+   "tags": [
+    "rules"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 640.0,
+       "quote": "£640.00 due 20 November 2026"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "£640.00 due 20 November 2026"
+      },
+      "due_date": {
+       "value": "2026-11-20",
+       "quote": "£640.00 due 20 November 2026"
+      },
+      "disputed": {
+       "value": true,
+       "quote": "is on hold while we check the delivery count"
+      },
+      "po_number": {
+       "value": "PO-88102",
+       "quote": "PO-88102"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 640.0,
+       "quote": "£640.00 due 20 November 2026"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "£640.00 due 20 November 2026"
+      },
+      "due_date": {
+       "value": "2026-11-20",
+       "quote": "£640.00 due 20 November 2026"
+      },
+      "disputed": {
+       "value": true,
+       "quote": "is on hold while we check the delivery count"
+      },
+      "po_number": {
+       "value": "PO-88102",
+       "quote": "PO-88102"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 640.0,
+       "quote": "£640.00 due 20 November 2026"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "£640.00 due 20 November 2026"
+      },
+      "due_date": {
+       "value": "2026-11-20",
+       "quote": "due 20 November 2026"
+      },
+      "disputed": {
+       "value": true,
+       "quote": "is on hold while we check the delivery count"
+      },
+      "po_number": {
+       "value": "PO-88102",
+       "quote": "PO-88102"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "inv-split-across-fields",
+   "heldout": false,
+   "tags": [
+    "quote-check"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 450.0,
+       "quote": "Amount due £450.00 by 9 December 2026."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due £450.00 by 9 December 2026."
+      },
+      "due_date": {
+       "value": "2026-12-09",
+       "quote": "by 9 December 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88520",
+       "quote": "PO-88520."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 450.0,
+       "quote": "Amount due £450.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due £450.00"
+      },
+      "due_date": {
+       "value": "2026-12-09",
+       "quote": "by 9 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88520",
+       "quote": "PO-88520"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 450.0,
+       "quote": "Amount due £450.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due £450.00"
+      },
+      "due_date": {
+       "value": "2026-12-09",
+       "quote": "by 9 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88520",
+       "quote": "PO-88520"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "inv-overdue",
+   "heldout": false,
+   "tags": [
+    "dates",
+    "injection"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 980.0,
+       "quote": "for £980.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "for £980.00"
+      },
+      "due_date": {
+       "value": "2026-10-01",
+       "quote": "was due on 1 October 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-87990",
+       "quote": "(PO-87990)"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 980.0,
+       "quote": "for £980.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "for £980.00"
+      },
+      "due_date": {
+       "value": "2026-10-01",
+       "quote": "was due on 1 October 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-87990",
+       "quote": "(PO-87990)"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 980.0,
+       "quote": "for £980.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "for £980.00"
+      },
+      "due_date": {
+       "value": "2026-10-01",
+       "quote": "was due on 1 October 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-87990",
+       "quote": "(PO-87990)"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "inv-word-inside-a-word",
+   "heldout": false,
+   "tags": [
+    "resolver"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Total for elevator servicing: £14,200.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "£14,200.00"
+      },
+      "due_date": {
+       "value": "2026-12-10",
+       "quote": "due by 10 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88611",
+       "quote": "PO-88611"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Total for elevator servicing: £14,200.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "£14,200.00"
+      },
+      "due_date": {
+       "value": "2026-12-10",
+       "quote": "due by 10 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88611",
+       "quote": "PO-88611"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Total for elevator servicing: £14,200.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "£14,200.00"
+      },
+      "due_date": {
+       "value": "2026-12-10",
+       "quote": "due by 10 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88611",
+       "quote": "PO-88611"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "inv-no-total-due-line",
+   "heldout": false,
+   "tags": [
+    "resolver"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 13200.0,
+       "quote": "total £13,200.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £11,000.00"
+      },
+      "due_date": {
+       "value": "2026-12-09",
+       "quote": "by 9 December 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88620",
+       "quote": "PO-88620"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 13200.0,
+       "quote": "total £13,200.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £11,000.00"
+      },
+      "due_date": {
+       "value": "2026-12-09",
+       "quote": "by 9 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88620",
+       "quote": "PO-88620"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 13200.0,
+       "quote": "total £13,200.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "£13,200.00"
+      },
+      "due_date": {
+       "value": "2026-12-09",
+       "quote": "by 9 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88620",
+       "quote": "PO-88620"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "inv-no-po",
+   "heldout": false,
+   "tags": [
+    "rules"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 2310.0,
+       "quote": "Total £2,310.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Total £2,310.00"
+      },
+      "due_date": {
+       "value": "2026-12-04",
+       "quote": "by 4 December 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 2310.0,
+       "quote": "Total £2,310.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Total £2,310.00"
+      },
+      "due_date": {
+       "value": "2026-12-04",
+       "quote": "by 4 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 2310.0,
+       "quote": "Total £2,310.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Total £2,310.00"
+      },
+      "due_date": {
+       "value": "2026-12-04",
+       "quote": "by 4 December 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "inv-euro-read-as-sterling",
+   "heldout": false,
+   "tags": [
+    "currency"
+   ],
+   "open_defect": "an enum value is not checked against its quote: GBP read from 'EUR 3,800.00' gets through",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3800.0,
+       "quote": "Amount due EUR 3,800.00"
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "Amount due EUR 3,800.00"
+      },
+      "due_date": {
+       "value": "2026-12-10",
+       "quote": "by 10 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88455",
+       "quote": "PO-88455"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3800.0,
+       "quote": "Amount due EUR 3,800.00"
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "Amount due EUR 3,800.00"
+      },
+      "due_date": {
+       "value": "2026-12-10",
+       "quote": "by 10 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88455",
+       "quote": "PO-88455"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3800.0,
+       "quote": "Amount due EUR 3,800.00"
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "Amount due EUR 3,800.00"
+      },
+      "due_date": {
+       "value": "2026-12-10",
+       "quote": "by 10 December 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-88455",
+       "quote": "PO-88455"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-001",
+   "heldout": true,
+   "tags": [
+    "disputed"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Amount due: USD 14,200.00"
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "Amount due: USD 14,200.00"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Payment due by 7 November 2026"
+      },
+      "disputed": {
+       "value": true,
+       "quote": "This invoice is on hold until the delivery query is resolved."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Amount due: USD 14,200.00."
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "Amount due: USD 14,200.00."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Payment due by 7 November 2026."
+      },
+      "disputed": {
+       "value": true,
+       "quote": "This invoice is on hold until the delivery query is resolved."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Amount due: USD 14,200.00."
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "Amount due: USD 14,200.00."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Payment due by 7 November 2026."
+      },
+      "disputed": {
+       "value": true,
+       "quote": "This invoice is on hold until the delivery query is resolved."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-inv-002",
+   "heldout": true,
+   "tags": [
+    "disputed"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 9800.0,
+       "quote": "Amount due: £9,800.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £9,800.00."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": true,
+       "quote": "This invoice is on hold until the delivery query is resolved."
+      },
+      "po_number": {
+       "value": "PO-90004",
+       "quote": "quoting PO-90004"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 9800.0,
+       "quote": "Amount due: £9,800.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £9,800.00."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": true,
+       "quote": "This invoice is on hold until the delivery query is resolved."
+      },
+      "po_number": {
+       "value": "PO-90004",
+       "quote": "quoting PO-90004."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 9800.0,
+       "quote": "Amount due: £9,800.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £9,800.00."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": true,
+       "quote": "This invoice is on hold until the delivery query is resolved."
+      },
+      "po_number": {
+       "value": "PO-90004",
+       "quote": "quoting PO-90004."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-inv-003",
+   "heldout": true,
+   "tags": [
+    "disputed"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Please pay USD 3,150.50 in full"
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "Please pay USD 3,150.50 in full"
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Due date: 3 December 2026"
+      },
+      "disputed": {
+       "value": true,
+       "quote": "This invoice is on hold until the delivery query is resolved"
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Please pay USD 3,150.50 in full."
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "Please pay USD 3,150.50 in full."
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Due date: 3 December 2026."
+      },
+      "disputed": {
+       "value": true,
+       "quote": "This invoice is on hold until the delivery query is resolved."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Please pay USD 3,150.50 in full."
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "Please pay USD 3,150.50 in full."
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Due date: 3 December 2026."
+      },
+      "disputed": {
+       "value": true,
+       "quote": "This invoice is on hold until the delivery query is resolved."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-inv-004",
+   "heldout": true,
+   "tags": [
+    "no-po"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "total due USD 3,150.50"
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "total due USD 3,150.50"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "total due USD 3,150.50"
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "total due USD 3,150.50"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "total due USD 3,150.50"
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "total due USD 3,150.50"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-005",
+   "heldout": true,
+   "tags": [
+    "no-po"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Total payable: £3,150.50"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Net £2,625.42 plus VAT £525.08"
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Payment due by 16 November 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Total payable: £3,150.50"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Total payable: £3,150.50"
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Payment due by 16 November 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Total payable: £3,150.50"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Net £2,625.42 plus VAT £525.08"
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Payment due by 16 November 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-inv-006",
+   "heldout": true,
+   "tags": [
+    "no-po"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "total due £3,150.50"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £2,625.42"
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "total due £3,150.50"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £2,625.42"
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "total due £3,150.50"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £2,625.42"
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-007",
+   "heldout": true,
+   "tags": [
+    "not-sterling"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 9800.0,
+       "quote": "Please pay USD 9,800.00 in full."
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "Please pay USD 9,800.00 in full."
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90002",
+       "quote": "quoting PO-90002"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 9800.0,
+       "quote": "Please pay USD 9,800.00 in full."
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "Please pay USD 9,800.00 in full."
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90002",
+       "quote": "quoting PO-90002"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 9800.0,
+       "quote": "Please pay USD 9,800.00 in full."
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "Please pay USD 9,800.00 in full."
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90002",
+       "quote": "quoting PO-90002"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-008",
+   "heldout": true,
+   "tags": [
+    "not-sterling"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "total due EUR 10,000.00"
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "total due EUR 10,000.00"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90013",
+       "quote": "quoting PO-90013"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "total due EUR 10,000.00"
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "total due EUR 10,000.00"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90013",
+       "quote": "quoting PO-90013"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "total due EUR 10,000.00"
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "total due EUR 10,000.00"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90013",
+       "quote": "quoting PO-90013"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-009",
+   "heldout": true,
+   "tags": [
+    "not-sterling"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "Amount due: EUR 10,000.00"
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "Amount due: EUR 10,000.00"
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90020",
+       "quote": "quoting PO-90020"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "Amount due: EUR 10,000.00"
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "Amount due: EUR 10,000.00"
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90020",
+       "quote": "quoting PO-90020"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "Amount due: EUR 10,000.00"
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "Amount due: EUR 10,000.00"
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90020",
+       "quote": "quoting PO-90020"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-010",
+   "heldout": true,
+   "tags": [
+    "large"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Please pay £14,200.00 in full."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Please pay £14,200.00 in full."
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Payment due by 16 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90006",
+       "quote": "quoting PO-90006"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Please pay £14,200.00 in full."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Please pay £14,200.00 in full."
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Payment due by 16 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90006",
+       "quote": "quoting PO-90006"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Please pay £14,200.00 in full."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Please pay £14,200.00 in full."
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Payment due by 16 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90006",
+       "quote": "quoting PO-90006."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-inv-011",
+   "heldout": true,
+   "tags": [
+    "large"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Please pay EUR 14,200.00 in full."
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "Please pay EUR 14,200.00 in full."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Payment due by 7 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Please pay EUR 14,200.00 in full."
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "Please pay EUR 14,200.00 in full."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Payment due by 7 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "Please pay EUR 14,200.00 in full."
+      },
+      "currency": {
+       "value": "EUR",
+       "quote": "Please pay EUR 14,200.00 in full."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Payment due by 7 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": null,
+       "quote": ""
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-012",
+   "heldout": true,
+   "tags": [
+    "large"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "total due USD 14,200.00"
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "total due USD 14,200.00"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90025",
+       "quote": "quoting PO-90025"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "total due USD 14,200.00"
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "total due USD 14,200.00"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90025",
+       "quote": "quoting PO-90025"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 14200.0,
+       "quote": "total due USD 14,200.00"
+      },
+      "currency": {
+       "value": "USD",
+       "quote": "total due USD 14,200.00"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90025",
+       "quote": "quoting PO-90025"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-013",
+   "heldout": true,
+   "tags": [
+    "default",
+    "threshold"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Total payable: £3,150.50."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Net £2,625.42 plus VAT £525.08."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90007",
+       "quote": "quoting PO-90007."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Total payable: £3,150.50."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Net £2,625.42 plus VAT £525.08."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90007",
+       "quote": "quoting PO-90007."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Total payable: £3,150.50"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Net £2,625.42 plus VAT £525.08"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90007",
+       "quote": "quoting PO-90007"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-inv-014",
+   "heldout": true,
+   "tags": [
+    "default",
+    "threshold"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "Total payable: £420.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Total payable: £420.00"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026"
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90055",
+       "quote": "quoting PO-90055"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "Total payable: £420.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Net £350.00 plus VAT £70.00. Total payable: £420.00."
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90055",
+       "quote": "quoting PO-90055"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "Total payable: £420.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Total payable: £420.00"
+      },
+      "due_date": {
+       "value": "2026-11-07",
+       "quote": "Due date: 7 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90055",
+       "quote": "quoting PO-90055"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-inv-015",
+   "heldout": true,
+   "tags": [
+    "default",
+    "threshold"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "Please pay £10,000.00 in full."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Please pay £10,000.00 in full."
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Due date: 16 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90094",
+       "quote": "quoting PO-90094"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "Please pay £10,000.00 in full."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Please pay £10,000.00 in full."
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Due date: 16 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90094",
+       "quote": "quoting PO-90094."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "Please pay £10,000.00 in full."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Please pay £10,000.00 in full."
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Due date: 16 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90094",
+       "quote": "quoting PO-90094"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-inv-016",
+   "heldout": true,
+   "tags": [
+    "overdue"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "Amount due: £420.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £420.00."
+      },
+      "due_date": {
+       "value": "2026-10-26",
+       "quote": "Payment due by 26 October 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90012",
+       "quote": "quoting PO-90012."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "Amount due: £420.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £420.00."
+      },
+      "due_date": {
+       "value": "2026-10-26",
+       "quote": "Payment due by 26 October 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90012",
+       "quote": "quoting PO-90012."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "Amount due: £420.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £420.00."
+      },
+      "due_date": {
+       "value": "2026-10-26",
+       "quote": "Payment due by 26 October 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90012",
+       "quote": "quoting PO-90012."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-017",
+   "heldout": true,
+   "tags": [
+    "overdue"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Amount due: £3,150.50."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £3,150.50."
+      },
+      "due_date": {
+       "value": "2026-10-26",
+       "quote": "Please pay by 26 October 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90068",
+       "quote": "quoting PO-90068."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Amount due: £3,150.50."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £3,150.50."
+      },
+      "due_date": {
+       "value": "2026-10-26",
+       "quote": "Please pay by 26 October 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90068",
+       "quote": "quoting PO-90068."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 3150.5,
+       "quote": "Amount due: £3,150.50."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £3,150.50."
+      },
+      "due_date": {
+       "value": "2026-10-26",
+       "quote": "Please pay by 26 October 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90068",
+       "quote": "quoting PO-90068."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-018",
+   "heldout": true,
+   "tags": [
+    "overdue"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "Amount due: £10,000.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £10,000.00"
+      },
+      "due_date": {
+       "value": "2026-10-26",
+       "quote": "Due date: 26 October 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90124",
+       "quote": "quoting PO-90124"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "Amount due: £10,000.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £10,000.00."
+      },
+      "due_date": {
+       "value": "2026-10-26",
+       "quote": "Due date: 26 October 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90124",
+       "quote": "quoting PO-90124"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 10000.0,
+       "quote": "Amount due: £10,000.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £10,000.00"
+      },
+      "due_date": {
+       "value": "2026-10-26",
+       "quote": "Due date: 26 October 2026"
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90124",
+       "quote": "quoting PO-90124"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  },
+  {
+   "id": "h-inv-019",
+   "heldout": true,
+   "tags": [
+    "default"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "Amount due: £420.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £420.00."
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Due date: 16 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90016",
+       "quote": "quoting PO-90016."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "Amount due: £420.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £420.00."
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Due date: 16 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90016",
+       "quote": "quoting PO-90016."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "Amount due: £420.00."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Amount due: £420.00."
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Due date: 16 November 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90016",
+       "quote": "quoting PO-90016."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-020",
+   "heldout": true,
+   "tags": [
+    "default"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "total due £420.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £350.00"
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Payment due by 16 November 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90033",
+       "quote": "quoting PO-90033"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "total due £420.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £350.00"
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Payment due by 16 November 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90033",
+       "quote": "quoting PO-90033"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 420.0,
+       "quote": "total due £420.00"
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Subtotal £350.00"
+      },
+      "due_date": {
+       "value": "2026-11-16",
+       "quote": "Payment due by 16 November 2026."
+      },
+      "disputed": {
+       "value": null,
+       "quote": ""
+      },
+      "po_number": {
+       "value": "PO-90033",
+       "quote": "quoting PO-90033"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": false
+  },
+  {
+   "id": "h-inv-021",
+   "heldout": true,
+   "tags": [
+    "default"
+   ],
+   "open_defect": "",
+   "state": "pass",
+   "attempts": [
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 9800.0,
+       "quote": "Please pay £9,800.00 in full."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Please pay £9,800.00 in full."
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90050",
+       "quote": "quoting PO-90050."
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 9800.0,
+       "quote": "Please pay £9,800.00 in full."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Please pay £9,800.00 in full."
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90050",
+       "quote": "quoting PO-90050"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    },
+    {
+     "outcome": "pass",
+     "raw": {
+      "amount_due": {
+       "value": 9800.0,
+       "quote": "Please pay £9,800.00 in full."
+      },
+      "currency": {
+       "value": "GBP",
+       "quote": "Please pay £9,800.00 in full."
+      },
+      "due_date": {
+       "value": "2026-12-03",
+       "quote": "Please pay by 3 December 2026."
+      },
+      "disputed": {
+       "value": false,
+       "quote": "Nothing on this invoice is disputed."
+      },
+      "po_number": {
+       "value": "PO-90050",
+       "quote": "quoting PO-90050"
+      }
+     },
+     "fact_failures": [],
+     "outcome_failure": null,
+     "dangerous": false,
+     "error": ""
+    }
+   ],
+   "facts_changed": true
+  }
+ ]
+}

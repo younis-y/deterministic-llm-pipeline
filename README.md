@@ -2,6 +2,13 @@
 
 [![ci](https://github.com/younis-y/deterministic-llm-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/younis-y/deterministic-llm-pipeline/actions/workflows/ci.yml)
 
+**The method, for any documents: [factgate](factgate/).** A model reports
+facts from each document with the exact words it read them from, code checks
+every quote, and rules you write in YAML decide. One config file points it at
+invoices, support tickets, tenders or anything else made of text, and the three
+shipped examples run with no API key. rolescan, below, is the full application
+the method came from.
+
 A job scanner that reads employers' own career sites, scores postings against
 the profile you write, and writes a ranked digest, spending an LLM call only on
 the small minority that survive a deterministic prefilter.

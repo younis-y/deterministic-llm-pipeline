@@ -1,0 +1,71 @@
+[project]
+name = "factgate"
+version = "0.1.0"
+description = "Quoted facts from any text, decided by rules you write: the model reports, code decides"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "httpx>=0.28",
+    "pydantic>=2.11",
+    "pyyaml>=6.0",
+    "typer>=0.15",
+    "aiosqlite>=0.20",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=1.0"]
+dev = [
+    "anthropic>=1.0",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "respx>=0.22",
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "types-PyYAML",
+]
+
+[project.scripts]
+factgate = "factgate.cli:app"
+
+[project.entry-points."factgate.backends"]
+anthropic = "factgate.backends:AnthropicBackend"
+openai-compatible = "factgate.backends:OpenAICompatibleBackend"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/factgate"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "C90", "PTH"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+
+[tool.deptry]
+known_first_party = ["factgate"]
+
+[tool.deptry.package_module_name_map]
+pyyaml = ["yaml"]
+types-PyYAML = ["yaml"]
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["pytest", "pytest-asyncio", "respx", "ruff", "mypy", "types-PyYAML"]
