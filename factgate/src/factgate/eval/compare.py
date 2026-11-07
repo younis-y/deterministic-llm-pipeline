@@ -18,13 +18,20 @@ class Moves(BaseModel):
     broke: list[str] = []
     noise: list[str] = []
     inconclusive: list[str] = []
+    #: Cases in one run only: added, renamed or removed.
+    only_before: list[str] = []
+    only_after: list[str] = []
     stable_pass_before: int = 0
     stable_pass_after: int = 0
     total: int = 0
 
 
 def _moves(split: str, before: dict[str, str], after: dict[str, str]) -> Moves:
-    moves = Moves(split=split)
+    moves = Moves(
+        split=split,
+        only_before=sorted(before.keys() - after.keys()),
+        only_after=sorted(after.keys() - before.keys()),
+    )
     for case in sorted(before.keys() & after.keys()):
         b, a = before[case], after[case]
         moves.total += 1
@@ -66,7 +73,13 @@ def compare_markdown(before: EvalRun, after: EvalRun) -> str:
             f"{m.stable_pass_after}/{m.total} |"
         )
     visible, _ = compare(before, after)
-    for name, ids in (("Fixed", visible.fixed), ("Broke", visible.broke)):
+    named = (
+        ("Fixed", visible.fixed),
+        ("Broke", visible.broke),
+        ("Only in the first run", visible.only_before),
+        ("Only in the second run", visible.only_after),
+    )
+    for name, ids in named:
         if ids:
             lines += ["", f"{name} (visible): {', '.join(ids)}"]
     lines += ["", "Quote the transitions, not the totals: a total also moves with noise."]

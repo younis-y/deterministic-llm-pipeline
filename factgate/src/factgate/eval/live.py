@@ -59,6 +59,8 @@ class EvalRun(BaseModel):
     repeats: int = 1
     seconds: float = 0
     tokens: dict[str, int] = {}
+    #: The date the rules treated as today (a case's own `as_of` wins).
+    as_of: str = ""
     pass_at_1: float = 0.0
     pass_hat_k: float = 0.0
     #: Offline-only cases a live run left out.
@@ -66,10 +68,13 @@ class EvalRun(BaseModel):
     cases: list[CaseRun]
 
     def unexpected(self) -> list[str]:
-        """Cases whose result breaks CI: a new failure, or an open defect that passed."""
+        """Cases whose result breaks CI: a new failure, an open defect that
+        passed, or a case that could not be graded (never a pass)."""
         out = []
         for c in self.cases:
-            if c.open_defect and c.state == "pass":
+            if c.state == "inconclusive":
+                out.append(f"{c.id} inconclusive")
+            elif c.open_defect and c.state == "pass":
                 out.append(f"{c.id} passes: remove its open_defect")
             elif not c.open_defect and c.state in {"fail", "flaky"}:
                 out.append(f"{c.id} {c.state}")
@@ -78,6 +83,8 @@ class EvalRun(BaseModel):
 
 def case_state(outcomes: list[str]) -> str:
     seen = set(outcomes)
+    if not seen:
+        return "inconclusive"
     if "pass" in seen and "fail" in seen:
         return "flaky"
     if "fail" in seen:
@@ -111,6 +118,9 @@ class _Grader:
             facts, decision = finish(raw, case.item, self.cfg, self.model, self.resolvers, when)
         except ValidationError as e:
             msg = f"invalid answer: {e.errors()[0]['msg']}"
+            return Attempt(outcome="inconclusive", raw=raw, error=msg)
+        except Exception as e:  # a resolver's or rule's bug: this attempt cannot be graded
+            msg = f"{type(e).__name__} after the answer: {e}"
             return Attempt(outcome="inconclusive", raw=raw, error=msg)
         got = grade(case, facts, decision, self.cfg, when)
         return Attempt(
@@ -155,7 +165,7 @@ def offline_run(cases: list[Case], cfg: Config, label: str, as_of: dt.date) -> E
     runs = [
         _case_run(c, [grader.attempt(c, c.model_facts)]) for c in cases if c.model_facts is not None
     ]
-    return _finish_run(EvalRun(label=label, mode="offline", cases=runs))
+    return _finish_run(EvalRun(label=label, mode="offline", as_of=as_of.isoformat(), cases=runs))
 
 
 async def live(
@@ -197,6 +207,7 @@ async def live(
             mode="live",
             backend=backend.name,
             model=cfg.model.name,
+            as_of=as_of.isoformat(),
             repeats=repeats,
             seconds=round(time.monotonic() - started, 1),
             tokens=tokens,
@@ -219,6 +230,15 @@ def regrade(run: EvalRun, cases: list[Case], cfg: Config, as_of: dt.date) -> Eva
         for c in run.cases
         if c.id in by_id
     ]
-    again = run.model_copy(update={"label": f"{run.label}-regrade", "mode": "regrade", "date": ""})
+    again = run.model_copy(
+        update={
+            "label": f"{run.label}-regrade",
+            "mode": "regrade",
+            "date": "",
+            "as_of": as_of.isoformat(),
+            "seconds": 0,
+            "tokens": {},
+        }
+    )
     again.cases = runs
     return _finish_run(again)

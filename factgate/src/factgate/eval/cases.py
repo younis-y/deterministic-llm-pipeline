@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from factgate.config import Config, check_condition
 from factgate.items import Item
@@ -21,6 +21,9 @@ from factgate.rules import Condition
 
 
 class Case(BaseModel):
+    #: A misspelt key would grade silently wrong, so it fails to load.
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     fields: dict[str, str]
     expect_facts: dict[str, Condition] = {}
@@ -46,12 +49,26 @@ class Case(BaseModel):
         return Item(id=self.id, fields=self.fields)
 
 
+def _yaml_lines(node: Any) -> list[int]:
+    """The line each case starts on, from the composed YAML."""
+    if isinstance(node, yaml.MappingNode):
+        node = next((v for k, v in node.value if k.value == "cases"), None)
+    if not isinstance(node, yaml.SequenceNode):
+        return []
+    return [entry.start_mark.line + 1 for entry in node.value]
+
+
 def _rows(path: Path) -> list[tuple[str, Any]]:
     text = path.read_text(encoding="utf-8")
     if path.suffix in {".yaml", ".yml"}:
-        data = yaml.safe_load(text) or []
+        try:
+            data = yaml.safe_load(text) or []
+            lines = _yaml_lines(yaml.compose(text))
+        except yaml.YAMLError as e:
+            raise ValueError(f"{path}: not valid YAML ({e})") from e
         rows = data.get("cases", []) if isinstance(data, dict) else data
-        return [(f"{path}:{n}", row) for n, row in enumerate(rows, 1)]
+        lines = lines if len(lines) == len(rows) else list(range(1, len(rows) + 1))
+        return [(f"{path}:{n}", row) for n, row in zip(lines, rows, strict=True)]
     out = []
     for n, line in enumerate(text.splitlines(), 1):
         if line.strip() and not line.lstrip().startswith("#"):
@@ -71,6 +88,9 @@ def _case(row: Any, where: str, cfg: Config, heldout: bool) -> Case:
     if not row.get("fields"):
         raise ValueError(f"{where}: no text (give `text:` or `fields:`)")
     expect = row.pop("expect", {}) or {}
+    unknown = sorted(set(expect) - {"facts", "outcome"}) if isinstance(expect, dict) else []
+    if unknown or not isinstance(expect, dict):
+        raise ValueError(f"{where}: expect has {', '.join(map(repr, unknown)) or 'no mapping'}")
     try:
         case = Case(
             **row,
@@ -80,7 +100,9 @@ def _case(row: Any, where: str, cfg: Config, heldout: bool) -> Case:
             source=where,
         )
     except ValidationError as e:
-        raise ValueError(f"{where}: {e.errors()[0]['msg']}") from e
+        err = e.errors()[0]
+        at = ".".join(str(part) for part in err["loc"])
+        raise ValueError(f"{where}: {at + ': ' if at else ''}{err['msg']}") from e
     for fact, cond in case.expect_facts.items():
         check_condition(cfg, fact, cond, where)
     if case.offline_only and case.model_facts is None:

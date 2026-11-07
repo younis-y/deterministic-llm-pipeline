@@ -6,9 +6,10 @@ import asyncio
 import datetime as dt
 import json
 import shutil
+from collections.abc import Callable
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 import typer
 from pydantic import ValidationError
@@ -29,6 +30,7 @@ app = typer.Typer(
     help="Quoted facts from any text, decided by rules you write.", no_args_is_help=True
 )
 TEMPLATES = Path(__file__).parent / "templates"
+T = TypeVar("T")
 
 ConfigArg = Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="The config YAML.")]
 AsOf = Annotated[str | None, typer.Option(help="The date rules treat as today (YYYY-MM-DD).")]
@@ -46,10 +48,20 @@ def as_of_date(value: str | None) -> dt.date:
     return dt.date.fromisoformat(value) if value else dt.datetime.now(dt.UTC).date()
 
 
+def or_exit(where: Path, read: Callable[[], T]) -> T:
+    """`read()`, with a mistake in the user's files printed as one line, exit 2."""
+    try:
+        return read()
+    except ValueError as e:
+        typer.echo(f"{where}: {e}", err=True)
+        raise typer.Exit(2) from e
+
+
 @app.command()
 def check(config: ConfigArg) -> None:
     """Validate a config and print the prompt and schema the model gets."""
     cfg = config_or_exit(config)
+    or_exit(config, lambda: load_resolvers(cfg.resolvers, cfg.base))
     typer.echo(system_prompt(cfg.facts))
     typer.echo(json.dumps(build_model(cfg.facts).model_json_schema(), indent=2))
 
@@ -68,12 +80,12 @@ def run_cmd(
 ) -> None:
     """Decide every item the config names."""
     cfg = config_or_exit(config)
-    items = read_items(cfg.items, cfg.base)
+    items = or_exit(config, lambda: read_items(cfg.items, cfg.base))
     if dry:
         sending = [i for i in items if prefilter_reason(i, cfg.prefilter) is None]
         typer.echo(f"{len(items)} items; would send {len(sending)} (cache permitting)")
         return
-    resolvers = load_resolvers(cfg.resolvers, cfg.base)
+    resolvers = or_exit(config, lambda: load_resolvers(cfg.resolvers, cfg.base))
     backend = get_backend(cfg.model, replay)
 
     async def go() -> tuple[list[Result], RunStats]:
@@ -148,8 +160,7 @@ def eval_run(
     cases: CasesArg,
     heldout: HeldOut = None,
     live_: Annotated[bool, typer.Option("--live", help="Ask the model.")] = False,
-    repeats: Annotated[int, typer.Option(help="Attempts per case (live).")] = 3,
-    replay: Annotated[Path | None, typer.Option(help="Recorded answers (live).")] = None,
+    repeats: Annotated[int, typer.Option(min=1, help="Attempts per case (live).")] = 3,
     label: Annotated[str | None, typer.Option(help="Name of the run.")] = None,
     results: ResultsDir = None,
     as_of: AsOf = None,
@@ -158,9 +169,10 @@ def eval_run(
     through the code; --live asks the model --repeats times per case."""
     cfg = config_or_exit(config)
     loaded = _cases(cfg, cases, heldout)
+    or_exit(config, lambda: load_resolvers(cfg.resolvers, cfg.base))
     today = as_of_date(as_of)
-    if live_ or replay:
-        backend = get_backend(cfg.model, replay)
+    if live_:
+        backend = get_backend(cfg.model, None)
         name = label or f"{today}-{cfg.model.name}"
         run = asyncio.run(live(loaded, cfg, backend, repeats=repeats, label=name, as_of=today))
         _save(run, cfg, results)
@@ -199,8 +211,9 @@ def eval_regrade(
     results: ResultsDir = None,
     as_of: AsOf = None,
 ) -> None:
-    """Re-score a run's saved answers with today's config: no model calls."""
+    """Re-score a run's saved answers with today's config and cases, on the
+    run's own date unless --as-of says otherwise: no model calls."""
     cfg = config_or_exit(config)
     run = EvalRun.model_validate_json(run_file.read_text(encoding="utf-8"))
-    again = regrade(run, _cases(cfg, cases, heldout), cfg, as_of_date(as_of))
+    again = regrade(run, _cases(cfg, cases, heldout), cfg, as_of_date(as_of or run.as_of or None))
     _save(again, cfg, results or run_file.parent)

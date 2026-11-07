@@ -50,3 +50,22 @@ def test_a_bad_config_fails_with_its_message(tmp_path: Path) -> None:
     path.write_text("name: x\n")
     result = runner.invoke(app, ["check", str(path)])
     assert result.exit_code == 2 and "items" in result.output
+
+
+def test_run_names_a_duplicate_item_id_without_a_traceback(tmp_path: Path) -> None:
+    folder = tmp_path / "s"
+    runner.invoke(app, ["init", str(folder)])
+    items = folder / "items.jsonl"
+    items.write_text(items.read_text() + items.read_text().splitlines()[0] + "\n")
+    result = runner.invoke(app, ["run", str(folder / "config.yaml"), "--dry"])
+    assert result.exit_code == 2 and "duplicate item id 'e1'" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_check_loads_the_resolvers(tmp_path: Path) -> None:
+    folder = tmp_path / "s"
+    runner.invoke(app, ["init", str(folder)])
+    config = folder / "config.yaml"
+    config.write_text(config.read_text() + "resolvers: ['nowhere:fix']\n")
+    result = runner.invoke(app, ["check", str(config)])
+    assert result.exit_code == 2 and "resolver 'nowhere:fix' cannot be loaded" in result.output

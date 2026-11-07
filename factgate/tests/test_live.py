@@ -11,7 +11,7 @@ from factgate.backends import Answer, Backend
 from factgate.cli import app
 from factgate.config import Config, ModelConfig
 from factgate.eval.cases import load_cases
-from factgate.eval.compare import compare
+from factgate.eval.compare import compare, compare_markdown
 from factgate.eval.live import EvalRun, case_state, live, offline_run, regrade, wilson
 from factgate.eval.report import readme_matches, report_markdown
 
@@ -48,6 +48,7 @@ def _cases(tmp_path: Path) -> list[Any]:
         (["pass", "inconclusive"], "inconclusive"),
         (["fail", "inconclusive"], "fail"),
         (["inconclusive"], "inconclusive"),
+        ([], "inconclusive"),
     ],
 )
 def test_case_state(outcomes: list[str], state: str) -> None:
@@ -130,6 +131,7 @@ async def test_the_report_hides_heldout_text(tmp_path: Path) -> None:
     )
     md = report_markdown(run, CFG)
     assert "h1" in md and "SECRET" not in md and "amount=" not in md.split("Held-out")[1]
+    assert "h1" not in md.split("## Held-out")[0], "a held-out failure stays out of the table"
     assert "Wilson 95%" in md
 
 
@@ -226,4 +228,67 @@ def test_cli_eval_run_offline_and_compare(tmp_path: Path) -> None:
     runner.invoke(app, [*args, "--label", "b"])
     assert (results / "a.json").exists() and (results / "a.md").exists()
     cmp = runner.invoke(app, ["eval", "compare", str(results / "a.json"), str(results / "b.json")])
-    assert cmp.exit_code == 0 and "Fixed" in cmp.output
+    assert cmp.exit_code == 0, cmp.output
+    assert "| visible | 0 | 0 | 0 | 0 | 2/2 -> 2/2 |" in cmp.output, cmp.output
+
+
+def test_an_attempt_that_crashes_after_the_answer_is_inconclusive_and_fails_ci(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    import types
+
+    module = types.ModuleType("crashing")
+    module.fix = lambda item, facts: 1 / 0  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "crashing", module)
+    cfg = Config.model_validate({**CFG_DATA, "resolvers": ["crashing:fix"]})
+    path = tmp_path / "a.jsonl"
+    row = {"id": "c", "text": "Total 500", "expect": {"outcome": "review"}}
+    path.write_text(
+        json.dumps({**row, "model_facts": {"amount": {"value": 500, "quote": "Total 500"}}})
+    )
+    run = offline_run(load_cases([path], cfg), cfg, "ci", AS_OF)
+    [case] = run.cases
+    assert case.state == "inconclusive" and "ZeroDivisionError" in case.attempts[0].error
+    assert run.unexpected() == ["c inconclusive"]
+
+
+async def test_regrade_keeps_the_runs_date_and_drops_its_spend(tmp_path: Path) -> None:
+    cases = _cases(tmp_path)
+    run = await live(
+        cases,
+        CFG,
+        Scripted({"big": [500], "small": [50], "h1": [900]}),
+        repeats=1,
+        label="base",
+        as_of=AS_OF,
+    )
+    assert run.as_of == "2026-11-07" and run.tokens
+    again = regrade(run, cases, CFG, dt.date.fromisoformat(run.as_of))
+    assert again.as_of == "2026-11-07" and again.tokens == {} and again.seconds == 0
+
+
+def test_compare_lists_cases_in_only_one_run() -> None:
+    before = _run("a", {"kept": "pass", "gone": "pass"})
+    after = _run("b", {"kept": "pass", "new": "fail"})
+    visible, _ = compare(before, after)
+    assert (visible.only_before, visible.only_after) == (["gone"], ["new"])
+    assert "new" in compare_markdown(before, after)
+
+
+def test_cli_refuses_zero_repeats(tmp_path: Path) -> None:
+    folder = tmp_path / "s"
+    CliRunner().invoke(app, ["init", str(folder)])
+    result = CliRunner().invoke(
+        app,
+        [
+            "eval",
+            "run",
+            str(folder / "config.yaml"),
+            str(folder / "cases.jsonl"),
+            "--live",
+            "--repeats",
+            "0",
+        ],
+    )
+    assert result.exit_code == 2

@@ -71,6 +71,11 @@ def test_heldout_files_are_marked(tmp_path: Path) -> None:
             {"id": "x", "text": "t", "expect": {"outcome": "ok"}, "offline_only": True},
             r"a\.jsonl:1: an offline_only case needs model_facts",
         ),
+        ({"id": "x", "text": "t", "expect": {"outcom": "ok"}}, r"a\.jsonl:1: expect has 'outcom'"),
+        (
+            {"id": "x", "text": "t", "expect": {"outcome": "ok"}, "model_fact": {}},
+            r"a\.jsonl:1: model_fact: Extra inputs are not permitted",
+        ),
     ],
 )
 def test_bad_cases_name_file_and_line(tmp_path: Path, row: Any, error: str) -> None:
@@ -138,3 +143,27 @@ def test_case_params_mark_open_defects_strict(tmp_path: Path) -> None:
     assert_case(params[0].values[0])
     with pytest.raises(AssertionError):
         assert_case(params[1].values[0])
+
+
+def test_a_yaml_case_names_its_real_line(tmp_path: Path) -> None:
+    path = tmp_path / "c.yaml"
+    path.write_text(
+        "# cases\n"
+        "cases:\n"
+        "  - id: a\n"
+        "    text: Total 500\n"
+        "    expect: {outcome: review}\n"
+        "\n"
+        "  - id: b\n"
+        "    text: Total 5\n"
+        "    expect: {outcome: nope}\n"
+    )
+    with pytest.raises(ValueError, match=r"c\.yaml:7: unknown outcome"):
+        load_cases([path], CFG)
+
+
+def test_a_yaml_syntax_error_names_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "c.yaml"
+    path.write_text("cases: [unclosed")
+    with pytest.raises(ValueError, match=r"c\.yaml: not valid YAML"):
+        load_cases([path], CFG)
