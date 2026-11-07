@@ -199,13 +199,73 @@ More load as entry-point plugins (`factgate.backends`).
 
 ### Eval
 
-A cases file lists items with the expected facts and/or expected outcome, and
-optionally a `model_facts` answer for the offline run, exactly like
-`evals/cases.json`. Offline runs in CI through quote check, resolvers and rules.
-Live runs the configured model k times and writes pass@1, pass^k, seconds and
-tokens to `results/`. A case may be marked `open_defect` and runs as a strict
-expected failure, as in rolescan. A pytest helper lets a user run their cases
-inside their own test suite.
+The eval combines rolescan's `evals/` with the harness the owner's team built
+at the Judge the Agent hackathon (Friendly Data Meetup, 4 November 2026,
+github.com/computator1200/parcel-pigeon-evals). That repo has no LICENSE file,
+so only the owner's own code from it (`evals/intensive.py`, `evals/gen_orders.py`,
+the ladder) may be copied; everything else is reused as ideas and credited in
+the README. Its LLM judge, rubric and judge-consistency tools do not apply:
+factgate grades by code, and the README says that is the point.
+
+**Cases.** One YAML or JSONL file per area (`cases-*.jsonl`), merged on load.
+A case is an item, plus what the finished facts and the outcome must be,
+written with the same operators as rules (`amount_due: {gt: 10000}`,
+`outcome: hold`), plus optional `model_facts` (a recorded or hand-written model
+answer for the offline run), `tags` and `open_defect`. Loading fails loudly,
+with `file:line`, on invalid JSON or YAML, a duplicate id across files, an
+unknown fact or operator, and a case with nothing to grade (the hackathon's
+`merge_cases` rules).
+
+**Offline (CI).** Every case with `model_facts` goes through quote check,
+resolvers and rules; no model. A pytest helper runs a user's cases inside their
+own suite; `open_defect` cases run as strict expected failures.
+
+**Live.** `factgate eval --live --repeats 3` runs each case k times and gives
+each ONE state, never an average (the hackathon's `intensive` rules):
+- `pass`: every attempt passed; `fail`: none did; `flaky`: both.
+- `inconclusive`: an attempt errored (API error, timeout, cut-off answer).
+  Inconclusive is never a pass and is counted outside the pass rate.
+- For every failure: whether it failed on a fact or only on the outcome, and
+  for a flaky case whether the model's facts changed between attempts (model
+  noise) or stayed the same (a grading or rule problem).
+- pass@1 and pass^k as in rolescan, with a Wilson 95% interval on the pass
+  rate, stating the method.
+
+**Held-out.** Cases in a `heldout/` file are run and scored but shown as ids
+and totals only, so the person tuning the prompt, resolvers or rules cannot
+tune to them. The README states independence is by honour.
+
+**Generated cases.** A documented pattern (and the invoices example uses it):
+a small Python oracle writes held-out cases whose right answer is computed from
+the rules, with new values and wordings, and writes no case where the rules do
+not decide (from `gen_orders.py`).
+
+**Compare.** `factgate eval compare <run-a> <run-b>`: per case, before and
+after state. Only stable fail to stable pass counts as fixed and stable pass to
+stable fail as broken; moves into or out of flaky are listed separately as
+noise, and the held-out transitions are reported apart from the visible ones.
+
+**Regrade.** `factgate eval regrade <run>` re-scores the model answers saved in
+a run with the current quote check, resolvers and rules: a rule or resolver
+change is measured with zero model noise and zero cost (the ladder's
+`regrade`). Every live run therefore saves each attempt's raw model answer.
+
+**Costly errors.** A config may name dangerous mistakes:
+`dangerous: [{expected: hold, got: approve}]`. Reports split wrong outcomes
+into dangerous and other, and a dangerous error is listed first and named in
+the summary (the hackathon's DANGEROUS / CONSERVATIVE split).
+
+**Reports.** Each run writes `results/<label>.json` (every attempt) and
+`results/<label>.md` (states per tag, the visible and held-out totals,
+inconclusive, dangerous errors, seconds, calls, tokens). A test helper checks
+that figures quoted in a README match the latest result file (rolescan's
+`test_readme_claims`, and the hackathon's claims check).
+
+**Writing cases.** `docs/writing-cases.md`: one behaviour per case; take the
+truth from the document, not memory; make a case fail for the right reason;
+and a checklist of traps generalised from rolescan and the hackathon (missing
+values, values that look like the fact but are not, caps and ranges,
+negations, boilerplate, injection text inside the item, off-topic items).
 
 ### Examples (shipped)
 
@@ -235,6 +295,7 @@ extra. Python 3.11+.
 
 - Make the project plug-and-play for any purpose; proceed with this shape: a
   library, YAML facts and rules, rolescan as the flagship example.
+- Use everything that applies from the Judge the Agent hackathon repo.
 
 ## My calls (the owner can overturn any)
 
@@ -244,6 +305,7 @@ extra. Python 3.11+.
 - `openai-compatible` instead of a dedicated Ollama backend.
 - YAML condition operators instead of an expression language.
 - The three example domains.
+- Which hackathon pieces apply, and that the LLM-judge tooling does not.
 
 Reviewer questions settled as my calls: named text fields per item; numeric
 values checked against their own quote; relative dates through an `as_of`
