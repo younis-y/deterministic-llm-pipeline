@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, Field, create_model, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 T = TypeVar("T")
 
@@ -29,6 +29,8 @@ class Fact(BaseModel, Generic[T]):
 
 class FactSpec(BaseModel):
     """One fact in a config's `facts:`."""
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["number", "integer", "text", "bool", "date", "enum", "list"]
     describe: str = ""

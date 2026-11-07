@@ -72,6 +72,13 @@ def test_bad_rules_name_the_rule(tmp_path: Path, bad: str, error: str | None) ->
         load_config(_write(tmp_path, text))
 
 
+def test_a_misspelt_fact_key_fails_to_load(tmp_path: Path) -> None:
+    """`description:` for `describe:` was ignored, so the model got no description."""
+    text = GOOD.replace("amount: {type: number}", "amount: {type: number, description: x}")
+    with pytest.raises(ValueError, match=r"facts\.amount\.description"):
+        load_config(_write(tmp_path, text))
+
+
 def test_dangerous_must_name_known_outcomes(tmp_path: Path) -> None:
     text = GOOD + "dangerous: [{expected: review, got: nope}]\n"
     with pytest.raises(ValueError, match="dangerous: 'nope' is not an outcome"):
