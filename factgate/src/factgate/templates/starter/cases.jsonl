@@ -1,0 +1,2 @@
+{"id": "refund-small", "fields": {"subject": "Refund", "body": "Please refund order 12, I paid £20."}, "expect": {"outcome": "refund"}, "model_facts": {"refund_requested": {"value": true, "quote": "Please refund"}, "amount": {"value": 20, "quote": "I paid £20"}}}
+{"id": "amount-misread", "fields": {"subject": "Refund", "body": "Please refund order 12, I paid £1,200."}, "expect": {"facts": {"amount": {"eq": 1200}}, "outcome": "escalate"}, "model_facts": {"refund_requested": {"value": true, "quote": "Please refund"}, "amount": {"value": 1200, "quote": "I paid £1,200"}}}
