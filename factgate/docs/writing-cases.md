@@ -29,7 +29,7 @@ so a live model's answer, often a correct one, would grade nothing. Mark it
 ```json
 {"id": "tn-misread-value", "offline_only": true,
  "fields": {"title": "Energy data audit", "body": "This audit has an estimated value of £75,000 and tenders close on 18 December 2026."},
- "expect": {"facts": {"value": {"stated": false}}, "outcome": "bid"},
+ "expect": {"facts": {"value": {"stated": false}}, "outcome": "review"},
  "model_facts": {"value": {"value": 750000, "quote": "an estimated value of £75,000"}, "deadline": {"value": "2026-12-18", "quote": "tenders close on 18 December 2026"}},
  "as_of": "2026-11-07"}
 ```
@@ -97,9 +97,9 @@ habits keep them honest:
 - **Generate them when you can.** A small oracle that writes new values and
   wordings into the text and computes the right answer from the rules (see
   `examples/invoices/gen_heldout.py`) gives cases nobody tuned against. It
-  must write no case the rules do not settle, such as an amount exactly on a
-  threshold or a due date that is today: a guessed truth grades the model on
-  the guess.
+  must write no case the rules leave open: a guessed truth grades the model
+  on the guess. A value exactly on a threshold is not such a case. The rules
+  settle it (10,000 is not over 10,000), and it is worth a case of its own.
 - **Never fix a failure you only learned about from a held-out case** by
   reading it. Fix the visible case that covers it, or write one, then see if
   the held-out case moves.
@@ -133,3 +133,7 @@ A report lists dangerous mistakes first, by case.
 - [ ] It has `as_of` if any rule reads a date.
 - [ ] It is `offline_only` if its expectation depends on its own `model_facts`.
 - [ ] Its id says what it tests (`inv-earlier-balance`, not `case-7`).
+
+A case with a misspelt key (`expect.outcom`, `model_fact`) fails to load,
+naming the key, so a typo cannot quietly turn a case into one that grades
+nothing.

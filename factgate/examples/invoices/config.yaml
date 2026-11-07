@@ -36,6 +36,9 @@ rules:
   - name: no-due-date
     when: {due_date: {stated: false}}
     then: review
+  - name: no-currency
+    when: {currency: {stated: false}}
+    then: review
   - name: not-sterling
     when: {currency: {ne: GBP}}
     then: review

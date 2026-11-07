@@ -1,12 +1,12 @@
 # tender-screen: 2026-11-07-claude-haiku-5-5 (live)
 
-Model `claude-haiku-5-5` via anthropic, 3 attempt(s) per case, 14 s, tokens {'input': 2001, 'output': 6323}.
-pass@1 100%; pass^3 100% (12 of 12 conclusive cases pass every attempt; Wilson 95% 76%-100%). Inconclusive cases are outside these figures.
+Model `claude-haiku-5-5` via anthropic, 3 attempt(s) per case, 15 s, tokens {'input': 58557, 'output': 6164}.
+pass@1 97%; pass^3 92% (11 of 12 conclusive cases pass every attempt; Wilson 95% 65%-99%). Inconclusive cases are outside these figures.
 2 offline-only case(s) not run: they need their own answer.
 
 | Split | Cases | Pass | Fail | Flaky | Inconclusive |
 |---|---|---|---|---|---|
-| visible | 7 | 7 | 0 | 0 | 0 |
+| visible | 7 | 6 | 0 | 1 | 0 |
 | held-out | 5 | 5 | 0 | 0 | 0 |
 
 | Tag | Cases | Pass | Fail | Flaky | Inconclusive |
@@ -16,7 +16,11 @@ pass@1 100%; pass^3 100% (12 of 12 conclusive cases pass every attempt; Wilson 9
 | negation | 1 | 1 | 0 | 0 | 0 |
 | numbers | 1 | 1 | 0 | 0 | 0 |
 | quote-check | 1 | 1 | 0 | 0 | 0 |
-| rules | 2 | 2 | 0 | 0 | 0 |
+| rules | 2 | 1 | 0 | 1 | 0 |
+
+| Case | State | Why |
+|---|---|---|
+| tn-small | flaky | outcome=review (model's facts changed between attempts) |
 
 ## Held-out
 

@@ -37,7 +37,8 @@ cached. Leave `temperature` unset for Claude: current models refuse it. If it
 is set and the API refuses it, factgate logs that once and stops sending it.
 
 The live results in the README were recorded with `claude-haiku-5-5`. The
-three examples' 159 calls cost about USD 0.02.
+three examples' 174 calls cost at most USD 0.05. Input token counts include
+the prompt read back from the cache, which bills for less.
 
 ## openai-compatible
 
@@ -66,6 +67,10 @@ model: {backend: openai-compatible, name: my-model, base_url: "http://localhost:
 model: {backend: openai-compatible, name: your-model, base_url: "https://api.openai.com/v1", api_key_env: OPENAI_API_KEY}
 ```
 
+factgate sends `max_tokens`. OpenAI's reasoning models expect
+`max_completion_tokens` instead, so they may refuse the request; check one
+call before you rely on them.
+
 ## replay
 
 Answers recorded earlier, keyed by item id. Record them with any backend:
@@ -75,8 +80,10 @@ factgate run config.yaml --record answers.jsonl
 factgate run config.yaml --replay answers.jsonl
 ```
 
-Each line of the file is `{"id": ..., "raw": <the model's answer>}`. An item
-with no recorded answer ends as `error`. Replay is how the examples run with no
+Each line of the file is `{"id": ..., "raw": <the model's answer>}`, written as
+each answer arrives, answers from the cache and answers that do not fit the
+schema included. An item with no recorded answer ends as `error`; it is not a
+call, and it does not count towards the three errors in a row that stop a run. Replay is how the examples run with no
 key, and how you reproduce a run exactly, since the cache is not involved. A
 live eval keeps every answer in its own result file instead, and
 `factgate eval regrade` re-scores those.
@@ -85,9 +92,10 @@ live eval keeps every answer in its own result file instead, and
 
 Answers are kept in `.factgate/cache.sqlite` (the `cache:` key, relative to
 the config; `cache: null` turns it off, `--no-cache` skips it for one run). A
-row's key names the item's text, the backend, the model, and a fingerprint of
-the prompt, the schema, `max_tokens` and `temperature`, so changing any of
-them asks the model again rather than serving an old answer. The quote check,
+row's key names the item's text in field order, the backend, the model, and a
+fingerprint of the prompt, the schema, `max_tokens`, `temperature` and the
+server's `base_url`, so changing any of them asks the model again rather than
+serving an old answer. The quote check,
 resolvers and rules run on every read, so a rule change reaches cached items
 with no calls.
 

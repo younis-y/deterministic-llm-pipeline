@@ -32,16 +32,18 @@ What you get from every run:
 - **Every decision names the rule that fired (or says the default decided) and
   quotes the document.**
 - **A fact whose quote is not in the document is cleared, never guessed.** A
-  number must also appear in its own quote, so "total due £12,540.00" read as
-  125400 is cleared, and a date's year must match the year its quote states,
-  when it states one.
-- **Spend has hard limits.** A keyword prefilter runs before any model call,
-  and `max_calls` and `max_minutes` cap each run. Every item ends as exactly one
-  of `decided`, `filtered`, `deferred` or `error`, and the output says which:
+  number must also appear in its own quote, whole and with its sign, so "total
+  due £12,540.00" read as 125400, or as 540, is cleared ("£40k" counts as
+  40,000), and a date's year must match the year its quote states, when it
+  states one.
+- **Spend has hard limits.** A keyword prefilter runs before any model call.
+  Once a run has made `max_calls` calls or spent `max_minutes`, no new call
+  starts (one already in flight finishes). Every item ends as exactly one of
+  `decided`, `filtered`, `deferred` or `error`, and the output says which:
   nothing is dropped.
 - **Nothing is paid for twice.** Answers are cached on the item's text and a
-  fingerprint of the prompt, the schema and the model, so a repeat run is free
-  and a changed prompt never gets an old answer. The quote check and the rules
+  fingerprint of the prompt, the schema, the model and its server, so a repeat
+  run is free and a changed prompt never gets an old answer. The quote check and the rules
   run again on every read, so changing a rule costs no model calls.
 - **Graded cases** run offline in CI and live against a model, with repeats,
   held-out cases and a before-and-after comparison.
@@ -90,11 +92,12 @@ and writes one JSON line per invoice to `examples/invoices/out/results.jsonl`
 
 ```json
 {"id": "inv-02", "status": "decided", "outcome": "review", "rule": "large",
+ "quotes": {"amount_due": "total due £12,540.00"},
  "facts": {"amount_due": {"value": 12540.0, "quote": "total due £12,540.00"}, ...}}
 ```
 
 That invoice says "Subtotal £10,450.00, VAT £2,090.00, total due £12,540.00",
-and the decision quotes the total. The credit note among the eight never reached
+and the decision quotes the total its rule read. The credit note among the eight never reached
 a model: the prefilter dropped it.
 
 ## Your own documents
@@ -102,7 +105,7 @@ a model: the prefilter dropped it.
 ```bash
 factgate init my-triage          # a starter config, 3 items, recorded answers, 2 cases
 factgate check my-triage/config.yaml   # the exact prompt and JSON schema the model gets
-factgate run my-triage/config.yaml --dry   # what would be sent; no model call
+factgate run my-triage/config.yaml --dry   # how many items would be sent; no model call
 factgate run my-triage/config.yaml         # needs the anthropic extra and a key: see Providers
 ```
 
@@ -157,7 +160,7 @@ any value it cannot find.
 | `is`, `eq`, `ne` | every type | equal / not equal |
 | `lt`, `le`, `gt`, `ge` | number, integer, date | the comparison holds |
 | `in` | every type but bool | the value is one of a list |
-| `contains`, `matches` | text (and lists) | a substring is there / a regex finds a match (checked when the config loads) |
+| `contains`, `matches` | text, and lists of text | a substring is there / a regex finds a match |
 | `stated` | every type | `true`: the fact was found; `false`: it was not |
 | `within_days: N` | date | between today and N days ahead |
 | `before_days: N` | date | earlier than N days from today; `0` is "in the past" |
@@ -165,35 +168,40 @@ any value it cannot find.
 A condition on a fact that is not stated is false, except `stated: false`. On a
 list, an operator holds when any entry meets it, `contains` means an entry
 equals the argument and `stated` means the list is not empty. A config with a
-rule on an unknown fact, an unknown operator, an operator that does not fit the
-fact's type or a bad regex fails to load, naming the rule.
+rule on an unknown fact, an unknown operator, an operator or argument that does
+not fit the fact's type (`gt: "10,000"`, `eq: GPB` for an enum of GBP and EUR)
+or a bad regex fails to load, naming the rule.
 
 **Make "not stated" safe.** A fact the quote check clears becomes "not stated",
 and a rule on it is then false. If nothing else catches it, the item falls
 through to `default_outcome`. That is why the invoice example sends an
-unstated amount or due date to review: otherwise a misread amount would be
-cleared and the invoice approved.
+unstated amount, due date or currency to review, and the tender example an
+unstated deadline or value: otherwise a misread amount would be cleared and the
+invoice approved.
 
 ## How a run works
 
 1. Read the items and hash each one's text.
 2. Prefilter: an item that fails ends as `filtered`, with the term that did it.
-3. Cache: an item answered before, under the same prompt, schema and model, is
-   served from `.factgate/cache.sqlite`.
+3. Cache: an item answered before, under the same prompt, schema, model and
+   server, is served from `.factgate/cache.sqlite`.
 4. Model: the rest are sent, `max_concurrent` at a time, until `max_calls` or
    `max_minutes` runs out. What does not fit ends as `deferred` and is answered
    on a later run. Three errors in a row stop the run and defer the rest.
+   `--record answers.jsonl` keeps every answer as it arrives.
 5. Quote check: each fact's quote must appear in one field of the item (spaces,
    case and typographic quotes and dashes folded), or the fact is cleared.
 6. Resolvers (optional): your Python functions correct the checked facts, and
    the quote check runs again on what they return.
 7. Rules: the first rule whose conditions all hold decides; else the default.
-8. Output: `out/results.jsonl` (id, status, outcome, rule, facts with quotes,
-   meta, and why for anything not decided) and a Markdown summary.
+8. Output: `out/results.jsonl` (id, status, outcome, rule, the quotes the rule
+   read, every fact with its quote, meta, and why for anything not decided)
+   and a Markdown summary.
 
-An answer that does not fit the schema (a bad enum value, broken JSON) makes
-that item `error` and the run goes on. `factgate run` exits 1 when any item
-errored.
+An answer that does not fit the schema (a bad enum value, broken JSON), or a
+resolver that raises on one item, makes that item `error` and the run goes on.
+`factgate run` exits 1 when any item errored. Two items with one id are an
+error before anything runs.
 
 ## What the quote check does not catch
 
@@ -252,14 +260,17 @@ def test_case(bound):
     assert_case(bound)
 ```
 
-A case marked `open_defect` is a known failure. It runs as a strict expected
-failure, so fixing it fails CI until the mark is removed, and the fix is held
-from then on. A case marked `offline_only` grades what the code does with its
-own answer (a misread number the quote check must clear, say), so a live run
-leaves it out.
+A case that cannot be graded (an answer that does not fit the schema, a
+resolver that raises) fails CI. A case marked `open_defect` is a known
+failure. It runs as a strict expected failure, so fixing it fails CI until the
+mark is removed, and the fix is held from then on. A case marked
+`offline_only` grades what the code does with its own answer (a misread number
+the quote check must clear, say), so a live run leaves it out. A misspelt key
+in a case fails to load.
 
 **Live, with repeats.** `--live --repeats 3` asks the model three times per
-case and gives each case one state, not an average:
+case and gives each case one state, not an average. A live eval makes cases ×
+repeats calls and is not held to `max_calls`, so count before you run it.
 
 | State | Means |
 |---|---|
@@ -278,23 +289,26 @@ the same (a rule or grading problem). Dangerous mistakes are listed first.
 **Held-out cases** go in a separate file passed with `--heldout`. They are run
 and scored, but the report shows only their ids and states, so whoever tunes
 the prompt, resolvers or rules cannot tune to them. That independence is by
-honour: the file is right there. The invoice example's held-out set is written
-by an oracle, [`gen_heldout.py`](examples/invoices/gen_heldout.py), which
-computes each right answer from the rules on values it put into the text and
-writes no case on a boundary the rules do not settle.
+honour: the file is right there, and a run's result file keeps the model's
+answers, quotes included, for held-out cases too. The invoice example's
+held-out set is written by an oracle,
+[`gen_heldout.py`](examples/invoices/gen_heldout.py), which computes each
+right answer from the rules on the values it put into the text, three per rule
+and three exactly on a threshold.
 
 **Compare and regrade.** Every live attempt saves the model's raw answer:
 
 ```bash
 factgate eval compare results/before.json results/after.json
-factgate eval regrade results/before.json config.yaml cases.jsonl
+factgate eval regrade results/before.json config.yaml cases.jsonl --heldout heldout.jsonl
 ```
 
 `compare` lists the cases that moved. Only fail to pass counts as fixed and only
-pass to fail as broken; a move into or out of `flaky` is noise, and held-out
-moves are counted apart from visible ones. `regrade` re-scores a run's saved
-answers with today's config and cases, so a rule or resolver change is
-measured with no model calls and no model noise.
+pass to fail as broken; a move into or out of `flaky` is noise, held-out moves
+are counted apart from visible ones, and a case in only one of the runs is
+listed as such. `regrade` re-scores a run's saved answers with today's config
+and cases, on the date the run used, so a rule or resolver change is measured
+with no model calls and no model noise.
 
 ### Measured
 
@@ -304,24 +318,32 @@ example's `results/` folder.
 
 | Example | Decides | Cases run live (visible + held-out) | Live result | Offline, in CI |
 |---|---|---|---|---|
-| [invoices](examples/invoices) | approve, review or hold | 27 (9 + 18) | pass@1 100%, pass^3 100%, Wilson 95% 88%-100% | 10 of 11 pass; the 11th is the open defect |
+| [invoices](examples/invoices) | approve, review or hold | 32 (11 + 21) | pass@1 100%, pass^3 100%, Wilson 95% 89%-100% | 12 of 13 pass, 1 open defect |
 | [support-tickets](examples/support-tickets) | which team, or page on-call | 14 (9 + 5) | pass@1 100%, pass^3 100%, Wilson 95% 78%-100% | 9 of 9 pass |
-| [tenders](examples/tenders) | bid, no-bid or review | 12 (7 + 5) | pass@1 100%, pass^3 100%, Wilson 95% 76%-100% | 9 of 9 pass |
+| [tenders](examples/tenders) | bid, no-bid or review | 12 (7 + 5) | pass@1 97%, pass^3 92%, Wilson 95% 65%-99% | 9 of 9 pass |
 
-The 159 live calls took 66 seconds and 31,807 output tokens, about USD 0.02 in
-all. The four offline-only cases did not run live. A perfect score on 53 short
-synthetic documents means the model handles these traps (a subtotal next to
-the total, a paid balance, "Annoying!!!" that is not urgency, an injected
-instruction, a clearance "not required"). It does not mean 100% on your
-documents: the intervals show how little 12 to 27 cases can say. A test checks
-that this table matches the latest result files.
+The 174 live calls took 69 seconds and 34,795 output tokens, with 279,987
+input tokens counting the prompt read back from the cache: at most USD 0.05.
+The four offline-only cases did not run live.
+
+One case is flaky, and it shows what "make not stated safe" is for. The tender
+"Budget up to £18,000. Responses due 30 December 2026." is a no-bid: under
+£50,000. In one attempt of three the model reported no value, and in none the
+deadline, so the `no-deadline` rule sent it to review. Without that rule it
+would have fallen through to `bid`, the config's own dangerous mistake.
+
+Near-perfect scores on 58 short synthetic cases mean the model handles these
+traps (a subtotal next to the total, a paid balance, "Annoying!!!" that is not
+urgency, an injected instruction, a clearance "not required"). They do not
+mean that on your documents: the intervals show how little 12 to 32 cases can
+say. A test rebuilds every figure in this table from the result files.
 
 ## Providers
 
 | Backend | For | Needs |
 |---|---|---|
 | `anthropic` | Claude, with structured output and the prompt cached | `pip install -e ".[anthropic]"`, `ANTHROPIC_API_KEY` |
-| `openai-compatible` | any server with the OpenAI chat API and JSON-schema output: Ollama, vLLM, LM Studio, OpenAI | `model.base_url`, and `model.api_key_env` if the server wants a key |
+| `openai-compatible` | any server with the OpenAI chat API and JSON-schema output: Ollama (checked), vLLM, LM Studio, OpenAI (not tested) | `model.base_url`, and `model.api_key_env` if the server wants a key |
 | `replay` | answers recorded with `factgate run --record answers.jsonl` | the file, passed as `--replay` |
 
 A local model through Ollama, with no key and no bill:

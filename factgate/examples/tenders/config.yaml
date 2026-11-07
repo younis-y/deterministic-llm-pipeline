@@ -29,9 +29,12 @@ rules:
   - name: iso-27001
     when: {certifications: {matches: "27001"}}
     then: no-bid
-  # A deadline the quote check cleared must not fall through to bid.
+  # A deadline or value the quote check cleared must not fall through to bid.
   - name: no-deadline
     when: {deadline: {stated: false}}
+    then: review
+  - name: no-value
+    when: {value: {stated: false}}
     then: review
   - name: very-large
     when: {value: {gt: 2000000}}

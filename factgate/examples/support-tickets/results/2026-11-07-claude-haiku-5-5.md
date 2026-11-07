@@ -1,6 +1,6 @@
 # support-routing: 2026-11-07-claude-haiku-5-5 (live)
 
-Model `claude-haiku-5-5` via anthropic, 3 attempt(s) per case, 21.1 s, tokens {'input': 1923, 'output': 10841}.
+Model `claude-haiku-5-5` via anthropic, 3 attempt(s) per case, 22 s, tokens {'input': 59715, 'output': 10725}.
 pass@1 100%; pass^3 100% (14 of 14 conclusive cases pass every attempt; Wilson 95% 78%-100%). Inconclusive cases are outside these figures.
 
 | Split | Cases | Pass | Fail | Flaky | Inconclusive |

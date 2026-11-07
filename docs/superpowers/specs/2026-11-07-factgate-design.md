@@ -1,6 +1,7 @@
 # factgate: the rolescan method as a plug-and-play library
 
-Date: 2026-11-07. Status: draft for the owner's approval.
+Date: 2026-11-07. Status: built as factgate 0.1.0; where the build differs,
+the "As built" section at the end says so.
 
 ## Intent
 
@@ -319,3 +320,21 @@ Module layout, internal class names, the exact prompt wording (it must state
 the facts, their types and descriptions, and require a verbatim quote for each),
 the Markdown summary layout, retry and timeout values (take rolescan's), and how
 the replay file is keyed.
+
+## As built (0.1.0)
+
+Where the code differs from the design above, after a whole-branch review:
+
+- Dates are value-checked too: a date's year must match the year its quote
+  states, when it states one. Numbers must appear whole and with their sign,
+  and a scale ("£40k") counts.
+- A rule's arguments are checked against the fact's type when the config
+  loads, not only its operators.
+- Cases can be `offline_only`: their expectation is what the code does with
+  their own model answer, so a live run leaves them out. A case with no
+  `model_facts` runs live only. Unknown case keys fail to load.
+- `factgate eval run` takes `--live --repeats N`; it has no `--replay`,
+  because recorded answers are keyed by item, not by case. `regrade`
+  re-scores a live run's saved answers instead.
+- Not built in 0.1.0: a facts model written in Python, and batch calls.
+

@@ -1,17 +1,18 @@
 {
  "label": "2026-11-07-claude-haiku-5-5",
  "mode": "live",
- "date": "2026-11-07T13:13:13+00:00",
+ "date": "2026-11-07T14:09:32+00:00",
  "backend": "anthropic",
  "model": "claude-haiku-5-5",
  "repeats": 3,
- "seconds": 14.0,
+ "seconds": 15.0,
  "tokens": {
-  "input": 2001,
-  "output": 6323
+  "input": 58557,
+  "output": 6164
  },
- "pass_at_1": 1.0,
- "pass_hat_k": 1.0,
+ "as_of": "2026-11-07",
+ "pass_at_1": 0.9722222222222222,
+ "pass_hat_k": 0.9166666666666666,
  "offline_only": 2,
  "cases": [
   {
@@ -442,7 +443,7 @@
       },
       "value": {
        "value": 12000000.0,
-       "quote": "a total estimated value of £12,000,000."
+       "quote": "a total estimated value of £12,000,000"
       },
       "sc_clearance": {
        "value": null,
@@ -504,7 +505,7 @@
      "error": ""
     }
    ],
-   "facts_changed": true
+   "facts_changed": false
   },
   {
    "id": "tn-cert-bad-quote",
@@ -533,8 +534,8 @@
       },
       "certifications": [
        {
-        "value": "ISO 27001",
-        "quote": "Bidders must be certified to ISO 27001."
+        "value": "Cyber Essentials",
+        "quote": "Bidders must hold Cyber Essentials."
        }
       ],
       "lots": {
@@ -564,8 +565,8 @@
       },
       "certifications": [
        {
-        "value": "ISO 27001",
-        "quote": "Bidders must be certified to ISO 27001."
+        "value": "Cyber Essentials",
+        "quote": "Bidders must hold Cyber Essentials."
        }
       ],
       "lots": {
@@ -595,8 +596,8 @@
       },
       "certifications": [
        {
-        "value": "ISO 27001",
-        "quote": "Bidders must be certified to ISO 27001."
+        "value": "Cyber Essentials",
+        "quote": "Bidders must hold Cyber Essentials."
        }
       ],
       "lots": {
@@ -619,18 +620,18 @@
     "rules"
    ],
    "open_defect": "",
-   "state": "pass",
+   "state": "flaky",
    "attempts": [
     {
-     "outcome": "pass",
+     "outcome": "fail",
      "raw": {
       "deadline": {
        "value": null,
        "quote": ""
       },
       "value": {
-       "value": 18000.0,
-       "quote": "Budget up to £18,000"
+       "value": null,
+       "quote": ""
       },
       "sc_clearance": {
        "value": null,
@@ -643,7 +644,7 @@
       }
      },
      "fact_failures": [],
-     "outcome_failure": null,
+     "outcome_failure": "outcome=review",
      "dangerous": false,
      "error": ""
     },
@@ -1137,7 +1138,7 @@
       },
       "value": {
        "value": 22500.0,
-       "quote": "worth £22,500"
+       "quote": "A small pilot worth £22,500."
       },
       "sc_clearance": {
        "value": null,
@@ -1155,7 +1156,7 @@
      "error": ""
     }
    ],
-   "facts_changed": true
+   "facts_changed": false
   }
  ]
 }

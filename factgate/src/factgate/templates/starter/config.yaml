@@ -19,6 +19,10 @@ rules:
   - name: large-refund
     when: {refund_requested: {is: true}, amount: {gt: 100}}
     then: escalate
+  # An amount the quote check cleared is "not stated": never refund blind.
+  - name: refund-unknown-amount
+    when: {refund_requested: {is: true}, amount: {stated: false}}
+    then: escalate
   - name: refund
     when: {refund_requested: {is: true}}
     then: refund

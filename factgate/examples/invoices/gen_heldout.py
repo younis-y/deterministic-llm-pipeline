@@ -3,12 +3,13 @@
     python examples/invoices/gen_heldout.py
 
 A fix tuned on the visible cases can pass them and still be wrong, so these
-cases test the same rules with new values and new wordings. The outcome of each
-is the config's own rules applied to the facts the generator wrote into the
-text. Where the rules do not settle the answer (an amount exactly on a
-threshold, a due date that is today), no case is written: a guessed truth
-would grade the model on the guess. Adapted from the Judge the Agent
-hackathon's `gen_orders.py`.
+cases test the same rules with new values and wordings: three for each rule
+that fires, three for the default, and three approved on a threshold (an
+amount of exactly 10,000, a due date of today). Each answer is the config's own rules
+applied to the facts the generator wrote into the text. These rules settle
+every combination; an oracle for rules that leave a case open must skip it
+rather than guess, or it grades the model on the guess. Adapted from the
+Judge the Agent hackathon's `gen_orders.py`.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ import datetime as dt
 import itertools
 import json
 import random
-from collections import Counter
 from pathlib import Path
 
 from factgate.config import load_config
@@ -28,8 +28,8 @@ HERE = Path(__file__).parent
 CFG = load_config(HERE / "config.yaml")
 FACTS = build_model(CFG.facts)
 AS_OF = dt.date(2026, 11, 7)
-#: Cases kept per rule that fires, so every rule (and the default) is tested.
-PER_RULE = 3
+#: Cases kept per rule that fires (and for the default, and on a threshold).
+PER_GROUP = 3
 
 SUPPLIERS = ["Alder Print", "Brook Couriers", "Cobalt Labs", "Dunmore Electrical"]
 AMOUNTS = [420.0, 3150.5, 9800.0, 10000.0, 14200.0]
@@ -39,6 +39,7 @@ AMOUNT_LINES = [
     "Amount due: {money}.",
     "Subtotal {sub}, VAT {vat}, total due {money}.",
     "Please pay {money} in full.",
+    "Net {sub} plus VAT {vat}. Total payable: {money}.",
 ]
 DUE_LINES = ["Payment due by {date}.", "Due date: {date}.", "Please pay by {date}."]
 #: (wording, disputed?) - one says the word and means the opposite.
@@ -85,23 +86,18 @@ assert outcome(980, "GBP", dt.date(2026, 10, 1), "PO-1", False) == "review"
 assert outcome(3800, "EUR", dt.date(2026, 12, 10), "PO-1", False) == "review"
 
 
-def cases() -> tuple[list[dict[str, object]], Counter[str]]:
+def cases() -> list[dict[str, object]]:
     combos = list(itertools.product(AMOUNTS, CURRENCIES, DUE_IN_DAYS, (True, False), STATUS_LINES))
     random.Random(7).shuffle(combos)  # a spread of wordings and values, the same every run
     kept: dict[str, list[dict[str, object]]] = {}
-    skipped: Counter[str] = Counter()
     for n, (amount, currency, days, has_po, (status, disputed)) in enumerate(combos):
         due = AS_OF + dt.timedelta(days=days)
-        if amount == 10000:
-            skipped["an amount exactly on the 10,000 threshold"] += 1
-            continue
-        if days == 0:
-            skipped["a due date of today, neither overdue nor not"] += 1
-            continue
         po = f"PO-{90000 + n}" if has_po else None
         decided = decision(amount, currency, due, po, disputed)
-        group = kept.setdefault(decided.rule or "(default)", [])
-        if len(group) == PER_RULE:
+        # On a threshold and decided by it: 10,000 is not over 10,000, today is not overdue.
+        on_threshold = (amount == 10000 or days == 0) and decided.rule is None
+        group = kept.setdefault("threshold" if on_threshold else decided.rule or "default", [])
+        if len(group) == PER_GROUP:
             continue
         fmt = CURRENCIES[currency]
         sub = round(amount / 1.2, 2)
@@ -124,23 +120,21 @@ def cases() -> tuple[list[dict[str, object]], Counter[str]]:
             {
                 "fields": {"subject": f"Invoice {number} - {supplier}", "body": body},
                 "expect": {"facts": {"amount_due": {"eq": amount}}, "outcome": decided.outcome},
-                "tags": [decided.rule or "default"],
+                "tags": [decided.rule or "default"] + (["threshold"] if on_threshold else []),
                 "as_of": AS_OF.isoformat(),
             }
         )
     written = [case for group in kept.values() for case in group]
-    return [{"id": f"h-inv-{i:03d}", **c} for i, c in enumerate(written, 1)], skipped
+    return [{"id": f"h-inv-{i:03d}", **c} for i, c in enumerate(written, 1)]
 
 
 def main() -> None:
-    written, skipped = cases()
+    written = cases()
     path = HERE / "heldout.jsonl"
     path.write_text(
         "".join(json.dumps(c, ensure_ascii=False) + "\n" for c in written), encoding="utf-8"
     )
-    print(f"wrote {len(written)} cases to {path}; no case written for:")
-    for why, n in skipped.items():
-        print(f"  {n} combinations with {why}")
+    print(f"wrote {len(written)} cases to {path}")
 
 
 if __name__ == "__main__":
