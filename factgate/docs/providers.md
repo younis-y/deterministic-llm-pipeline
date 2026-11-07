@@ -18,6 +18,7 @@ All backends read the `model:` block of the config:
 | `max_concurrent` | 4 | calls in flight at once |
 | `max_tokens` | 2048 | the longest answer asked for |
 | `temperature` | not sent | sent only when set |
+| `batch` | `false` | send a run as one Message Batch, at half price (anthropic only): see [Batch calls](#batch-calls) |
 
 ## anthropic
 

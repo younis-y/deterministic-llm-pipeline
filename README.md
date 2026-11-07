@@ -2,40 +2,30 @@
 
 [![ci](https://github.com/younis-y/deterministic-llm-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/younis-y/deterministic-llm-pipeline/actions/workflows/ci.yml)
 
-**The method, for any documents: [factgate](factgate/).** A model reports
-facts from each document with the exact words it read them from, code checks
-every quote, and rules you write in YAML decide. One config file points it at
-invoices, support tickets, tenders or anything else made of text, and the three
-shipped examples run with no API key. rolescan, below, is the full application
-the method came from.
+A job scanner that reads employers' own career sites, scores each posting
+against a profile you write, and writes a ranked digest. A model reads only the
+postings that pass a free keyword prefilter, and it never makes the decision:
+it reports facts, each with a quote that code checks against the advert, and
+fixed rules decide. **The model reports; code decides.**
 
-A job scanner that reads employers' own career sites, scores postings against
-the profile you write, and writes a ranked digest, spending an LLM call only on
-the small minority that survive a deterministic prefilter.
+- **Cheap by design.** Most postings are dropped by deterministic keyword rules
+  before any model call. A call ceiling and a time budget cap each run;
+  postings past either are deferred to the next run, never dropped, and a
+  cached verdict is never paid for twice. One measured run cost about USD 0.003
+  a posting ([Models, keys and cost](#models-keys-and-cost)).
+- **Auditable.** The same facts always give the same verdict, and every hidden
+  role is listed with the rule that hid it.
+- **Pluggable.** Sources and scoring backends load through entry points, so a
+  new ATS adapter, or a local Ollama model in place of Claude, is a plugin, not
+  a fork.
+- **Tested.** Over two thousand tests run offline against `respx`-mocked
+  transport, so the real HTTP clients and parsers run against recorded
+  response shapes. `mypy` runs strict, and an eval runs in CI
+  ([Measured quality](#measured-quality)).
 
-**That prefilter is the design point.** Most postings are discarded on
-deterministic keyword rules before any model is invoked, so the expensive stage
-sees a small fraction of the traffic, and the cheap stage is reproducible and
-free to re-run. [Measured quality](#measured-quality) has one real run and an
-eval that runs in CI.
-
-**The model reports; code decides.** The model only
-extracts facts from a posting, each backed by a quote that code checks against
-the advert, and fixed rules turn those facts into the verdict. The same facts
-always give the same answer, and every hidden role is listed with the rule that
-hid it.
-
-**Model spend has hard bounds.** A call ceiling and a wall-clock budget cap each
-run; postings past either are deferred to the next run, never dropped, and a
-cached verdict is never paid for twice. One measured run cost about USD 0.003 a
-posting ([Models, keys and cost](#models-keys-and-cost)).
-
-Both the sources and the scoring backends load through **entry points**, so
-adding an ATS adapter or swapping Claude for a local Ollama model is a plugin,
-not a fork. Over two thousand tests run offline against `respx`-mocked transport:
-the real HTTP clients and real parsers are exercised against recorded response
-shapes rather than stubbed out. `mypy` runs strict across `src` and `tests`.
-
+**The same method, for any documents: [factgate](factgate/).** One YAML file
+points it at invoices, support tickets, tenders or anything else made of text,
+and its three examples run with no API key.
 
 ## Quickstart
 
