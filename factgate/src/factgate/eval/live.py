@@ -199,7 +199,11 @@ async def live(
         tokens["output"] += answer.output_tokens
         return grader.attempt(case, answer.raw)
 
-    attempts = [await asyncio.gather(*(one(c) for c in cases)) for _ in range(repeats)]
+    if cfg.model.batch and backend.batches:
+        deadline = time.monotonic() + cfg.model.max_minutes * 60
+        attempts = await _batched(cases, repeats, backend, grader, system, deadline, tokens)
+    else:
+        attempts = [await asyncio.gather(*(one(c) for c in cases)) for _ in range(repeats)]
     runs = [_case_run(c, [a[i] for a in attempts]) for i, c in enumerate(cases)]
     return _finish_run(
         EvalRun(
@@ -215,6 +219,36 @@ async def live(
             cases=runs,
         )
     )
+
+
+async def _batched(
+    cases: list[Case],
+    repeats: int,
+    backend: Backend,
+    grader: _Grader,
+    system: str,
+    deadline: float,
+    tokens: dict[str, int],
+) -> list[list[Attempt]]:
+    """Every attempt of every case in one batch, as `attempts[repeat][case]`. An
+    attempt the batch did not answer, or that failed, is inconclusive."""
+    prompts = [render_user(c.item) for _ in range(repeats) for c in cases]
+    answers = await backend.extract_many(system, prompts, grader.model, deadline)
+    rows: list[list[Attempt]] = []
+    for r in range(repeats):
+        row = []
+        for i, case in enumerate(cases):
+            answer = answers[r * len(cases) + i]
+            if answer is None:
+                row.append(grader.attempt(case, None, "not answered within max_minutes"))
+            elif isinstance(answer, Exception):
+                row.append(grader.attempt(case, None, f"{type(answer).__name__}: {answer}"))
+            else:
+                tokens["input"] += answer.input_tokens
+                tokens["output"] += answer.output_tokens
+                row.append(grader.attempt(case, answer.raw))
+        rows.append(row)
+    return rows
 
 
 def regrade(run: EvalRun, cases: list[Case], cfg: Config, as_of: dt.date) -> EvalRun:

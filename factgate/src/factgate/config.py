@@ -38,6 +38,9 @@ class ModelConfig(BaseModel):
     max_tokens: Annotated[int, Field(ge=1)] = 2048
     #: Sent only when set: some models refuse the parameter.
     temperature: float | None = None
+    #: Send a run's items (and a live eval's attempts) as one Message Batch, at
+    #: half price, waiting for it up to `max_minutes` (anthropic only).
+    batch: bool = False
 
 
 class Dangerous(BaseModel):

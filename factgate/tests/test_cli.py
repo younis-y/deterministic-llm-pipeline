@@ -69,3 +69,17 @@ def test_check_loads_the_resolvers(tmp_path: Path) -> None:
     config.write_text(config.read_text() + "resolvers: ['nowhere:fix']\n")
     result = runner.invoke(app, ["check", str(config)])
     assert result.exit_code == 2 and "resolver 'nowhere:fix' cannot be loaded" in result.output
+
+
+def test_batch_on_a_backend_that_cannot_batch_is_one_line(tmp_path: Path) -> None:
+    folder = tmp_path / "s"
+    runner.invoke(app, ["init", str(folder)])
+    config = folder / "config.yaml"
+    text = config.read_text().replace(
+        "model: {backend: anthropic,",
+        'model: {backend: openai-compatible, base_url: "http://localhost:1/v1", batch: true,',
+    )
+    config.write_text(text)
+    result = runner.invoke(app, ["run", str(config)])
+    assert result.exit_code == 2, result.output
+    assert "openai-compatible backend cannot batch" in result.output

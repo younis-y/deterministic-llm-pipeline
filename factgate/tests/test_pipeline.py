@@ -224,3 +224,55 @@ async def test_a_decision_carries_the_quotes_of_its_rule() -> None:
     cfg = _cfg()
     results, _ = await run(cfg, _items(3), Counting(cfg.model), as_of=AS_OF)
     assert results[2].quotes == {"amount": "Total 200"} and results[0].quotes == {}
+
+
+class Batching(Backend):
+    """Answers every prompt at once, as a batch: a scripted answer per prompt."""
+
+    name = "batching"
+    batches = True
+
+    def __init__(self, cfg: ModelConfig, script: list[Any]) -> None:
+        super().__init__(cfg)
+        self.script = script
+        self.sent: list[list[str]] = []
+
+    async def extract(self, system: str, user: str, model: type[BaseModel], item_id: str) -> Answer:
+        raise AssertionError("a batching run makes no one-by-one call")
+
+    async def extract_many(
+        self, system: str, users: list[str], model: type[BaseModel], deadline: float
+    ) -> list[Answer | Exception | None]:
+        self.sent.append(users)
+        return self.script[: len(users)]
+
+
+async def test_a_batch_run_settles_defers_and_errors_item_by_item(tmp_path: Path) -> None:
+    cfg = _cfg()
+    cfg.model.batch = True
+    invalid = Answer(raw={"kind": {"value": "zzz", "quote": "x"}})
+    script = [Answer(raw=_raw(0)), None, RuntimeError("boom"), invalid, Answer(raw=_raw(4))]
+    backend = Batching(cfg.model, script)
+    record = tmp_path / "answers.jsonl"
+    async with Cache(tmp_path / "c.sqlite") as cache:
+        results, stats = await run(cfg, _items(5), backend, as_of=AS_OF, cache=cache, record=record)
+        again, again_stats = await run(cfg, _items(5), backend, as_of=AS_OF, cache=cache)
+    assert [r.status for r in results] == ["decided", "deferred", "error", "error", "decided"]
+    assert "not answered" in results[1].reason and "boom" in results[2].reason
+    assert "invalid answer" in results[3].reason
+    assert len(backend.sent) == 2 and len(backend.sent[0]) == 5 and stats.calls == 5
+    assert len(record.read_text().splitlines()) == 3, "every answer that came back"
+    assert again_stats.cache_hits == 2 and backend.sent[1] == [
+        f"## text\nTotal {i * 100} due" for i in (1, 2, 3)
+    ], "the second run sends only what the first did not settle"
+    assert again[0].status == "decided"
+
+
+async def test_a_batch_holds_to_max_calls() -> None:
+    cfg = _cfg()
+    cfg.model.batch, cfg.model.max_calls = True, 2
+    backend = Batching(cfg.model, [Answer(raw=_raw(i)) for i in range(5)])
+    results, stats = await run(cfg, _items(5), backend, as_of=AS_OF)
+    assert len(backend.sent[0]) == 2 and stats.calls == 2
+    assert [r.status for r in results] == ["decided"] * 2 + ["deferred"] * 3
+    assert "max_calls" in results[4].reason

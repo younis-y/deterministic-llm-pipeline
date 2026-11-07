@@ -89,7 +89,7 @@ def run_cmd(
         )
         return
     resolvers = or_exit(config, lambda: load_resolvers(cfg.resolvers, cfg.base))
-    backend = get_backend(cfg.model, replay)
+    backend = or_exit(config, lambda: get_backend(cfg.model, replay))
 
     async def go() -> tuple[list[Result], RunStats]:
         async with AsyncExitStack() as stack:
@@ -175,7 +175,7 @@ def eval_run(
     or_exit(config, lambda: load_resolvers(cfg.resolvers, cfg.base))
     today = as_of_date(as_of)
     if live_:
-        backend = get_backend(cfg.model, None)
+        backend = or_exit(config, lambda: get_backend(cfg.model, None))
         name = label or f"{today}-{cfg.model.name}"
         run = asyncio.run(live(loaded, cfg, backend, repeats=repeats, label=name, as_of=today))
         _save(run, cfg, results)
